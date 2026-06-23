@@ -1,6 +1,6 @@
 ---
 name: aaw-workflow
-description: 需求工作流管理入口技能。当用户提到"进入工作流"、"使用 aaw-workflow"、"开始需求开发流程"或类似表述时触发。提供基于需求(SDD)的工作流管理能力，支持：扫描/创建需求工作目录、引导完成11个标准化开发步骤、跟踪工作流进度、调用各阶段子技能(sr-design/ar-clarify/module-impact-analysis/module-interact-design/module-asis-analysis/module-tobe-design/module-design-gate/task-split/task-dev)。支持免拆分AR（SR直接驱动）和拆分AR（SR拆分为多个AR分别跟踪）两种模式。
+description: 需求工作流管理入口技能。当用户提到"进入工作流"、"使用 aaw-workflow"、"开始需求开发流程"或类似表述时触发。提供基于需求(SDD)的工作流管理能力，支持：扫描/创建需求工作目录、引导完成10个标准化开发步骤、跟踪工作流进度、调用各阶段子技能(sr-design/ar-clarify/module-boundary-design/module-detail-design-split/module-asis-analysis/module-tobe-design/module-test-design/module-design-gate/task-split/task-dev)。支持免拆分AR（SR直接驱动）和拆分AR（SR拆分为多个AR分别跟踪）两种模式。
 ---
 
 # AAW 工作流
@@ -11,21 +11,20 @@ description: 需求工作流管理入口技能。当用户提到"进入工作流
 
 **工作流目录结构：** `./.sdd/{需求号}/` (如 `./.sdd/SR-123/`)
 
-**11个标准化步骤：**
+**10个标准化步骤：**
 
 | 步骤              | 对应 Skill                   |
 |-----------------|----------------------------|
 | 1. SR 设计    | sr-design                  |
 | 2. AR 范围澄清  | ar-clarify                 |
-| 3. 模块影响性分析  | module-impact-analysis     |
-| 4. 模块交互设计   | module-interact-design     |
-| 5. 模块详细设计划分 | module-detail-design-split |
-| 6. 模块现状分析  | module-asis-analysis       |
-| 7. 模块实现设计  | module-tobe-design         |
-| 8. 模块测试设计  | module-test-design         |
-| 9. 模块设计门禁  | module-design-gate         |
-| 10. 任务拆分   | task-split                 |
-| 11. 代码实现   | task-dev                   |
+| 3. 模块边界设计   | module-boundary-design     |
+| 4. 模块详细设计划分 | module-detail-design-split |
+| 5. 模块现状分析  | module-asis-analysis       |
+| 6. 模块实现设计  | module-tobe-design         |
+| 7. 模块测试设计  | module-test-design         |
+| 8. 模块设计门禁  | module-design-gate         |
+| 9. 任务拆分   | task-split                 |
+| 10. 代码实现   | task-dev                   |
 
 ## 执行流程
 
@@ -86,15 +85,14 @@ SR 设计完成后，询问用户：**此SR是否需要拆分AR？**
 | 步骤 |描述| 对应 Skill | 是否完成(✅/❌) |
 |------|---|-----------|--------|
 | 1 | SR 设计       |sr-design| ✅ |
-| 2 | 模块影响性分析 |module-impact-analysis| ❌ |
-| 3 | 模块交互设计   |module-interact-design| ❌ |
-| 4 | 模块详细设计划分 | module-detail-design-split |  ❌ |
-| 5 | 模块现状分析   | module-asis-analysis   | ❌ |
-| 6 | 模块实现设计   | module-tobe-design     | ❌ |
-| 7 | 模块测试设计   | module-test-design     | ❌ |
-| 8 | 模块设计门禁   | module-design-gate     | ❌ |
-| 9 | 任务拆分      |task-split| ❌ |
-| 10 | 代码实现      |task-dev| ❌ |
+| 2 | 模块边界设计 |module-boundary-design| ❌ |
+| 3 | 模块详细设计划分 | module-detail-design-split |  ❌ |
+| 4 | 模块现状分析   | module-asis-analysis   | ❌ |
+| 5 | 模块实现设计   | module-tobe-design     | ❌ |
+| 6 | 模块测试设计   | module-test-design     | ❌ |
+| 7 | 模块设计门禁   | module-design-gate     | ❌ |
+| 8 | 任务拆分      |task-split| ❌ |
+| 9 | 代码实现      |task-dev| ❌ |
 ```
 
 **模式B：拆分AR**
@@ -111,11 +109,10 @@ SR 设计完成后，询问用户：**此SR是否需要拆分AR？**
 |------|---|-----------|--------|--------|--------|
 | 1 | SR 设计 |sr-design| ✅ | - | - |
 | 2 | AR 范围澄清 |ar-clarify| - | ❌ | ❌ |
-| 3 | 模块影响性分析 |module-impact-analysis| - | ❌ | ❌ |
-| 4 | 模块交互设计 |module-interact-design| - | ❌ | ❌ |
-| 5 | 模块详细设计划分 | module-detail-design-split |  - |  ❌ | ❌ |
-| 6 | 模块现状分析   | module-asis-analysis| - | ❌ | ❌ |
-| 7 | 模块实现设计   | module-tobe-design | - | ❌ | ❌ |
+| 3 | 模块边界设计 |module-boundary-design| - | ❌ | ❌ |
+| 4 | 模块详细设计划分 | module-detail-design-split |  - |  ❌ | ❌ |
+| 5 | 模块现状分析   | module-asis-analysis| - | ❌ | ❌ |
+| 6 | 模块实现设计   | module-tobe-design | - | ❌ | ❌ |
 | 7 | 模块测试设计   | module-test-design | - | ❌ | ❌ |
 | 8 | 模块设计门禁   | module-design-gate | - | ❌ | ❌ |
 | 9 | 任务拆分      |task-split| - | ❌ | ❌ |

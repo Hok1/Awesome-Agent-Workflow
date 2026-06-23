@@ -1,6 +1,6 @@
 ---
 name: module-detail-design-split
-description: 模块详细设计划分。根据 module-interact-design.md 中受影响模块的影响性和交互关系，将模块划分为若干组，每组内的模块一起进行模块详细设计（module-asis-analysis / module-tobe-design / module-test-design）。用户确认后更新 workflow.md。用于 AAW 工作流步骤 5。Use when the user asks for 模块详细设计划分、module-detail-design-split、模块分组设计。
+description: 模块详细设计划分。根据 module-boundary-design.md 中受影响模块的影响性和交互关系，将模块划分为若干组，每组内的模块一起进行模块详细设计（module-asis-analysis / module-tobe-design / module-test-design）。用户确认后更新 workflow.md。用于 AAW 工作流步骤 4。Use when the user asks for 模块详细设计划分、module-detail-design-split、模块分组设计。
 version: 1.0
 ---
 
@@ -14,7 +14,7 @@ version: 1.0
 
 1. 明确当前工作目录
 2. 判断是否存在以下输入文件：
-    - `module-interact-design.md`（必须存在）
+    - `module-boundary-design.md`（必须存在）
     - `.sdd/software_architecture.md`（用于获取模块详细信息）
 3. 如果缺少必要文件，提示用户补充
 
@@ -25,9 +25,8 @@ version: 1.0
 ```
 请读取以下文件进行模块详细设计划分分析：
 
-1. 当前工作目录下的 `module-interact-design.md`（模块交互设计文档）
-2. 当前工作目录下的 `module-impact.md`（模块影响性分析结果）
-3. `.sdd/software_architecture.md`（软件架构文档，获取模块详细信息）
+1. 当前工作目录下的 `module-boundary-design.md`（模块边界设计文档）
+2. `.sdd/software_architecture.md`（软件架构文档，获取模块详细信息）
 
 基于以上输入，分析哪些模块应该一起进行详细设计，并输出划分方案。
 
@@ -38,7 +37,7 @@ version: 1.0
 - 每组模块数量不宜过多（建议 2-4 个），以保证设计效率和质量
 
 **要求：**
-- 必须列出所有受影响模块（来自 module-interact-design.md 的受影响模块清单）
+- 必须列出所有受影响模块（来自 module-boundary-design.md 的受影响模块清单）
 - 每个模块只能属于一个分组
 - 每个分组需说明划分理由
 - 分组后的每组模块将作为一个整体，一起执行 module-asis-analysis 和 module-tobe-design 和 module-test-design
@@ -84,21 +83,20 @@ version: 1.0
 | 步骤 |描述               | 对应 Skill           | SR-XXX           |{{模块A、模块B详细设计}} |{{模块C详细设计}} |
 |------|-------------------|----------------------|------------------|-----------------|-----------------|
 | 1    | SR 设计           |sr-design             |     ✅           |       -         |        -        |
-| 2    | 模块影响性分析    |module-impact-analysis|     ✅           |       -         |        -        |
-| 3    | 模块交互设计      |module-interact-design|     ✅           |       -         |        -        |
-| 4    | 模块详细设计划分  |module-asis-analysis  |     ✅           |        -        |        -        |
-| 5    | 模块实现设计      |module-tobe-design    |     -            |        ❌       |        ❌       |
-| 6    | 模块测试设计      | module-test-design    |     -            |        ❌       |        ❌       |
-| 7    | 模块设计门禁      |module-design-gate    |     -            |        ❌       |        ❌       |
-| 8    | 任务拆分          |task-split            |     -            |        ❌       |        ❌       |
-| 9    | 代码实现          |task-dev              |     -            |        ❌       |        ❌       |
+| 2    | 模块边界设计      |module-boundary-design|     ✅           |       -         |        -        |
+| 3    | 模块详细设计划分  |module-asis-analysis  |     ✅           |        -        |        -        |
+| 4    | 模块实现设计      |module-tobe-design    |     -            |        ❌       |        ❌       |
+| 5    | 模块测试设计      | module-test-design    |     -            |        ❌       |        ❌       |
+| 6    | 模块设计门禁      |module-design-gate    |     -            |        ❌       |        ❌       |
+| 7    | 任务拆分          |task-split            |     -            |        ❌       |        ❌       |
+| 8    | 代码实现          |task-dev              |     -            |        ❌       |        ❌       |
 ```
 
 **列说明：**
 
 - `{{模块A、模块B详细设计}}`：分组1的列标题，列出该组包含的模块名称
 - `{{模块C详细设计}}`：分组2的列标题
-- 模块详细设计划分步骤（步骤4）的列：SR-XXX 列为 ✅，模块分组列为 -
+- 模块详细设计划分步骤（步骤3）的列：SR-XXX 列为 ✅，模块分组列为 -
 - 后续步骤（模块实现设计、模块设计门禁、任务拆分、代码实现）：SR-XXX 列为 -，模块分组列对应用户的 ❌
 
 **注意：** 免AR模式下，"模块详细设计划分"对应的 Skill 列显示的是 `module-asis-analysis`，这是该步骤的默认标识。
@@ -114,21 +112,20 @@ version: 1.0
 |------|-------------------|----------------------|------------------|------------------|-----------------|-----------------|------------------|-----------------|-----------------|
 | 1    | SR 设计           |sr-design             |     ✅           |      ✅           |        -       |        -        |       ✅          |        -       |        -        |
 | 2    | AR 范围澄清       |ar-clarify            |     -            |      ✅           |        -       |        -        |       ✅          |        -       |        -        | 
-| 3    | 模块影响性分析    |module-impact-analysis|     -            |      ✅           |        -       |        -        |       ✅          |        -       |        -        | 
-| 4    | 模块交互设计      |module-interact-design|     -            |      ✅           |        -       |        -        |       ✅          |        -       |        -        | 
-| 5    | 模块详细设计划分  |module-asis-analysis  |     -            |      ✅           |         -      |        -        |       ✅          |         -      |        -        | 
-| 6    | 模块实现设计      |module-tobe-design    |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
-| 7    | 模块测试设计      | module-test-design    |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
-| 8    | 模块设计门禁      |module-design-gate    |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
-| 9    | 任务拆分          |task-split            |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
-| 10    | 代码实现          |task-dev              |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
+| 3    | 模块边界设计      |module-boundary-design|     -            |      ✅           |        -       |        -        |       ✅          |        -       |        -        | 
+| 4    | 模块详细设计划分  |module-asis-analysis  |     -            |      ✅           |         -      |        -        |       ✅          |         -      |        -        | 
+| 5    | 模块实现设计      |module-tobe-design    |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
+| 6    | 模块测试设计      | module-test-design    |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
+| 7    | 模块设计门禁      |module-design-gate    |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
+| 8    | 任务拆分          |task-split            |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
+| 9    | 代码实现          |task-dev              |     -            |     -            |        ❌       |        ❌       |      -            |        ❌       |        ❌       |
 ```
 
 **列说明：**
 
 - `{{模块A、模块B详细设计}}` 等：新增的模块分组列，按分组顺序排列
-- 步骤1-5（SR 设计到模块详细设计划分）：AR 列状态为 ✅，模块分组列为 -
-- 步骤6-9（模块实现设计到代码实现）：AR 列状态为 -，模块分组列对应用户的 ❌
+- 步骤1-4（SR 设计到模块详细设计划分）：AR 列状态为 ✅，模块分组列为 -
+- 步骤5-9（模块实现设计到代码实现）：AR 列状态为 -，模块分组列对应用户的 ❌
 
 **注意：** 拆分AR模式下，每个 AR 的模块分组列需要分别填写 ❌，表示该 AR 对应的模块分组尚未完成详细设计和实现。
 
