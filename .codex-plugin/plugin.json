@@ -1,0 +1,39 @@
+{
+  "name": "awesome-agent-workflow",
+  "version": "1.0.0",
+  "description": "SDD-based AI-driven software development workflow — 13 skills covering SR design through code implementation.",
+  "author": {
+    "name": "P!xel",
+    "url": "https://github.com/pi-ixel"
+  },
+  "homepage": "https://github.com/pi-ixel/Awesome-Agent-Workflow",
+  "repository": "https://github.com/pi-ixel/Awesome-Agent-Workflow",
+  "license": "MIT",
+  "keywords": [
+    "sdd",
+    "workflow",
+    "design",
+    "spec-driven",
+    "planning",
+    "tdd"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Awesome Agent Workflow",
+    "shortDescription": "SDD-based development workflow from SR design to code",
+    "longDescription": "Spec-driven development workflow: SR design, AR clarification, module impact/interaction design, design gate, task split, and implementation — 13 coordinated skills.",
+    "developerName": "P!xel",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "进入工作流",
+      "I want to design and implement a new feature"
+    ],
+    "websiteURL": "https://github.com/pi-ixel/Awesome-Agent-Workflow",
+    "brandColor": "#0A7CFF"
+  }
+}

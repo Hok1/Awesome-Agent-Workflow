@@ -1,0 +1,19 @@
+{
+  "name": "awesome-agent-workflow",
+  "version": "1.0.0",
+  "description": "SDD-based AI-driven software development workflow — 13 skills covering SR design through code implementation.",
+  "author": {
+    "name": "P!xel",
+    "url": "https://github.com/pi-ixel"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/pi-ixel/Awesome-Agent-Workflow",
+  "skills": ["./skills"],
+  "mcpServers": {
+    "question-tracker": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/sr-design/mcp_server.py"],
+      "env": {}
+    }
+  }
+}

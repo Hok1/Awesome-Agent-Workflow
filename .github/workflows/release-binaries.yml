@@ -1,0 +1,91 @@
+name: release-binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macos-arm64
+          - os: macos-13
+            label: macos-x86_64
+          - os: windows-latest
+            label: windows-x86_64
+          - os: ubuntu-latest
+            label: linux-x86_64
+          - os: ubuntu-24.04-arm
+            label: linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        working-directory: skills/sr-design
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller fastmcp
+
+      - name: Build binary
+        working-directory: skills/sr-design
+        run: pyinstaller mcp_server.spec --distpath ../../dist --noconfirm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: question-tracker-mcp-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  merge-macos-universal:
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Combine arm64 + x86_64 into universal2
+        run: |
+          mkdir -p dist
+          lipo -create \
+            "artifacts/question-tracker-mcp-macos-arm64/question-tracker-mcp" \
+            "artifacts/question-tracker-mcp-macos-x86_64/question-tracker-mcp" \
+            -output "dist/question-tracker-mcp-macos-universal2"
+          file "dist/question-tracker-mcp-macos-universal2"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: question-tracker-mcp-macos-universal2
+          path: dist/question-tracker-mcp-macos-universal2
+          if-no-files-found: error
+
+  release:
+    needs: [build, merge-macos-universal]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Stage files with platform suffix
+        run: |
+          mkdir -p release
+          cp "dist/question-tracker-mcp-windows-x86_64/question-tracker-mcp.exe" "release/question-tracker-mcp-windows-x86_64.exe"
+          cp "dist/question-tracker-mcp-macos-universal2/question-tracker-mcp-macos-universal2" "release/question-tracker-mcp-macos-universal2"
+          cp "dist/question-tracker-mcp-linux-x86_64/question-tracker-mcp" "release/question-tracker-mcp-linux-x86_64"
+          cp "dist/question-tracker-mcp-linux-arm64/question-tracker-mcp" "release/question-tracker-mcp-linux-arm64"
+          ls -la release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
