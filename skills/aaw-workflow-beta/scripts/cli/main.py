@@ -135,6 +135,7 @@ def next(
                     "input": s.input,
                     "output": s.output,
                     "available_next": s.available_next,
+                    "data": s.data_schema,
                     "deliverables_exist": mgr.check_deliverables(s),
                 }
                 for s in ready

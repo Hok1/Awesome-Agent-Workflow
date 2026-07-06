@@ -6,6 +6,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from .models import (
     DataError,
     Step,
@@ -18,144 +20,52 @@ from .models import (
 )
 
 # ---------------------------------------------------------------------------
-# Step templates  (all created with next=[], filled at aaw done)
+# Workflow definition loader
 # ---------------------------------------------------------------------------
 
-TEMPLATES: dict[str, dict] = {
-    "sr-design": {
-        "type": "sr-design",
-        "name": "sr-design",
-        "skill": ["sr-design"],
-        "prompt": "",
-        "input": [".sdd/software_architecture.md"],
-        "output": [".sdd/{SR}/SR-design.md"],
-        "available_next": ["ar-split"],
-    },
-    "ar-split": {
-        "type": "ar-split",
-        "name": "ar-split",
-        "skill": [],
-        "prompt": "根据SR-design拆分AR,并以AR编号创建目录",
-        "input": [".sdd/{SR}/SR-design.md"],
-        "output": [],
-        "available_next": ["ar-clarify", "module-boundary-design"],
-    },
-    "ar-clarify": {
-        "type": "ar-clarify",
-        "name": "{AR}-ar-clarify",
-        "skill": ["ar-clarify"],
-        "prompt": "",
-        "input": [".sdd/{SR}/SR-design.md", "{AR}:{描述}"],
-        "output": [".sdd/{SR}/{AR}/AR-clarify.md"],
-        "available_next": ["module-boundary-design"],
-    },
-    "module-boundary-design": {
-        "type": "module-boundary-design",
-        "name": "module-boundary-design",
-        "skill": ["module-boundary-design"],
-        "prompt": "",
-        "input": [".sdd/{SR}/{AR}/AR-clarify.md"],
-        "output": [".sdd/{SR}/{AR}/module-boundary-design.md"],
-        "available_next": ["module-detail-design-split"],
-    },
-    "module-detail-design-split": {
-        "type": "module-detail-design-split",
-        "name": "module-detail-design-split",
-        "skill": [],
-        "prompt": (
-            "读取 {SR}/{AR}/module-boundary-design.md，"
-            "分析受影响模块的耦合度和交互关系，将模块划分分组（每组 2-4 个模块）。"
-            "输出分组方案供 aaw done --data 使用。"
-            "若用户选择不拆分，所有模块归为一组。"
-        ),
-        "input": [".sdd/{SR}/{AR}/module-boundary-design.md"],
-        "output": [],
-        "available_next": ["module-asis-analysis"],
-    },
-    "module-asis-analysis": {
-        "type": "module-asis-analysis",
-        "name": "{模块组名}-module-asis-analysis",
-        "skill": ["module-asis-analysis"],
-        "prompt": "",
-        "input": [".sdd/{SR}/{AR}/module-boundary-design.md"],
-        "output": [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.context.md"],
-        "available_next": ["module-tobe-design"],
-    },
-    "module-tobe-design": {
-        "type": "module-tobe-design",
-        "name": "{模块组名}-module-tobe-design",
-        "skill": ["module-tobe-design"],
-        "prompt": "",
-        "input": [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.context.md"],
-        "output": [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md"],
-        "available_next": ["module-test-design"],
-    },
-    "module-test-design": {
-        "type": "module-test-design",
-        "name": "{模块组名}-module-test-design",
-        "skill": ["module-test-design"],
-        "prompt": "",
-        "input": [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md"],
-        "output": [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块测试用例设计.md"],
-        "available_next": ["module-design-gate"],
-    },
-    "module-design-gate": {
-        "type": "module-design-gate",
-        "name": "{模块组名}-module-design-gate",
-        "skill": ["module-design-gate"],
-        "prompt": "",
-        "input": [
-            ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.context.md",
-            ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md",
-            ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块测试用例设计.md",
-        ],
-        "output": [],
-        "available_next": ["task-split"],
-    },
-    "task-split": {
-        "type": "task-split",
-        "name": "task-split",
-        "skill": ["task-split"],
-        "prompt": "",
-        "input": [
-            ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md",
-            ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块测试用例设计.md",
-        ],
-        "output": [
-            ".sdd/{SR}/{AR}/{模块组名}_tasks/overview.md",
-            ".sdd/{SR}/{AR}/{模块组名}_tasks/T1-{任务标题}.md",
-            ".sdd/{SR}/{AR}/{模块组名}_tasks/T2-{任务标题}.md",
-        ],
-        "available_next": ["task-dev"],
-    },
-    "task-dev": {
-        "type": "task-dev",
-        "name": "T{序号}-task-dev",
-        "skill": ["task-dev"],
-        "prompt": "",
-        "input": [".sdd/{SR}/{AR}/{模块组名}_tasks/T{序号}-{任务标题}.md"],
-        "output": [],
-        "available_next": [],
-    },
-}
+_DEFINITIONS_DIR = Path(__file__).parent / "definitions"
 
-# Map parent type → successor type  (for 1:1 steps)
-NEXT_TYPE: dict[str, str] = {
-    "sr-design": "ar-split",
-    "ar-clarify": "module-boundary-design",
-    "module-boundary-design": "module-detail-design-split",
-    "module-asis-analysis": "module-tobe-design",
-    "module-tobe-design": "module-test-design",
-    "module-test-design": "module-design-gate",
-    "module-design-gate": "task-split",
-}
 
-# Fork types → successor type
-FORK_NEXT_TYPE: dict[str, str] = {
-    "ar-split": "ar-clarify",
-    "module-detail-design-split": "module-asis-analysis",
-    "task-split": "task-dev",
-}
+def _load_definition() -> dict[str, dict]:
+    """Load step definitions and flow.yaml, merge, set defaults, derive available_next."""
+    flow_path = _DEFINITIONS_DIR / "flow.yaml"
+    flow_raw = yaml.safe_load(flow_path.read_text("utf-8"))
+    edges: dict[str, dict] = flow_raw["edges"]
+
+    templates: dict[str, dict] = {}
+    for def_path in sorted(_DEFINITIONS_DIR.glob("*.yaml")):
+        fname = def_path.stem
+        if fname == "flow":
+            continue
+        raw = yaml.safe_load(def_path.read_text("utf-8"))
+        tmpl: dict = dict(raw)
+        tmpl["type"] = fname
+        tmpl.setdefault("skill", [])
+        tmpl.setdefault("prompt", "")
+        tmpl.setdefault("output", [])
+
+        edge = edges.get(fname, {})
+        kind = edge.get("kind", "")
+        if kind == "terminal":
+            tmpl["terminal"] = True
+            tmpl["available_next"] = []
+        elif kind == "choice":
+            fork = {k: v for k, v in edge.items() if k not in ("kind", "data_schema")}
+            tmpl["fork"] = fork
+            tmpl["available_next"] = list(fork.values())
+            tmpl["data_schema"] = edge.get("data_schema")
+        elif kind == "1toN":
+            tmpl["fork"] = edge["to"]
+            tmpl["available_next"] = [edge["to"]]
+            tmpl["data_schema"] = edge.get("data_schema")
+        elif kind == "1to1":
+            tmpl["successor"] = edge["to"]
+            tmpl["available_next"] = [edge["to"]]
+        else:
+            tmpl["available_next"] = []
+
+        templates[fname] = tmpl
+    return templates
 
 
 # ---------------------------------------------------------------------------
@@ -242,23 +152,27 @@ def _make_step(template: dict, step_id: int, vars_: dict[str, str], sdd_dir: Pat
         input=_resolve_paths(sdd_dir, inp),
         output=_resolve_paths(sdd_dir, out),
         available_next=template.get("available_next", []),
+        data_schema=template.get("data_schema"),
         next=[],
     )
 
 
-def _generate_1to1(wf: Workflow, parent: Step, sdd_dir: Path, _data: dict | None) -> tuple[list[int], list[Step]]:
+def _generate_1to1(wf: Workflow, parent: Step, sdd_dir: Path, templates: dict[str, dict],
+                   _data: dict | None) -> tuple[list[int], list[Step]]:
     """Generate one successor step (1:1 type)."""
-    successor_type = NEXT_TYPE[parent.type]
-    template = TEMPLATES[successor_type]
+    successor_type = templates[parent.type]["successor"]
+    template = templates[successor_type]
     vars_ = _extract_variables(parent, wf.sr)
     new_id = wf.next_id()
     return [new_id], [_make_step(template, new_id, vars_, sdd_dir)]
 
 
-def _generate_fork_ars(wf: Workflow, parent: Step, sdd_dir: Path, data: dict) -> tuple[list[int], list[Step]]:
+def _generate_fork_ars(wf: Workflow, parent: Step, sdd_dir: Path, templates: dict[str, dict],
+                       data: dict) -> tuple[list[int], list[Step]]:
     """Generate one ar-clarify per AR."""
     ars = validate_ars_data(data)
-    template = TEMPLATES["ar-clarify"]
+    successor_type = templates[parent.type]["fork"]["ars"]
+    template = templates[successor_type]
     vars_ = _extract_variables(parent, wf.sr)
     ids: list[int] = []
     steps: list[Step] = []
@@ -273,10 +187,12 @@ def _generate_fork_ars(wf: Workflow, parent: Step, sdd_dir: Path, data: dict) ->
     return ids, steps
 
 
-def _generate_fork_module_groups(wf: Workflow, parent: Step, sdd_dir: Path, data: dict) -> tuple[list[int], list[Step]]:
+def _generate_fork_module_groups(wf: Workflow, parent: Step, sdd_dir: Path, templates: dict[str, dict],
+                                 data: dict) -> tuple[list[int], list[Step]]:
     """Generate one module-asis-analysis per module group."""
     groups = validate_module_groups_data(data)
-    template = TEMPLATES["module-asis-analysis"]
+    successor_type = templates[parent.type]["fork"]
+    template = templates[successor_type]
     vars_ = _extract_variables(parent, wf.sr)
     ids: list[int] = []
     steps: list[Step] = []
@@ -291,10 +207,12 @@ def _generate_fork_module_groups(wf: Workflow, parent: Step, sdd_dir: Path, data
     return ids, steps
 
 
-def _generate_fork_tasks(wf: Workflow, parent: Step, sdd_dir: Path, data: dict) -> tuple[list[int], list[Step]]:
+def _generate_fork_tasks(wf: Workflow, parent: Step, sdd_dir: Path, templates: dict[str, dict],
+                         data: dict) -> tuple[list[int], list[Step]]:
     """Generate one task-dev per task."""
     tasks = validate_tasks_data(data)
-    template = TEMPLATES["task-dev"]
+    successor_type = templates[parent.type]["fork"]
+    template = templates[successor_type]
     vars_ = _extract_variables(parent, wf.sr)
     ids: list[int] = []
     steps: list[Step] = []
@@ -316,25 +234,28 @@ _FORK_GENERATORS = {
 }
 
 
-def _generate_ar_split(wf: Workflow, parent: Step, sdd_dir: Path, data: dict) -> tuple[list[int], list[Step]]:
+def _generate_ar_split(wf: Workflow, parent: Step, sdd_dir: Path, templates: dict[str, dict],
+                       data: dict) -> tuple[list[int], list[Step]]:
     """Handle ar-split: split mode → N ar-clarify, no_split mode → 1 boundary-design."""
     if "ars" in data:
-        return _generate_fork_ars(wf, parent, sdd_dir, data)
+        return _generate_fork_ars(wf, parent, sdd_dir, templates, data)
     elif data.get("mode") == "no_split":
+        fork = templates[parent.type]["fork"]
+        ref = templates[fork["no_split"]]
         vars_: dict[str, str] = {"SR": wf.sr, "AR": ""}
         new_id = wf.next_id()
         inp = _expand_list([".sdd/{SR}/SR-design.md"], vars_)
         out = _expand_list([".sdd/{SR}/module-boundary-design.md"], vars_)
         step = Step(
             id=new_id,
-            type="module-boundary-design",
-            name="module-boundary-design",
+            type=ref["type"],
+            name=ref["name"],
             finished=False,
-            skill=["module-boundary-design"],
+            skill=ref["skill"],
             prompt="",
             input=_resolve_paths(sdd_dir, inp),
             output=_resolve_paths(sdd_dir, out),
-            available_next=["module-detail-design-split"],
+            available_next=ref["available_next"],
             next=[],
         )
         return [new_id], [step]
@@ -355,6 +276,7 @@ class WorkflowManager:
 
     def __init__(self, sdd_dir: Path):
         self.sdd_dir = sdd_dir
+        self.templates = _load_definition()
 
     # ---- init ----
 
@@ -365,22 +287,7 @@ class WorkflowManager:
             raise WorkflowError(f"SR {sr} 已存在")
 
         sr_dir.mkdir(parents=True, exist_ok=True)
-        template = TEMPLATES["sr-design"]
-        vars_ = {"SR": sr}
-        inp = _expand_list(template.get("input", []), vars_)
-        out = _expand_list(template.get("output", []), vars_)
-        step1 = Step(
-            id=1,
-            type="sr-design",
-            name="sr-design",
-            finished=False,
-            skill=template.get("skill", []),
-            prompt=template.get("prompt", ""),
-            input=_resolve_paths(self.sdd_dir, inp),
-            output=_resolve_paths(self.sdd_dir, out),
-            available_next=template.get("available_next", []),
-            next=[],
-        )
+        step1 = _make_step(self.templates["sr-design"], 1, {"SR": sr}, self.sdd_dir)
         wf = Workflow(
             sr=sr,
             status="in_progress",
@@ -454,17 +361,17 @@ class WorkflowManager:
             pass
         elif step.type == "ar-split":
             data = parse_data(data_raw)
-            ids, new_steps = _generate_ar_split(wf, step, self.sdd_dir, data)
+            ids, new_steps = _generate_ar_split(wf, step, self.sdd_dir, self.templates, data)
             step.next = ids
             wf.steps.extend(new_steps)
         elif step.is_fork():
             data = parse_data(data_raw)
             generator = _FORK_GENERATORS[step.type]
-            ids, new_steps = generator(wf, step, self.sdd_dir, data)
+            ids, new_steps = generator(wf, step, self.sdd_dir, self.templates, data)
             step.next = ids
             wf.steps.extend(new_steps)
         else:
-            ids, new_steps = _generate_1to1(wf, step, self.sdd_dir, None)
+            ids, new_steps = _generate_1to1(wf, step, self.sdd_dir, self.templates, None)
             step.next = ids
             wf.steps.extend(new_steps)
 
@@ -517,7 +424,6 @@ class WorkflowManager:
             remaining: set[Path] = set()
             for d in dirs_to_check:
                 try:
-                    # Only delete if directory is empty (no files, no subdirs)
                     if d.exists() and not any(d.iterdir()):
                         d.rmdir()
                         deleted_files.append(str(d) + "/")

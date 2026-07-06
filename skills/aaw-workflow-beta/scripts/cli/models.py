@@ -26,6 +26,7 @@ class Step:
     input: list[str] = field(default_factory=list)
     output: list[str] = field(default_factory=list)
     available_next: list[str] = field(default_factory=list)
+    data_schema: dict | None = None
     next: list[int] = field(default_factory=list)
 
     @classmethod
@@ -40,6 +41,7 @@ class Step:
             input=data.get("input", []),
             output=data.get("output", []),
             available_next=data.get("available_next", []),
+            data_schema=data.get("data_schema"),
             next=data.get("next", []),
         )
 
@@ -54,6 +56,7 @@ class Step:
             "input": self.input,
             "output": self.output,
             "available_next": self.available_next,
+            "data_schema": self.data_schema,
             "next": self.next,
         }
 

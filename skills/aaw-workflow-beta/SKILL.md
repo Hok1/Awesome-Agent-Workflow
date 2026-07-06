@@ -23,13 +23,20 @@ python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
 {
   "ready": [{
     "id": 3,
-    "type": "ar-clarify",
-    "name": "AR-001-ar-clarify",
-    "skill": ["ar-clarify"],
-    "input":  ["...", "..."],
+    "type": "ar-split",
+    "name": "ar-split",
+    "skill": [],
+    "prompt": "询问用户：此 SR 是否需要拆分 AR？...",
+    "input":  ["..."],
     "output": ["..."],
-    "deliverables_exist": true,
-    "hint": "交付件已存在，请执行 aaw done --sr SR-XXX 3"
+    "data": {
+      "description": "询问用户是否拆分 AR，两种方式二选一",
+      "fields": {
+        "ars": {"description": "拆分 AR 时使用。列出所有 AR 及其标题。", "example": [{"id": "AR-001", "title": "用户管理"}]},
+        "mode": {"description": "不拆分时使用，固定填 no_split。", "example": "no_split"}
+      }
+    },
+    "deliverables_exist": false
   }],
   "done": false
 }
@@ -38,9 +45,11 @@ python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
 **关键判断逻辑：**
 
 - `deliverables_exist: true` → skill 之前已执行完，只是忘了 `done`。**不要重新执行 skill**，直接 `aaw done`
-- `deliverables_exist: false` → 正常执行 `load_skill`
+- `deliverables_exist: false` → 继续执行
 - `done: true` → 🎉 结束
-- `skill: []` → 按 `prompt` 字段执行，不加载 skill
+- `skill` 非空 → `load_skill` 对应技能
+- `skill` 为空 → 按 `prompt` 字段执行
+- `data` 不为 null → `aaw done` 时需要带 `--data`，格式参看 `data.fields` 的描述和示例
 
 ---
 
@@ -56,10 +65,18 @@ python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json  →  获取 { ready: 
   └─ ready 单个 → 向用户确认后进入
        │
        ▼
-load_skill / 执行 prompt  →  产出交付件
+  判断执行方式:
+    - skill 非空 → load_skill 执行子技能
+    - skill 为空 → 按 prompt 字段执行
        │
        ▼
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> [--data '...'] --json
+  检查交付件（对照 output 列表）
+       │
+       ▼
+  判断是否带 --data:
+    - data 为 null → python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json
+    - data 不为 null → 根据 data.fields 的描述和示例，与用户交互收集数据后:
+      python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<构造的JSON>' --json
        │
        ▼ (后继立即生成)
 aaw next --json → 展示 ready → 循环
@@ -115,66 +132,31 @@ python <skill-dir>/scripts/aaw.py done --sr SR-XXX 1 --json
 
 ## 推进流程（核心循环）
 
-### 通用循环
-
 ```
 LOOP:
   1. python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
   2. 解析响应:
      - done=true → 工作流完成，退出
+     - ready 多个 → 列出每个 step 的 id / name / type / input / output，让用户选择
      - ready 单个 → 向用户确认后进入
-     - ready 多个 → 列出让用户选择:
-       展示每个 step 的 id / name / type / input / output
-       用户选择 step id 后进入
-     - deliverables_exist=true → **跳过 skill 执行**，直接跳到步骤 6（aaw done）
-  3. 判断 step 类型:
+     - deliverables_exist=true → 跳过 skill 执行，直接跳到步骤 7（aaw done）
+  3. 判断执行方式:
      - skill 非空 → load_skill 执行子技能
-     - skill 为空 → 按 prompt 执行
-  4. 检查交付件（对照 step 的 output 列表）
+     - skill 为空 → 按 prompt 字段执行
+  4. 检查交付件（对照 step 的 output 列表），缺失则中断，不执行 done
   5. 判断是否需要 --data:
-     - type=ar-split → **先询问用户是否拆分 AR**，再决定 --data
-     - type=module-detail-design-split → 读取 boundary-design.md，分析模块组
-     - type=task-split → 读取设计文档，分析任务列表
-     - 其他 → 不需要
-  6. python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> [--data '...'] --json
-  7. 向用户报告，**询问是否继续**。是 → 回到步骤 1；否 → 提醒 `/new`。
+     - data 为 null → 跳过
+     - data 不为 null → 读取 data.fields 中每个字段的 description 和 example，
+       与用户交互收集所需数据，构造 JSON
+  6. 执行 done:
+
+     python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json          # data 为 null 时
+     python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<JSON>' --json  # data 不为 null 时
+
+  7. 向用户报告，询问是否继续。是 → 回到步骤 1；否 → 提醒 /new。
 ```
 
-### 分叉节点的 --data 格式
-
-以下 type 的 `aaw done` 必须带 `--data`，从产出文档中提取数据按格式构造：
-
-**ar-split**
-```
---data '{"ars": [{"id": "AR-001", "title": "用户管理"}, ...]}'
---data '{"mode": "no_split"}'
-```
-
-**module-detail-design-split**
-```
---data '{"module_groups": [{"name": "A,B", "modules": ["模块A","模块B"], "requirement": "用户管理"}, ...]}'
-```
-
-**task-split**
-```
---data '{"tasks": ["T1-用户CRUD", "T2-权限校验"]}'
-```
-
-### 具体 step 对应关系
-
-| step type | 做什么 | 是否需要 --data |
-|-----------|--------|----------------|
-| `sr-design` | load_skill sr-design | 否 |
-| `ar-split` | 按 prompt 执行，**询问用户是否拆分** | **是**（ars 或 mode:no_split） |
-| `ar-clarify` | load_skill ar-clarify | 否 |
-| `module-boundary-design` | load_skill module-boundary-design | 否 |
-| `module-detail-design-split` | 按 prompt 执行，**询问用户如何分组** | **是**（module_groups） |
-| `module-asis-analysis` | load_skill module-asis-analysis | 否 |
-| `module-tobe-design` | load_skill module-tobe-design | 否 |
-| `module-test-design` | load_skill module-test-design | 否 |
-| `module-design-gate` | load_skill module-design-gate | 否 |
-| `task-split` | load_skill task-split | **是**（tasks） |
-| `task-dev` | load_skill task-dev | 否 |
+**--data 构造原则：** 严格参照 `aaw next --json` 返回的 `data.fields` 中每个 key 的 `description` 和 `example`。例如字段 `ars` 的 example 为 `[{"id": "AR-001", "title": "用户管理"}]`，则构造 `{"ars": [{"id": "AR-001", "title": "用户管理"}]}` 作为 --data 的值。
 
 ---
 
@@ -226,10 +208,7 @@ python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
 
 # 完成
 python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json --data '{"mode":"no_split"}'
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json --data '{"ars":[...]}'
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json --data '{"module_groups":[...]}'
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json --data '{"tasks":[...]}'
+python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<JSON>' --json
 
 # 回退
 python <skill-dir>/scripts/aaw.py rollback --sr SR-XXX <id> --json
