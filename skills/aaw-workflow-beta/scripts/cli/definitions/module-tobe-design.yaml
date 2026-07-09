@@ -1,4 +1,9 @@
 name: "{模块组名}-module-tobe-design"
+execution: skill
 skill: [module-tobe-design]
-input: [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.context.md"]
-output: [".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md"]
+input:
+  - path: ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.context.md"
+    required: true
+output:
+  - path: ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md"
+    required: true

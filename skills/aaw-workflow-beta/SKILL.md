@@ -1,215 +1,130 @@
 ---
 name: aaw-workflow-beta
-description: 研发工作流管理入口技能（CLI 版）。使用 aaw CLI 管理状态，引导标准化开发步骤，协调调用各阶段子技能。
+description: 配置驱动的 AAW 工作流 CLI 入口技能。读取 aaw CLI 返回的自描述工作单，按工作单调用子技能、执行 prompt、检查交付件并推进流程。
 ---
 
 # AAW 工作流（CLI Beta）
 
-## 上下文恢复
+本 skill 只负责驱动 CLI 工作单，不包含具体业务节点知识。节点、入口、后继关系、变量映射、prompt、子 skill 调用和数据 schema 均由 CLI 读取配置后返回。
 
-执行 skill 时可能因上下文压缩丢失流程记忆。**任何时候忘记该做什么，执行以下命令即可恢复：**
+## 入口意图判定
 
-```bash
-# 1. 查看所有 SR 及进度
-python <skill-dir>/scripts/aaw.py status --json
+当用户通过本 skill 但没有给出明确指令（例如空输入、只说“使用 aaw-workflow-beta”、只贴需求但没说明继续还是新建）时，不要因为仓库中存在进行中的 workflow 就自动继续执行。
 
-# 2. 找到你的 SR，查看下一步
-python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
-```
-
-`aaw next` 返回的 JSON 包含恢复所需的一切：
-
-```json
-{
-  "ready": [{
-    "id": 3,
-    "type": "ar-split",
-    "name": "ar-split",
-    "skill": [],
-    "prompt": "询问用户：此 SR 是否需要拆分 AR？...",
-    "input":  ["..."],
-    "output": ["..."],
-    "data": {
-      "description": "询问用户是否拆分 AR，两种方式二选一",
-      "fields": {
-        "ars": {"description": "拆分 AR 时使用。列出所有 AR 及其标题。", "example": [{"id": "AR-001", "title": "用户管理"}]},
-        "mode": {"description": "不拆分时使用，固定填 no_split。", "example": "no_split"}
-      }
-    },
-    "deliverables_exist": false
-  }],
-  "done": false
-}
-```
-
-**关键判断逻辑：**
-
-- `deliverables_exist: true` → skill 之前已执行完，只是忘了 `done`。**不要重新执行 skill**，直接 `aaw done`
-- `deliverables_exist: false` → 继续执行
-- `done: true` → 🎉 结束
-- `skill` 非空 → `load_skill` 对应技能
-- `skill` 为空 → 按 `prompt` 字段执行
-- `data` 不为 null → `aaw done` 时需要带 `--data`，格式参看 `data.fields` 的描述和示例
-
----
-
-## 核心模式
-
-每一步的标准流程：
-
-```
-python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json  →  获取 { ready: [...], done }
-  │
-  ├─ done=true → 🎉 结束
-  ├─ ready 多个 → 引导用户选择
-  └─ ready 单个 → 向用户确认后进入
-       │
-       ▼
-  判断执行方式:
-    - skill 非空 → load_skill 执行子技能
-    - skill 为空 → 按 prompt 字段执行
-       │
-       ▼
-  检查交付件（对照 output 列表）
-       │
-       ▼
-  判断是否带 --data:
-    - data 为 null → python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json
-    - data 不为 null → 根据 data.fields 的描述和示例，与用户交互收集数据后:
-      python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<构造的JSON>' --json
-       │
-       ▼ (后继立即生成)
-aaw next --json → 展示 ready → 循环
-```
-
----
-
-## 进入流程
-
-### 1. 检查环境
+先执行：
 
 ```bash
 python <skill-dir>/scripts/aaw.py status --json
 ```
 
-- `.sdd/` 不存在 → 提示用户先执行 `repo-init` skill 初始化项目
-- `.sdd/` 存在 → 列出已有 SR 目录
+然后按以下规则处理：
 
-### 2. 选择或创建 SR
+1. 如果用户明确说“继续 / 恢复 / 查看进度 / 处理 SR-XXX”，进入恢复流程。
+2. 如果用户明确说“新建 / 启动 / 从 SR 入口 / 从 AR 入口”，进入启动流程。
+3. 如果用户意图不明确且已有 workflow，列出已有 SR，并询问用户是继续已有 workflow，还是新开 SR/AR workflow；等待用户选择，不要执行 `next`。
+4. 如果用户意图不明确且没有已有 workflow，询问用户选择 SR 入口还是 AR 入口，并收集启动所需变量。
+5. 如果用户要继续但没有指定 SR，且存在多个 workflow，列出候选 SR 并让用户选择。
 
-已有 SR → 列出让用户选择，进入「推进流程」。
-无 SR 或新建 → 用户提供 SR 号（需来自 iDesigner）：
+启动新 workflow 前必须确认新的 `SR`；不要复用已有 `.sdd/<SR>/workflow.yaml`，除非用户明确表示要继续该 SR。
+
+## 恢复上下文
+
+当用户明确要继续某个 workflow，或已在入口意图判定中选择继续后，执行：
 
 ```bash
-python <skill-dir>/scripts/aaw.py init --sr SR-XXX
-```
-
-然后进入「首次执行」。
-
----
-
-## 首次执行
-
-新创建的 SR 只有 step 1（sr-design），必须完整执行：
-
-```
+python <skill-dir>/scripts/aaw.py status --json
 python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
-→ ready: [{id: 1, type: "sr-design", skill: ["sr-design"], ...}]
 ```
 
-1. 向用户说明：`现在进入 Step 1：SR 设计 —— 将 iDesigner SR 转化为结构化设计文档`
-2. `load_skill sr-design`，完整执行。**不得跳过 sr-design 的澄清流程**
-3. 检查交付件 `.sdd/SR-XXX/SR-design.md` 是否生成
-4. 标记完成：
+`next --json` 返回的 `ready` 就是当前可执行工作单。不要依赖记忆判断下一步，始终以 CLI 返回为准。
+
+## 启动流程
+
+使用入口启动一条工作流：
 
 ```bash
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX 1 --json
+python <skill-dir>/scripts/aaw.py start --entry sr --sr SR-XXX --json
+python <skill-dir>/scripts/aaw.py start --entry ar --sr SR-XXX --ar AR-XXX --title "AR描述" --json
 ```
 
-5. 向用户报告，**询问是否继续**。是 → 进入「推进流程」；否 → 提醒 `/new`。
+AR 入口要求当前仓库已经执行过 `repo-init`，并且存在 `.sdd/software_architecture.md`。如果该文件缺失，`next --json` 会在工作单的 `inputs` 中标记 blocked，且 `done` 会失败。
 
----
-
-## 推进流程（核心循环）
-
-```
-LOOP:
-  1. python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
-  2. 解析响应:
-     - done=true → 工作流完成，退出
-     - ready 多个 → 列出每个 step 的 id / name / type / input / output，让用户选择
-     - ready 单个 → 向用户确认后进入
-     - deliverables_exist=true → 跳过 skill 执行，直接跳到步骤 7（aaw done）
-  3. 判断执行方式:
-     - skill 非空 → load_skill 执行子技能
-     - skill 为空 → 按 prompt 字段执行
-  4. 检查交付件（对照 step 的 output 列表），缺失则中断，不执行 done
-  5. 判断是否需要 --data:
-     - data 为 null → 跳过
-     - data 不为 null → 读取 data.fields 中每个字段的 description 和 example，
-       与用户交互收集所需数据，构造 JSON
-  6. 执行 done:
-
-     python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json          # data 为 null 时
-     python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<JSON>' --json  # data 不为 null 时
-
-  7. 向用户报告，询问是否继续。是 → 回到步骤 1；否 → 提醒 /new。
-```
-
-**--data 构造原则：** 严格参照 `aaw next --json` 返回的 `data.fields` 中每个 key 的 `description` 和 `example`。例如字段 `ars` 的 example 为 `[{"id": "AR-001", "title": "用户管理"}]`，则构造 `{"ars": [{"id": "AR-001", "title": "用户管理"}]}` 作为 --data 的值。
-
----
-
-## 多就绪 step 时的用户提示
-
-当 `aaw next` 返回多个就绪 step 时，需要向用户清晰展示上下文：
-
-```
-当前就绪的步骤：
-  [3] AR-001-ar-clarify
-      input:  .sdd/SR-001/SR-design.md, AR-001:用户管理
-      output: .sdd/SR-001/AR-001/AR-clarify.md
-  [4] AR-002-ar-clarify
-      input:  .sdd/SR-001/SR-design.md, AR-002:权限控制
-      output: .sdd/SR-001/AR-002/AR-clarify.md
-
-请选择要继续的 step：
-```
-
----
-
-## 交付件检查
-
-每步完成后对照 step 的 `output` 列表检查文件是否存在。如果缺失，提示用户 skill 执行可能不完整，不执行 `aaw done`。
-
----
-
-## 建议新开会话
-
-每完成一个 step 后提醒用户：
-
-> ✅ step N 已完成。建议 `/new` 新开会话，输入 `/aaw-workflow-beta` 从中断处继续，避免上下文膨胀影响效果。
-
----
-
-## CLI 命令速查
+也可以使用通用变量形式：
 
 ```bash
-# 初始化
-python <skill-dir>/scripts/aaw.py init
-python <skill-dir>/scripts/aaw.py init --sr SR-XXX
+python <skill-dir>/scripts/aaw.py start --entry ar --var SR=SR-XXX --var AR=AR-XXX --var TITLE="AR描述" --json
+```
+
+## 工作单字段
+
+每个 `ready` 工作单包含：
+
+- `id` / `type` / `name`：步骤标识。
+- `execution`：执行方式，常见值为 `skill`、`prompt`、`manual`、`noop`。
+- `skill`：需要加载的子技能列表。
+- `prompt`：需要按自然语言或结构化步骤执行的指令。
+- `data` / `data_prompt`：完成 step 时需要构造的 `--data` 结构说明。
+- `data_file`：需要 `--data-file` 时的建议 JSON 文件路径；文件位于 `.sdd/<SR>/.aaw/data/`。
+- `input` / `output`：输入和交付件列表；路径项会带 `exists`。
+- `inputs`：required 输入检查结果；若 `blocked=true` 或 `missing_required` 非空，不要执行该工作单，也不要执行 `done`。
+- `deliverables`：强制交付件检查结果；`commands.done` 也会校验 required output，缺失时 CLI 会拒绝推进。
+- `commands.done`：完成当前 step 的可执行命令模板；若需要数据，默认使用 `--data-file <JSON_FILE>`。
+- `commands.done_argv`：同一命令的参数数组形式，便于工具调用。
+- `commands.done_inline`：使用 `--data '<JSON>'` 的备用命令；仅在确认当前 shell 引号行为可靠时使用。
+
+## 执行循环
+
+每一步都按以下协议执行：
+
+1. 执行 `next --sr SR-XXX --json`。
+2. 若 `done=true`，流程结束。
+3. 若有多个 `ready`，向用户列出 `id/name/type/input/output` 并让用户选择。
+4. 若 `inputs.blocked=true`，先补齐 `inputs.missing_required` 中列出的 required 输入；缺失时不要执行子 skill，也不要执行 `commands.done`。
+5. 若 `deliverables.can_skip=true`，说明强制交付件已存在；不要重复执行子 skill。若 `data` 为空，可直接执行 `commands.done`；若 `data` 不为空，仍需先按 `data.fields` 构造数据文件。
+6. 按 `execution` 执行：
+   - `skill`：加载并完整执行 `skill` 中列出的子技能；若同时存在 `prompt` 或 `data_prompt`，在子技能完成后继续按其说明收集数据。
+   - `prompt`：按 `prompt` 执行。
+   - `manual`：等待用户或外部动作完成。
+   - `noop`：无需额外执行，按工作单继续推进。
+7. 对照 `deliverables.required` 检查强制交付件；缺失时不要执行 done。
+8. 若 `data` 不为空，根据 `data.fields` 和 `data_prompt` 构造 JSON，写入 `data_file.path`，然后执行 `commands.done`。
+9. 执行 `commands.done`，然后回到第 1 步。
+
+### 门禁节点
+
+`module-design-gate` 是准入门禁，不是普通直通节点。执行 gate skill 后必须先生成工作单 `output` 指定的门禁结果文件。
+
+- 若门禁结论为 `通过`，向 CLI 提交 `{"gate_result":"pass", ...}`，`done` 成功后进入 `task-split`。
+- 若门禁结论为 `不通过` 或 `阻塞`，不要推进到 `task-split`；可提交 `gate_result=fail/blocked` 获取 CLI 拒绝提示，但 step 会保持未完成。
+- 不通过/阻塞时默认原地修正 ASIS/TOBE/测试设计成果物，然后重新执行 gate。不要自动 rollback；只有用户明确要求重走上游节点，或已经生成了需要废弃的下游 step 时，才执行 `rollback`。
+
+## 命令速查
+
+```bash
+# 启动
+python <skill-dir>/scripts/aaw.py start --entry sr --sr SR-XXX --json
+python <skill-dir>/scripts/aaw.py start --entry ar --sr SR-XXX --ar AR-XXX --title "AR描述" --json
 
 # 查看
 python <skill-dir>/scripts/aaw.py status --json
 python <skill-dir>/scripts/aaw.py status --sr SR-XXX --json
-
-# 推进
 python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
 
-# 完成
+# 推进
 python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json
-python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<JSON>' --json
+python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data-file data.json --json
+python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<JSON>' --json  # 备用
 
 # 回退
 python <skill-dir>/scripts/aaw.py rollback --sr SR-XXX <id> --json
 ```
+
+## 会话建议
+
+每完成一个 step 后建议用户新开会话，并通过：
+
+```bash
+python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
+```
+
+从 CLI 状态恢复，不需要依赖上一轮上下文。

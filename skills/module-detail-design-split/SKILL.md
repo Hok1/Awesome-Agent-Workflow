@@ -1,10 +1,16 @@
 ---
 name: module-detail-design-split
-description: 模块详细设计划分。根据 module-boundary-design.md 中受影响模块的影响性和交互关系，将模块划分为若干组，每组内的模块一起进行模块详细设计（module-asis-analysis / module-tobe-design / module-test-design）。用户确认后更新 workflow.md。用于 AAW 工作流步骤 4。Use when the user asks for 模块详细设计划分、module-detail-design-split、模块分组设计。
+description: 模块详细设计划分。根据 module-boundary-design.md 中受影响模块的影响性和交互关系，将模块划分为若干组，每组内的模块一起进行模块详细设计（module-asis-analysis / module-tobe-design / module-test-design）。适用于独立使用或旧版 aaw-workflow；aaw-workflow-beta 使用配置中的 prompt-only 节点收集 module_groups，不直接加载本 skill。Use when the user asks for 模块详细设计划分、module-detail-design-split、模块分组设计。
 version: 1.0
 ---
 
 # Module Detail Design Split
+
+## 适用范围
+
+本 skill 适用于独立执行模块分组，或服务旧版 `aaw-workflow` 中需要更新 `workflow.md` 的流程。
+
+`aaw-workflow-beta` 不直接加载本 skill。beta 流程中的 `module-detail-design-split` 是一个配置驱动的 prompt-only 节点：Agent 按工作单读取 `module-boundary-design.md`，向用户确认模块分组，并在 `aaw done` 时提交 `{"module_groups":[...]}` 数据，由 CLI 根据配置生成后续 `module-asis-analysis` 节点。
 
 ## 执行流程
 
@@ -187,13 +193,6 @@ version: 1.0
 
 ## 完成后回调
 
-> 若不处于 aaw-workflow-beta 编排中，请忽略此节。
+> 若不处于旧版 `aaw-workflow` 编排中，请忽略此节。`aaw-workflow-beta` 的同名节点由 CLI 配置和工作单 prompt 驱动，不执行本回调。
 
-本 skill 由 `aaw-workflow-beta` 编排调用。交付件生成后：
-
-1. 返回 aaw-workflow-beta 流程
-2. 执行 `aaw next --sr <SR号> --json` 查看进度
-3. 若返回 `deliverables_exist: true` → 直接 `aaw done --sr <SR> <id>`
-4. 否则 → 正常执行下一步，询问用户是否继续
-
-不记得 SR 号 → 先 `aaw status --json`
+本 skill 由旧版 `aaw-workflow` 编排调用时，交付件生成后返回上层工作流，并按旧版工作流的进度文档继续推进。不要把本 skill 的完成状态回写到 `aaw-workflow-beta`；beta 同名节点只消费 `module_groups` 数据。

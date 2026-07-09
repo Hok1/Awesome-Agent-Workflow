@@ -1,176 +1,226 @@
-# 工作流定义扩展指南
+# AAW 工作流配置说明
 
-`definitions/` 目录定义了 AAW 工作流的所有步骤及其拓扑关系。扩展时只需修改此目录，无需改动 Python 代码。
+`definitions/` 目录定义工作流入口、节点、后继关系、变量映射和 prompt。Python CLI 只解释通用配置，不应写入具体业务节点名。
 
----
+## 文件结构
 
-## 目录结构
-
-```
+```text
 definitions/
-├── flow.yaml                      # DAG 拓扑（edge 定义）
-├── sr-design.yaml                 # 步骤定义（每步骤一个文件）
-├── ar-split.yaml
-├── ar-clarify.yaml
-├── module-boundary-design.yaml
-├── module-detail-design-split.yaml
-├── module-asis-analysis.yaml
-├── module-tobe-design.yaml
-├── module-test-design.yaml
-├── module-design-gate.yaml
-├── task-split.yaml
-└── task-dev.yaml
+├── flow.yaml
+├── <node-type>.yaml
+└── prompts/
+    └── <prompt>.md
 ```
 
----
+## 入口
 
-## 添加新步骤
+入口定义在 `flow.yaml`：
 
-### 1. 创建步骤 YAML
+```yaml
+entrypoints:
+  sr:
+    start: sr-init
+    vars: [SR]
+  ar:
+    start: ar-init
+    vars: [SR, AR, 描述]
+```
 
-新建 `definitions/<step-type>.yaml`，字段如下：
+CLI 使用 `start` 创建运行实例：
 
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `name` | ✅ | 步骤显示名，可用 `{VAR}` 占位符（如 `{AR}-ar-clarify`） |
-| `skill` | ❌ | 对应的子技能名列表（如 `[sr-design]`）。为空表示 LLM 按 `prompt` 自行执行 |
-| `prompt` | ❌ | `skill` 为空时，LLM 的执行指令 |
-| `input` | ❌ | 输入文件列表，支持 `{VAR}` 占位符，相对于 `.sdd/` |
-| `output` | ❌ | 交付件文件列表，支持 `{VAR}` 占位符，用于交付件检查 |
+```bash
+aaw start --entry sr --sr SR-001
+aaw start --entry ar --sr SR-001 --ar AR-001 --title "用户管理"
+aaw start --entry ar --var SR=SR-001 --var AR=AR-001 --var TITLE="用户管理"
+```
 
-**示例——1:1 后继步骤（ar-clarify.yaml）：**
+`start` 只创建 `.sdd/<SR>/workflow.yaml` 并放入入口节点；初始化本身必须建模为普通节点。
+
+AR 入口同样要求仓库已经执行过 `repo-init`，并存在 `.sdd/software_architecture.md`。这个前置条件由 `ar-init.yaml` 的 required input 承载，CLI 会在 `next` 工作单中暴露缺失输入，并在 `done` 时阻断。
+
+## 节点
+
+节点文件以 `<node-type>.yaml` 命名：
 
 ```yaml
 name: "{AR}-ar-clarify"
+execution: skill
 skill: [ar-clarify]
-input: [".sdd/{SR}/SR-design.md", "{AR}:{描述}"]
-output: [".sdd/{SR}/{AR}/AR-clarify.md"]
+input:
+  - value: "{AR}:{描述}"
+  - path: ".sdd/{SR}/SR-design.md"
+    required: false
+  - path: ".sdd/{SR}/{AR}/AR-source.md"
+    required: false
+output:
+  - path: ".sdd/{SR}/{AR}/AR-clarify.md"
+    required: true
 ```
 
-**示例——分叉 / 需要 --data 的步骤（ar-split.yaml）：**
+字段说明：
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 展示名，支持 `{变量}` |
+| `execution` | 执行方式：`skill` / `prompt` / `manual` / `noop` |
+| `skill` | 子技能名列表，仅 `execution: skill` 必需 |
+| `prompt` | 执行指令，可用 inline、template、steps |
+| `data_prompt` | 收集 `--data` 的补充说明 |
+| `input` | 输入项，支持 `path` 或 `value`；`path` 可通过 `required` 控制是否阻断执行 |
+| `output` | 交付件路径项；`required` 控制是否纳入强制检查，缺失时 `done` 会失败 |
+
+## Prompt
+
+支持三种 prompt 配置：
 
 ```yaml
-name: ar-split
-prompt: |
-  询问用户：此 SR 是否需要拆分 AR？
-  ...
-input: [".sdd/{SR}/SR-design.md"]
+prompt:
+  inline: |
+    询问用户是否拆分 AR。
 ```
-
-### 2. 在 flow.yaml 添加 edge
-
-`flow.yaml` 只描述步骤间关系，四种 `kind`：
-
----
-
-#### kind: 1to1 — 完成 → 生成 1 个固定后继
 
 ```yaml
-sr-design: { kind: 1to1, to: ar-split }
+prompt:
+  template: "prompts/ar-split.md"
 ```
 
-`to` 指向目标步骤 YAML 的文件名（不含 `.yaml`）。
+```yaml
+prompt:
+  steps:
+    - read: "读取边界设计"
+    - propose: "给出模块分组建议"
+    - confirm: "向用户确认"
+```
 
----
+CLI 会在 `next --json` 中返回解析后的 `prompt.rendered`。
 
-#### kind: 1toN — 完成 → 根据 --data 生成 N 个后继
+## 后继关系
+
+后继关系定义在 `flow.yaml` 的 `edges`。
+
+### direct
+
+```yaml
+sr-design:
+  kind: direct
+  to: ar-split
+```
+
+完成后生成一个固定后继。
+
+### foreach
 
 ```yaml
 task-split:
-  kind: 1toN
+  kind: foreach
   to: task-dev
-  data_schema:
-    description: "从 task-split 生成的 tasks 目录中提取任务列表"
-    fields:
-      tasks:
-        description: "任务名称列表，每个任务对应一个独立开发单元。"
-        example: ["T1-用户CRUD", "T2-权限校验"]
+  foreach: data.tasks
+  item_validation:
+    reject_pattern: "^T\\d+-"
+    message: "tasks 列表项不要包含 T1-/T2- 前缀，只填写任务标题。"
+  vars:
+    序号: "{index}"
+    任务标题: "{item}"
 ```
 
-- `to`：目标步骤模板名。
-- `data_schema`：**必填**。LLM 看到 `aaw next --json` 的 `data` 字段后，根据 `description` 理解含义、根据 `example` 构造 `--data` JSON。
-- 生成数量由 `--data` 中数组长度决定（如 `tasks` 有 3 项 → 生成 3 个 `task-dev`）。
+`foreach` 指向 `--data` 中的数组。每个数组项生成一个后继节点。
 
----
+`item_validation` 是可选校验规则，用于拒绝格式错误的数组项。当前支持 `reject_pattern`，匹配时 `done` 失败且不写入后继节点。典型用途是防止 `task-split` 回填 `tasks` 时带入 `T1-` 前缀，避免下游生成 `T1-T1-xxx.md`。
 
-#### kind: choice — 完成 → 用户从多选项中选一个
+### choice
 
 ```yaml
 ar-split:
   kind: choice
-  ars: ar-clarify
-  no_split: module-boundary-design
-  data_schema:
-    description: "询问用户是否拆分 AR，两种方式二选一"
-    fields:
-      ars:
-        description: "拆分 AR 时使用。列出所有 AR 及其标题。"
-        example: [{id: AR-001, title: 用户管理}]
-      mode:
-        description: "不拆分时使用，固定填 no_split。"
-        example: no_split
+  choices:
+    - when: data.ars
+      to: ar-clarify
+      foreach: data.ars
+      vars:
+        AR: "{item.id}"
+        描述: "{item.title}"
+    - when: data.mode == 'no_split'
+      to: module-boundary-design
+      vars:
+        AR: "ALL"
 ```
 
-- 除了 `data_schema` 外的每个 key 都是一个选项（`ars`、`no_split`），值为目标步骤模板名。
-- LLM 根据 `data_schema.fields` 与用户交互后，选择构造对应的 `--data`（如 `{"ars": [...]}` 或 `{"mode": "no_split"}`）。
-- 如果每个选项对应不同的后继步骤，只需添加更多 key。
+按顺序匹配 `when`。命中带 `foreach` 的分支时生成多个后继，否则生成一个后继。
 
-> ⚠️ `choice` 目前只有 `ar-split` 一个实例。如果新步骤不需这种二选一行为，应使用 `1to1` 或 `1toN`。
-
----
-
-#### kind: terminal — 终点
+`choice` 可配置 `reject`，用于明确拒绝某些数据值，并保持当前 step 未完成、不生成下游：
 
 ```yaml
-task-dev: { kind: terminal }
+module-design-gate:
+  kind: choice
+  choices:
+    - when: data.gate_result == 'pass'
+      to: task-split
+  reject:
+    - when: data.gate_result == 'fail'
+      message: "门禁不通过，不能进入 task-split。"
+    - when: data.gate_result == 'blocked'
+      message: "门禁阻塞，不能进入 task-split。"
 ```
 
-完成后不生成后继，工作流在此终止。
+AR 拆分数据中，`id` 是稳定目录标识（如 `AR-001`），`title` 是可读标题。后续目录变量使用 `id`，人工说明使用 `title`。
 
----
-
-### 3. data_schema 规范
-
-`data_schema` 用于 `1toN` 和 `choice` 类型，定义 LLM 需要收集的结构化数据。LLM 通过 `aaw next --json` 的 `data` 字段获取。
-
-格式：
+### terminal
 
 ```yaml
-data_schema:
-  description: "一句话说明这个步骤需要用户提供什么数据"
-  fields:
-    <key-name>:
-      description: "这个字段的含义、选项说明"
-      example: <示例值>
+task-dev:
+  kind: terminal
 ```
 
-- `description`：向 LLM 解释数据用途。
-- `example`：用真实值演示格式。LLM 会参照此格式构造 JSON。
+完成后不生成后继。
 
----
+## 表达式范围
 
-## 变量传递
+配置表达式保持最小能力：
 
-步骤之间通过占位符 `{VAR}` 传递上下文。可用变量：
+- `data.<field>`：来自 `aaw done --data`。
+- `item` / `item.<field>`：当前 foreach 项。
+- `index`：foreach 序号，从 1 开始。
+- 普通变量：如 `{SR}`、`{AR}`、`{模块组名}`。
+- `when` 支持 truthy 判断和简单等值判断，如 `data.mode == 'no_split'`。
 
-| 变量 | 来源 | 说明 |
-|------|------|------|
-| `{SR}` | 初始化时传入 | SR 编号，如 `SR-001` |
-| `{AR}` | ar-split 的 --data 或 _extract_variables | AR 编号，如 `AR-001` |
-| `{描述}` | ar-split 的 --data | AR 标题描述 |
-| `{需求短名}` | module-detail-design-split 的 --data | 需求短名 |
-| `{模块组名}` | module-detail-design-split 的 --data | 模块组缩写，如 `模块A,B` |
-| `{序号}` | task-split 的 --data | 任务序号，如 `1`、`2` |
-| `{任务标题}` | task-split 的 --data | 任务标题，如 `T1-用户CRUD` |
+不得在配置中引入任意代码执行。
 
----
+## next JSON 契约
 
-## 添加 skill
+`aaw next --json` 返回自描述工作单：
 
-如果新步骤需要调用子技能（`skill` 字段非空），需确保：
+```json
+{
+  "ready": [{
+    "id": 3,
+    "type": "ar-split",
+    "execution": "prompt",
+    "skill": [],
+    "prompt": {"template": "prompts/ar-split.md", "rendered": "..."},
+    "data": {"fields": {}},
+    "data_file": {
+      "path": "D:/repo/.sdd/SR-001/.aaw/data/step-0003-ar-split.json",
+      "relative_path": ".sdd/SR-001/.aaw/data/step-0003-ar-split.json",
+      "encoding": "utf-8",
+      "overwrite": true
+    },
+    "input": [{"path": "D:/repo/.sdd/SR-001/SR-design.md", "required": false, "exists": true}],
+    "inputs": {
+      "required": [],
+      "optional": ["D:/repo/.sdd/SR-001/SR-design.md"],
+      "missing_required": [],
+      "all_required_exist": true,
+      "blocked": false
+    },
+    "deliverables": {"can_skip": false},
+    "commands": {
+      "done": "python D:/.../scripts/aaw.py done --sr SR-001 3 --data-file D:/repo/.sdd/SR-001/.aaw/data/step-0003-ar-split.json --json",
+      "done_argv": ["python", "D:/.../scripts/aaw.py", "done", "--sr", "SR-001", "3", "--data-file", "D:/repo/.sdd/SR-001/.aaw/data/step-0003-ar-split.json", "--json"],
+      "done_inline": "python D:/.../scripts/aaw.py done --sr SR-001 3 --data '<JSON>' --json",
+      "legacy_done": "aaw done --sr SR-001 3 --data '<JSON>' --json"
+    }
+  }]
+}
+```
 
-1. `skills/` 目录下存在对应的 skill（如 `skills/sr-design/`）
-2. skill 的 `SKILL.md` 中 `name` 字段与步骤 YAML 的 `skill` 值一致
-3. 在 `flow.yaml` 中添加对应的 edge
-
-无需修改 `main.py`、`models.py` 或 `workflow.py`。
+Skill.md 只消费此工作单，不应写入具体节点逻辑。

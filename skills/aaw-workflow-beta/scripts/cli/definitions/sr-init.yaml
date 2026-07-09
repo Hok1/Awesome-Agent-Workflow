@@ -1,0 +1,9 @@
+name: sr-init
+execution: skill
+skill: [repo-init]
+input: []
+output:
+  - path: ".sdd/software_architecture.md"
+    required: true
+data_prompt:
+  description: "初始化项目 SDD 目录和软件架构上下文；若交付件已存在，可直接 done。"

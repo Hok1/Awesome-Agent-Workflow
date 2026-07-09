@@ -1,3 +1,7 @@
 name: "T{序号}-task-dev"
+execution: skill
 skill: [task-dev]
-input: [".sdd/{SR}/{AR}/{模块组名}_tasks/T{序号}-{任务标题}.md"]
+input:
+  - path: ".sdd/{SR}/{AR}/{模块组名}_tasks/T{序号}-{任务标题}.md"
+    required: true
+output: []

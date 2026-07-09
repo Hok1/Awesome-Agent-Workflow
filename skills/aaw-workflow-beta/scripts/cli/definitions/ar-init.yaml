@@ -1,0 +1,16 @@
+name: "{AR}-ar-init"
+execution: prompt
+prompt:
+  steps:
+    - check: "确认当前 AR 编号和描述可用于后续澄清。"
+    - collect: "如用户提供了 iDesigner AR 原文、链接摘要或长描述，写入 .sdd/{SR}/{AR}/AR-source.md，作为后续 ar-clarify 的输入上下文。"
+    - confirm: "向用户确认从该 AR 直接进入工作流。"
+input:
+  - path: ".sdd/software_architecture.md"
+    required: true
+  - value: "{AR}:{描述}"
+output:
+  - path: ".sdd/{SR}/{AR}/AR-source.md"
+    required: false
+data_prompt:
+  description: "AR 入口要求仓库已执行 repo-init，并已存在 .sdd/software_architecture.md；如存在 AR 原文或长描述，可落盘到可选 AR-source.md。"
