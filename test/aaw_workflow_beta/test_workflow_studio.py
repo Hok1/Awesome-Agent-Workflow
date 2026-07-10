@@ -44,6 +44,7 @@ class WorkflowStudioTests(unittest.TestCase):
 
         self.assertEqual(1, len(gate_edges))
         self.assertEqual("choice", gate_edges[0]["kind"])
+        self.assertEqual("must", gate_edges[0]["user_confirm"])
 
     def test_config_summarizes_prompt_and_data_fields(self) -> None:
         config = server.load_config()

@@ -25,6 +25,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DEFINITIONS_DIR = SCRIPT_DIR.parent / "cli" / "definitions"
 NODE_TYPE_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 TOKEN_ENV = "AAW_STUDIO_TOKEN"
+USER_CONFIRM_VALUES = {"skip", "ask", "must"}
 
 
 class StudioError(Exception):
@@ -140,6 +141,7 @@ def build_edges(flow: dict[str, Any]) -> list[dict[str, Any]]:
                         "kind": kind,
                         "label": edge.get("foreach") if kind == "foreach" else "direct",
                         "branch_index": None,
+                        "user_confirm": edge.get("user_confirm") or "skip",
                     }
                 )
         elif kind == "choice":
@@ -160,6 +162,7 @@ def build_edges(flow: dict[str, Any]) -> list[dict[str, Any]]:
                         "kind": "choice",
                         "label": label,
                         "branch_index": index,
+                        "user_confirm": choice.get("user_confirm") or edge.get("user_confirm") or "skip",
                     }
                 )
     return result
@@ -203,6 +206,8 @@ def validate_config(
         kind = normalize_kind(str(edge.get("kind") or "terminal"))
         if kind in {"direct", "foreach"} and edge.get("to") not in node_names:
             errors.append(f"{source} 指向不存在的节点: {edge.get('to')}")
+        if edge.get("user_confirm") and edge.get("user_confirm") not in USER_CONFIRM_VALUES:
+            errors.append(f"{source}.user_confirm 必须是 skip、ask 或 must")
         if kind == "choice":
             choices = edge.get("choices") or []
             if not choices:
@@ -213,6 +218,8 @@ def validate_config(
                     continue
                 if choice.get("to") not in node_names:
                     errors.append(f"{source}.choices[{index}] 指向不存在的节点: {choice.get('to')}")
+                if choice.get("user_confirm") and choice.get("user_confirm") not in USER_CONFIRM_VALUES:
+                    errors.append(f"{source}.choices[{index}].user_confirm 必须是 skip、ask 或 must")
         if kind not in {"direct", "foreach", "choice", "terminal"}:
             warnings.append(f"{source} 使用了未知 edge kind: {kind}")
 
