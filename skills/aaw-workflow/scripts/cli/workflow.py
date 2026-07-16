@@ -265,15 +265,9 @@ def _edge_rejections(edge: dict[str, Any]) -> list[dict[str, Any]]:
 # Step creation and IO rendering
 # ---------------------------------------------------------------------------
 
-def _resolve_path(sdd_dir: Path, path: str) -> str:
-    abs_sdd = str(sdd_dir.resolve()).replace("\\", "/")
-    if path.startswith(".sdd/"):
-        return abs_sdd + "/" + path[5:]
-    if path == ".sdd":
-        return abs_sdd
-    if path.startswith(".sdd"):
-        return abs_sdd + path[4:]
-    return path
+def _normalize_stored_path(path: str) -> str:
+    """Keep IO paths as repo-relative (``.sdd/...``) so workflow.yaml stays portable."""
+    return path.replace("\\", "/")
 
 
 def _render_io_items(sdd_dir: Path, items: list[dict[str, Any]], vars_: dict[str, Any]) -> list[dict[str, Any]]:
@@ -281,7 +275,7 @@ def _render_io_items(sdd_dir: Path, items: list[dict[str, Any]], vars_: dict[str
     for item in items:
         out = _expand_obj(item, vars_)
         if "path" in out:
-            out["path"] = _resolve_path(sdd_dir, out["path"])
+            out["path"] = _normalize_stored_path(out["path"])
         rendered.append(out)
     return rendered
 
@@ -490,21 +484,32 @@ class WorkflowManager:
         edge = self.templates[step.type]["edge"]
         return edge.get("kind") in {"choice", "foreach"} or bool(step.data_schema)
 
-    @staticmethod
-    def _annotate_io(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _resolve(self, stored_path: str) -> Path:
+        """Restore a repo-relative stored path (``.sdd/...``) to an actual FS path.
+
+        Storage keeps paths relative to the repo root; ``sdd_dir.parent`` is that
+        root (``.`` in production, the temp dir in tests), so joining yields the
+        real location without baking in an absolute path.
+        """
+        return self.sdd_dir.parent / stored_path
+
+    def _annotate_io(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         annotated: list[dict[str, Any]] = []
         for item in items:
             out = dict(item)
             if "path" in out:
-                out["exists"] = Path(out["path"]).exists()
+                resolved = self._resolve(out["path"])
+                out["exists"] = resolved.exists()
+                # Keep the stored value repo-relative; expose an absolute path so
+                # the agent can locate the file regardless of its own CWD.
+                out["abs_path"] = str(resolved.resolve()).replace("\\", "/")
             annotated.append(out)
         return annotated
 
-    @staticmethod
-    def check_inputs(step: Step) -> dict[str, Any]:
+    def check_inputs(self, step: Step) -> dict[str, Any]:
         inputs = [item for item in step.input if "path" in item]
         required = [item for item in inputs if item.get("required", True)]
-        missing = [item["path"] for item in required if not Path(item["path"]).exists()]
+        missing = [item["path"] for item in required if not self._resolve(item["path"]).exists()]
         return {
             "required": [item["path"] for item in required],
             "optional": [item["path"] for item in inputs if not item.get("required", True)],
@@ -513,11 +518,10 @@ class WorkflowManager:
             "blocked": len(missing) > 0,
         }
 
-    @staticmethod
-    def check_deliverables(step: Step) -> dict[str, Any]:
+    def check_deliverables(self, step: Step) -> dict[str, Any]:
         outputs = [item for item in step.output if "path" in item]
         required = [item for item in outputs if item.get("required", True)]
-        missing = [item["path"] for item in required if not Path(item["path"]).exists()]
+        missing = [item["path"] for item in required if not self._resolve(item["path"]).exists()]
         return {
             "required": [item["path"] for item in required],
             "optional": [item["path"] for item in outputs if not item.get("required", True)],
@@ -753,7 +757,7 @@ class WorkflowManager:
                 out_path = item.get("path")
                 if not out_path:
                     continue
-                p = Path(out_path)
+                p = self._resolve(out_path)
                 if p.exists() and p.is_file():
                     p.unlink()
                     deleted_files.append(str(p))

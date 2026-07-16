@@ -58,4 +58,4 @@ http://192.168.1.23:8765/
 建议同时提交：
 
 - `README.md`
-- `test/aaw_workflow_beta/test_workflow_studio.py`
+- `test/aaw_workflow/test_workflow_studio.py`

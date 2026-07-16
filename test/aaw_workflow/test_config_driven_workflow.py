@@ -27,13 +27,17 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def _abs(self, stored_path: str) -> Path:
+        """Resolve a repo-relative stored path the same way the manager does."""
+        return self.root / stored_path
+
     def _touch_required_inputs(self, wf, step_id: int) -> None:
         step = wf.get_step(step_id)
         assert step is not None
         for item in step.input:
             path = item.get("path")
             if path and item.get("required", True):
-                p = Path(path)
+                p = self._abs(path)
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text("required input", "utf-8")
 
@@ -43,7 +47,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
         for item in step.output:
             path = item.get("path")
             if path and item.get("required", True):
-                p = Path(path)
+                p = self._abs(path)
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text("required output", "utf-8")
 
@@ -345,7 +349,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
         first = self.mgr.build_next_payload(wf)["ready"][0]
 
         self.assertTrue(first["inputs"]["blocked"])
-        self.assertTrue(first["inputs"]["missing_required"][0].endswith("/.sdd/software_architecture.md"))
+        self.assertEqual(".sdd/software_architecture.md", first["inputs"]["missing_required"][0])
         with self.assertRaises(WorkflowError):
             self.mgr.mark_done(wf, 1)
 
@@ -415,7 +419,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
         wf = self._workflow_at_gate("SR-GATE-FAIL")
         gate_step = wf.get_step(8)
         assert gate_step is not None
-        report = Path(gate_step.output[0]["path"])
+        report = self._abs(gate_step.output[0]["path"])
 
         with self.assertRaises(DataError) as ctx:
             self._done(
@@ -442,7 +446,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
         wf = self._workflow_at_gate("SR-GATE-BLOCKED")
         gate_step = wf.get_step(8)
         assert gate_step is not None
-        report = Path(gate_step.output[0]["path"])
+        report = self._abs(gate_step.output[0]["path"])
 
         with self.assertRaises(DataError) as ctx:
             self._done(
@@ -538,7 +542,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
         self._done(wf, 1)
         ar_step = wf.get_step(2)
         assert ar_step is not None
-        ar_output = Path(ar_step.output[0]["path"])
+        ar_output = self._abs(ar_step.output[0]["path"])
         ar_output.parent.mkdir(parents=True, exist_ok=True)
         ar_output.write_text("clarified", "utf-8")
         self._done(wf, 2)
@@ -550,6 +554,41 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual([1], [s.id for s in wf.steps])
         self.assertFalse(wf.steps[0].finished)
         self.assertEqual([], wf.steps[0].next)
+
+    def test_io_paths_are_stored_repo_relative(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-REL"})
+        step = wf.get_step(1)
+        assert step is not None
+
+        for item in step.input + step.output:
+            path = item.get("path")
+            if path:
+                self.assertFalse(
+                    Path(path).is_absolute(),
+                    msg=f"stored path must be repo-relative, got {path!r}",
+                )
+                self.assertTrue(path.startswith(".sdd/"), msg=path)
+
+    def test_workflow_is_portable_after_moving_sdd_dir(self) -> None:
+        # Author the workflow and produce the required deliverable under root A.
+        wf = self.mgr.start("sr", {"SR": "SR-MOVE"})
+        self.mgr.mark_started(wf, 1)
+        self._touch_required_outputs(wf, 1)
+
+        # Relocate the whole .sdd tree to a fresh root B and validate from there.
+        import shutil
+
+        other_root = Path(self.tmp.name) / "relocated"
+        other_root.mkdir()
+        shutil.move(str(self.sdd), str(other_root / ".sdd"))
+
+        moved_mgr = WorkflowManager(other_root / ".sdd")
+        moved_wf = moved_mgr.load("SR-MOVE")
+        # The required output travelled with the tree, so check_deliverables must
+        # resolve it relative to the new root — no absolute path baked into yaml.
+        self.assertTrue(moved_mgr.check_deliverables(moved_wf.get_step(1))["can_skip"])
+        result = moved_mgr.mark_done(moved_wf, 1)
+        self.assertEqual(1, result["generated"])
 
 
 if __name__ == "__main__":
