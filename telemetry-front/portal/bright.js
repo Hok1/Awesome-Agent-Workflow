@@ -1061,6 +1061,10 @@
     }
     // y 轴自上而下按流程顺序，故反转（echarts category 底部为首项）。
     const rows = [...items].reverse();
+    // 各步骤到达量跨多个数量级（foreach 放大），绝对值堆叠会把小步骤压成细刺、
+    // 让阻塞/失败段不可见。图的职责是"分布"，故按行归一化为百分比堆叠，
+    // 绝对吞吐量以行末标注与 tooltip 呈现。
+    const share = (part, r) => (r.reached > 0 ? part / r.reached : 0);
     // 高度随步骤数自适应：漏斗承载完整流程序列，行数增多时保持每行呼吸感。
     const dom = chart.getDom();
     const wantHeight = Math.max(300, rows.length * 30 + 70);
@@ -1069,14 +1073,16 @@
       chart.resize();
     }
     chart.setOption({
-      grid: { ...gridBase, left: 8, right: 24, top: 16 },
+      grid: { ...gridBase, left: 8, right: 52, top: 16 },
       tooltip: {
         trigger: "axis",
         ...tooltipBase(),
         axisPointer: { type: "shadow", shadowStyle: { color: "rgba(75,63,228,.06)" } },
         formatter: (arr) => {
-          const name = arr[0].axisValue;
-          return `${name}<br/>${arr.map((s) => `${s.marker}${s.seriesName} <b>${fmtFull(s.value)}</b>`).join("<br/>")}`;
+          const i = arr[0].dataIndex;
+          const head = `${arr[0].axisValue} · 到达 <b>${fmtFull(rows[i].reached)}</b>`;
+          const line = (s) => `${s.marker}${s.seriesName} <b>${fmtFull(s.data.abs)}</b> (${Math.round(s.value * 100)}%)`;
+          return `${head}<br/>${arr.map(line).join("<br/>")}`;
         },
       },
       legend: {
@@ -1087,8 +1093,9 @@
       },
       xAxis: {
         type: "value",
+        max: 1,
         axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { ...axisText, formatter: fmtInt }, splitLine,
+        axisLabel: { ...axisText, formatter: (v) => Math.round(v * 100) + "%" }, splitLine,
       },
       yAxis: {
         type: "category",
@@ -1099,7 +1106,7 @@
       series: [
         {
           name: "完成", type: "bar", stack: "s", barWidth: "56%",
-          data: rows.map((r) => r.completed),
+          data: rows.map((r) => ({ value: share(r.completed, r), abs: r.completed })),
           itemStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
               { offset: 0, color: C.grassDeep }, { offset: 1, color: C.grass2 },
@@ -1109,13 +1116,19 @@
         },
         {
           name: "阻塞", type: "bar", stack: "s",
-          data: rows.map((r) => r.blocked),
+          data: rows.map((r) => ({ value: share(r.blocked, r), abs: r.blocked })),
           itemStyle: { color: hexA(C.tangerine, 0.55) },
         },
         {
           name: "失败", type: "bar", stack: "s",
-          data: rows.map((r) => r.failed),
+          data: rows.map((r) => ({ value: share(r.failed, r), abs: r.failed })),
           itemStyle: { color: hexA(C.magenta, 0.6), borderRadius: [0, 6, 6, 0] },
+          // 行末标注该步骤的到达总量，保留吞吐量维度。
+          label: {
+            show: true, position: "right", distance: 6,
+            formatter: (p) => fmtInt(rows[p.dataIndex].reached),
+            color: C.inkMute, fontFamily: FONT_MONO, fontSize: 10.5,
+          },
         },
       ],
       animationDuration: 600,
