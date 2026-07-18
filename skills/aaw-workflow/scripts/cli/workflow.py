@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,41 +25,111 @@ from .models import (
 _DEFINITIONS_DIR = Path(__file__).parent / "definitions"
 _VAR_RE = re.compile(r"\{([^{}]+)\}")
 _USER_CONFIRM_VALUES = {"skip", "ask", "must"}
+# skills root of this install: cli/ -> scripts/ -> aaw-workflow/ -> skills root
+# (lexical, no symlink resolution -- same self-location rule as cli.update)
+_SKILLS_ROOT = Path(os.path.abspath(__file__)).parents[3]
 
 
 # ---------------------------------------------------------------------------
-# Workflow definition loader
+# Workflow definition loader (three layers, docs/auto-update-design.md §4.7)
 # ---------------------------------------------------------------------------
 
-def _load_definition() -> dict[str, Any]:
-    """Load all workflow definitions and normalize them into runtime templates."""
-    flow_path = _DEFINITIONS_DIR / "flow.yaml"
-    flow_raw = yaml.safe_load(flow_path.read_text("utf-8")) or {}
-    edges: dict[str, dict[str, Any]] = flow_raw.get("edges", {})
+def _definition_layers(sdd_dir: Path | None) -> list[Path]:
+    """内置 -> 安装级扩展 -> 项目级扩展; only the built-in layer is required.
+
+    Extension layers live OUTSIDE the managed aaw-workflow/ directory so a
+    full-package update never touches them."""
+    layers = [_DEFINITIONS_DIR]
+    install_ext = _SKILLS_ROOT / ".aaw-extensions" / "definitions"
+    if install_ext.is_dir():
+        layers.append(install_ext)
+    if sdd_dir is not None:
+        project_ext = Path(sdd_dir) / ".aaw" / "definitions"
+        if project_ext.is_dir():
+            layers.append(project_ext)
+    return layers
+
+
+def _load_definition(sdd_dir: Path | None = None) -> dict[str, Any]:
+    """Load and merge workflow definitions from all layers.
+
+    Same-named entrypoints, node templates or edges across layers are a hard
+    conflict reporting both source paths -- never a silent override."""
+    entrypoints: dict[str, Any] = {}
+    edges: dict[str, dict[str, Any]] = {}
+    raw_templates: dict[str, dict[str, Any]] = {}
+    sources: dict[str, str] = {}  # "entry:x" / "node:x" / "edge:x" -> source path
+    version = 1
+
+    for layer_dir in _definition_layers(sdd_dir):
+        builtin = layer_dir == _DEFINITIONS_DIR
+        flow_path = layer_dir / "flow.yaml"
+        if flow_path.is_file():
+            flow_raw = yaml.safe_load(flow_path.read_text("utf-8")) or {}
+            if builtin:
+                version = flow_raw.get("version", 1)
+            for key, value in (flow_raw.get("entrypoints") or {}).items():
+                _claim(sources, f"entry:{key}", f"entrypoint {key}", flow_path)
+                entrypoints[key] = value
+            for key, value in (flow_raw.get("edges") or {}).items():
+                _claim(sources, f"edge:{key}", f"edge {key}", flow_path)
+                edges[key] = value
+        elif builtin:
+            raise WorkflowError(f"内置 flow.yaml 不存在: {flow_path}")
+
+        for def_path in sorted(layer_dir.glob("*.yaml")):
+            if def_path.stem == "flow":
+                continue
+            raw = yaml.safe_load(def_path.read_text("utf-8")) or {}
+            _claim(sources, f"node:{def_path.stem}", f"节点 {def_path.stem}", def_path)
+            raw_templates[def_path.stem] = {
+                "raw": raw,
+                "layer_dir": layer_dir,
+                "builtin": builtin,
+                "path": def_path,
+            }
 
     templates: dict[str, dict[str, Any]] = {}
-    for def_path in sorted(_DEFINITIONS_DIR.glob("*.yaml")):
-        if def_path.stem == "flow":
-            continue
-        raw = yaml.safe_load(def_path.read_text("utf-8")) or {}
-        tmpl = _normalize_node_template(raw, def_path.stem)
-        edge = _normalize_edge(edges.get(def_path.stem, {}))
+    for type_name, entry in raw_templates.items():
+        tmpl = _normalize_node_template(entry["raw"], type_name, entry["layer_dir"])
+        if not entry["builtin"]:
+            _check_extension_skills(tmpl, entry["path"])
+        edge = _normalize_edge(edges.get(type_name, {}))
         tmpl["edge"] = edge
         tmpl["available_next"] = _available_next(edge)
         if edge.get("data_schema"):
             tmpl["data_schema"] = edge["data_schema"]
-        templates[def_path.stem] = tmpl
+        templates[type_name] = tmpl
 
     return {
-        "version": flow_raw.get("version", 1),
-        "entrypoints": flow_raw.get("entrypoints", {}),
+        "version": version,
+        "entrypoints": entrypoints,
         "templates": templates,
     }
 
 
-def _normalize_node_template(raw: dict[str, Any], type_name: str) -> dict[str, Any]:
+def _claim(sources: dict[str, str], key: str, label: str, path: Path) -> None:
+    if key in sources:
+        raise WorkflowError(
+            f"definition 冲突: {label} 同时定义于 {sources[key]} 和 {path}"
+        )
+    sources[key] = str(path)
+
+
+def _check_extension_skills(tmpl: dict[str, Any], source: Path) -> None:
+    """Extension YAML skill references are validated at runtime: the target
+    skill directory must exist next to this install (docs §4.7)."""
+    for name in tmpl.get("skill") or []:
+        if not (_SKILLS_ROOT / name / "SKILL.md").is_file():
+            raise WorkflowError(
+                f"扩展 definition {source} 引用的 Skill 不存在或缺少 SKILL.md: "
+                f"{_SKILLS_ROOT / name}"
+            )
+
+
+def _normalize_node_template(raw: dict[str, Any], type_name: str, layer_dir: Path) -> dict[str, Any]:
     skill = normalize_skill(raw.get("skill"))
-    prompt = _normalize_prompt(raw.get("prompt"))
+    prompt = _normalize_prompt(raw.get("prompt"), layer_dir)
     execution = raw.get("execution")
     if not execution:
         if skill:
@@ -81,7 +152,7 @@ def _normalize_node_template(raw: dict[str, Any], type_name: str) -> dict[str, A
     }
 
 
-def _normalize_prompt(raw: Any) -> dict[str, Any] | None:
+def _normalize_prompt(raw: Any, layer_dir: Path) -> dict[str, Any] | None:
     if not raw:
         return None
     if isinstance(raw, str):
@@ -91,7 +162,7 @@ def _normalize_prompt(raw: Any) -> dict[str, Any] | None:
 
     prompt = dict(raw)
     if "template" in prompt:
-        template_path = _DEFINITIONS_DIR / str(prompt["template"])
+        template_path = layer_dir / str(prompt["template"])
         if not template_path.exists():
             raise WorkflowError(f"prompt template 不存在: {template_path}")
         prompt["rendered"] = template_path.read_text("utf-8")
@@ -351,7 +422,7 @@ class WorkflowManager:
 
     def __init__(self, sdd_dir: Path):
         self.sdd_dir = sdd_dir
-        definition = _load_definition()
+        definition = _load_definition(sdd_dir)
         self.entrypoints: dict[str, dict[str, Any]] = definition["entrypoints"]
         self.templates: dict[str, dict[str, Any]] = definition["templates"]
 

@@ -11,7 +11,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -22,6 +24,37 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 
+class _NoReleaseHandler(BaseHTTPRequestHandler):
+    """Hermetic endpoint: release queries see "no release published"; every
+    other request (telemetry uploads) fails with 404 like before."""
+
+    def do_GET(self):  # noqa: N802
+        if self.path == "/api/v1/client/release":
+            payload = b'{"latest_version": null}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):  # noqa: N802
+        self.send_response(404)
+        self.end_headers()
+
+    do_PUT = do_POST
+
+    def log_message(self, *args):  # silence
+        pass
+
+
+_fixture_server = ThreadingHTTPServer(("127.0.0.1", 0), _NoReleaseHandler)
+threading.Thread(target=_fixture_server.serve_forever, daemon=True).start()
+FIXTURE_ENDPOINT = f"http://127.0.0.1:{_fixture_server.server_address[1]}"
+
+
 class CliTestBase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -30,12 +63,19 @@ class CliTestBase(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_cli(self, *args: str, expect: int = 0) -> subprocess.CompletedProcess:
+    def run_cli(
+        self,
+        *args: str,
+        expect: int = 0,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess:
         env = {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
-            # Hermetic: never reach the real telemetry endpoint.
-            "AAW_TELEMETRY_ENDPOINT": "http://127.0.0.1:1",
+            # Hermetic: telemetry + release queries hit a local fixture server
+            # that publishes no release and rejects uploads.
+            "AAW_TELEMETRY_ENDPOINT": FIXTURE_ENDPOINT,
+            **(extra_env or {}),
         }
         result = subprocess.run(
             [sys.executable, str(AAW_SCRIPT), *args],

@@ -5,3 +5,9 @@ __pycache__/
 dist/
 *.egg-info/
 .aaw/
+.aaw-update.lock
+.aaw-update-*/
+.aaw-stage-*/
+.aaw-txn-*/
+.aaw-handoff-*
+.venv/
