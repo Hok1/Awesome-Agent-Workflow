@@ -24,15 +24,28 @@ from pathlib import Path
 
 from _cli_base import ROOT
 
+from cli.update import _definition_skill_refs
+
 REAL_SKILL = ROOT / "skills" / "aaw-workflow"
+# skills referenced by the real bundled definitions; declared as external in
+# the test release manifest and materialised in the tmp install
+DEFINITION_REFS = sorted(_definition_skill_refs(REAL_SKILL / "scripts" / "cli" / "definitions"))
 OLD_VERSION = "1.1.0"
 NEW_VERSION = "1.2.0"
 
 
 def _zip_install(skill_dir: Path, version: str) -> bytes:
     """Package a working copy of the skill as a release zip with the given VERSION."""
+    manifest = {
+        "schema": 1,
+        "version": version,
+        "skills": ["aaw-workflow"],
+        "external_skills": DEFINITION_REFS,
+        "removed_skills": [],
+    }
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as bundle:
+        bundle.writestr("release-manifest.json", json.dumps(manifest))
         for path in sorted(skill_dir.rglob("*")):
             if path.is_dir() or "__pycache__" in path.parts:
                 continue
@@ -108,6 +121,10 @@ class AutoUpdateTests(unittest.TestCase):
         self.skills_root = root / "skills"
         self.install = self.skills_root / "aaw-workflow"
         shutil.copytree(REAL_SKILL, self.install, ignore=shutil.ignore_patterns("__pycache__"))
+        # materialise the externally-referenced skills so sanity passes
+        for name in DEFINITION_REFS:
+            (self.skills_root / name).mkdir()
+            (self.skills_root / name / "SKILL.md").write_text(f"# {name}", "utf-8")
         self.project = root / "project"
         self.project.mkdir()
         _CountingHandler.releases = {}
@@ -142,10 +159,10 @@ class AutoUpdateTests(unittest.TestCase):
         return (self.install / "scripts" / "cli" / "VERSION").read_text("utf-8").strip()
 
     def handoff_files(self) -> list[Path]:
-        return list(self.skills_root.glob(".aaw-update-handoff-*"))
+        return list(self.skills_root.glob(".aaw-handoff-*"))
 
     def _write_handoff(self, token: str, target_version: str) -> Path:
-        path = self.skills_root / ".aaw-update-handoff-test.json"
+        path = self.skills_root / ".aaw-handoff-test.json"
         path.write_text(json.dumps({
             "schema": 1,
             "token": token,
@@ -220,7 +237,30 @@ class AutoUpdateTests(unittest.TestCase):
         self.assertIn("warning", result.stderr)
         self.assertEqual(OLD_VERSION, self.installed_version())
         self.assertTrue((self.project / ".sdd" / "SR100" / "workflow.yaml").exists())
-        self.assertEqual([], list(self.skills_root.glob(".aaw-update-*/")))
+        residue = [
+            p for p in self.skills_root.iterdir()
+            if p.name.startswith(".aaw-txn-") or p.name.startswith(".aaw-stage-")
+        ]
+        self.assertEqual([], residue)
+
+    def test_start_recovers_residue_even_without_new_release(self) -> None:
+        # docs §4.2: every command recovers local residue before any network I/O
+        tx_dir = self.skills_root / ".aaw-txn-deadbeef"
+        tx_dir.mkdir()
+        (tx_dir / "transaction.json").write_text(json.dumps({
+            "schema": 2,
+            "skills_root": str(self.skills_root),
+            "skills": ["aaw-workflow"],
+            "removed_skills": [],
+            "phase": "committed",
+            "steps": {},
+        }), "utf-8")
+
+        result = self.run_cli("start", "--sr", "SR100", "--json")
+
+        json.loads(result.stdout)
+        self.assertFalse(tx_dir.exists())
+        self.assertEqual(OLD_VERSION, self.installed_version())
 
     # -- handoff protocol -------------------------------------------------
 

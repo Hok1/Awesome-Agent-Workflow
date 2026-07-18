@@ -7,4 +7,7 @@ dist/
 .aaw/
 .aaw-update.lock
 .aaw-update-*/
+.aaw-stage-*/
+.aaw-txn-*/
+.aaw-handoff-*
 .venv/

@@ -1,4 +1,4 @@
-"""Tests for `aaw update` (cli/update.py): transaction, lock, recovery.
+"""Tests for `aaw update` (cli/update.py): staged transaction, lock, recovery.
 
 Most cases drive cli.update in-process with an injected tmp install dir so the
 real repository checkout is never touched (docs/auto-update-design.md §4.5).
@@ -24,6 +24,7 @@ import _cli_base  # noqa: F401  (adds scripts dir to sys.path)
 from _cli_base import CliTestBase
 
 from cli import update as cli_update
+from cli.install_lock import InstallLock, LockTimeout
 from cli.update import UpdateError, recover_transaction, run_update
 
 OLD_VERSION = "1.1.0"
@@ -35,9 +36,23 @@ def _build_zip(
     skills: tuple[str, ...] = ("aaw-workflow",),
     omit_skill_md: str | None = None,
     slip_entry: str | None = None,
+    manifest_version: str | None = None,
+    manifest_skills: list[str] | None = None,
+    external: tuple[str, ...] = (),
+    removed: tuple[str, ...] = (),
+    omit_manifest: bool = False,
 ) -> bytes:
+    manifest = {
+        "schema": 1,
+        "version": manifest_version or version,
+        "skills": list(manifest_skills if manifest_skills is not None else skills),
+        "external_skills": list(external),
+        "removed_skills": list(removed),
+    }
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as bundle:
+        if not omit_manifest:
+            bundle.writestr("release-manifest.json", json.dumps(manifest))
         for name in skills:
             if name != omit_skill_md:
                 bundle.writestr(f"{name}/SKILL.md", f"# {name} {version}")
@@ -53,6 +68,7 @@ def _build_zip(
 
 class _ReleaseHandler(BaseHTTPRequestHandler):
     releases: dict[str, bytes] = {}
+    size_override: int | None = None
 
     def do_GET(self):  # noqa: N802
         if self.path == "/api/v1/client/release":
@@ -60,10 +76,11 @@ class _ReleaseHandler(BaseHTTPRequestHandler):
                 body = {"latest_version": None}
             else:
                 latest = max(self.releases, key=lambda v: tuple(int(p) for p in v.split(".")))
+                size = len(self.releases[latest])
                 body = {
                     "latest_version": latest,
                     "file_name": f"aaw-skills-{latest}.zip",
-                    "size_bytes": len(self.releases[latest]),
+                    "size_bytes": self.size_override if self.size_override is not None else size,
                     "released_at": "2026-01-01T00:00:00Z",
                 }
             payload = json.dumps(body).encode("utf-8")
@@ -105,8 +122,13 @@ class UpdateTestBase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         _ReleaseHandler.releases = {}
+        _ReleaseHandler.size_override = None
+        # keep lock-wait failures fast in tests
+        self.env = patch.dict(os.environ, {"AAW_LOCK_TIMEOUT": "2"})
+        self.env.start()
 
     def tearDown(self) -> None:
+        self.env.stop()
         self.tmp.cleanup()
 
     def make_install(self, version: str = OLD_VERSION, extra_skills: tuple[str, ...] = ()) -> Path:
@@ -124,8 +146,14 @@ class UpdateTestBase(unittest.TestCase):
     def official_version(self) -> str:
         return (self.root / "skills" / "aaw-workflow" / "scripts" / "cli" / "VERSION").read_text("utf-8").strip()
 
-    def residual_tx_dirs(self) -> list[Path]:
-        return [p for p in (self.root / "skills").iterdir() if p.name.startswith(".aaw-update-")]
+    def residual_dirs(self) -> list[Path]:
+        return [
+            p for p in (self.root / "skills").iterdir()
+            if p.name.startswith(".aaw-txn-") or p.name.startswith(".aaw-stage-")
+        ]
+
+    def update(self, install: Path):
+        return run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
 
 
 class UpdateFlowTests(UpdateTestBase):
@@ -133,51 +161,86 @@ class UpdateFlowTests(UpdateTestBase):
         install = self.make_install(extra_skills=("zz-extra",))
         _ReleaseHandler.releases = {NEW_VERSION: _build_zip(skills=("aaw-workflow", "zz-extra"))}
 
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+        result = self.update(install)
 
-        self.assertTrue(result["updated"])
-        self.assertEqual(OLD_VERSION, result["old_version"])
-        self.assertEqual(NEW_VERSION, result["new_version"])
+        self.assertEqual("updated", result["status"])
+        self.assertEqual(OLD_VERSION, result["from_version"])
+        self.assertEqual(NEW_VERSION, result["to_version"])
+        self.assertEqual(["aaw-workflow", "zz-extra"], sorted(result["updated_skills"]))
         self.assertEqual(NEW_VERSION, self.official_version())
         self.assertIn(NEW_VERSION, (self.root / "skills" / "zz-extra" / "SKILL.md").read_text("utf-8"))
-        self.assertEqual([], self.residual_tx_dirs())
+        self.assertEqual([], self.residual_dirs())
 
     def test_noop_when_already_latest(self) -> None:
         install = self.make_install(version=NEW_VERSION)
         _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
 
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+        result = self.update(install)
 
-        self.assertFalse(result["updated"])
+        self.assertEqual("up_to_date", result["status"])
         self.assertEqual(NEW_VERSION, self.official_version())
 
     def test_noop_when_server_has_no_release(self) -> None:
         install = self.make_install()
 
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+        result = self.update(install)
 
-        self.assertFalse(result["updated"])
+        self.assertEqual("up_to_date", result["status"])
+
+    def test_new_skill_added_and_user_skill_untouched(self) -> None:
+        install = self.make_install()
+        (self.root / "skills" / "my-own-skill").mkdir()
+        (self.root / "skills" / "my-own-skill" / "SKILL.md").write_text("# mine", "utf-8")
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip(skills=("aaw-workflow", "brand-new"))}
+
+        result = self.update(install)
+
+        self.assertEqual("updated", result["status"])
+        self.assertTrue((self.root / "skills" / "brand-new" / "SKILL.md").is_file())
+        self.assertEqual("# mine", (self.root / "skills" / "my-own-skill" / "SKILL.md").read_text("utf-8"))
+
+    def test_removed_skill_deleted_only_after_commit(self) -> None:
+        install = self.make_install(extra_skills=("legacy-skill",))
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip(removed=("legacy-skill",))}
+
+        result = self.update(install)
+
+        self.assertEqual("updated", result["status"])
+        self.assertEqual(["legacy-skill"], result["removed_skills"])
+        self.assertFalse((self.root / "skills" / "legacy-skill").exists())
+        self.assertEqual([], self.residual_dirs())
+
+    def test_extensions_dir_untouched_by_update(self) -> None:
+        install = self.make_install()
+        ext = self.root / "skills" / ".aaw-extensions" / "definitions"
+        ext.mkdir(parents=True)
+        (ext / "custom.yaml").write_text("name: custom", "utf-8")
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
+
+        self.update(install)
+
+        self.assertEqual("name: custom", (ext / "custom.yaml").read_text("utf-8"))
 
     def test_zip_version_mismatch_rejected_before_touching_install(self) -> None:
         install = self.make_install()
         _ReleaseHandler.releases = {NEW_VERSION: _build_zip(version="9.9.9")}
 
         with self.assertRaises(UpdateError):
-            run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+            self.update(install)
 
         self.assertEqual(OLD_VERSION, self.official_version())
-        self.assertEqual([], self.residual_tx_dirs())
+        self.assertEqual([], self.residual_dirs())
 
     def test_zip_slip_entry_rejected(self) -> None:
         install = self.make_install()
         _ReleaseHandler.releases = {NEW_VERSION: _build_zip(slip_entry="../evil.txt")}
 
         with self.assertRaises(UpdateError):
-            run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+            self.update(install)
 
         self.assertFalse((self.root / "evil.txt").exists())
         self.assertEqual(OLD_VERSION, self.official_version())
-        self.assertEqual([], self.residual_tx_dirs())
+        self.assertEqual([], self.residual_dirs())
 
     def test_missing_skill_md_rejected(self) -> None:
         install = self.make_install()
@@ -186,9 +249,20 @@ class UpdateFlowTests(UpdateTestBase):
         }
 
         with self.assertRaises(UpdateError):
-            run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+            self.update(install)
 
         self.assertEqual(OLD_VERSION, self.official_version())
+
+    def test_truncated_download_rejected(self) -> None:
+        install = self.make_install()
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
+        _ReleaseHandler.size_override = len(_ReleaseHandler.releases[NEW_VERSION]) + 100
+
+        with self.assertRaises(UpdateError) as ctx:
+            self.update(install)
+
+        self.assertIn("下载不完整", ctx.exception.message)
+        self.assertEqual([], self.residual_dirs())
 
     def test_swap_failure_rolls_back_all_skills(self) -> None:
         install = self.make_install(extra_skills=("zz-extra",))
@@ -202,27 +276,12 @@ class UpdateFlowTests(UpdateTestBase):
 
         with patch.object(cli_update, "_rename_step", flaky):
             with self.assertRaises(UpdateError):
-                run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+                self.update(install)
 
         # aaw-workflow was already swapped in; rollback must restore the old copy
         self.assertEqual(OLD_VERSION, self.official_version())
         self.assertIn(OLD_VERSION, (self.root / "skills" / "zz-extra" / "SKILL.md").read_text("utf-8"))
-        self.assertEqual([], self.residual_tx_dirs())
-
-    def test_concurrent_update_is_rejected_by_kernel_lock(self) -> None:
-        install = self.make_install()
-        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
-        holder = cli_update._InstallLock(self.root / "skills", "token", "tx")
-        try:
-            with self.assertRaises(UpdateError) as ctx:
-                run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
-            self.assertIn("正在执行", ctx.exception.message)
-        finally:
-            holder.release()
-
-        # released: update proceeds normally
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
-        self.assertTrue(result["updated"])
+        self.assertEqual([], self.residual_dirs())
 
     def test_symlinked_install_is_rejected(self) -> None:
         real = self.make_install()
@@ -233,24 +292,152 @@ class UpdateFlowTests(UpdateTestBase):
             os.symlink(real, link, target_is_directory=True)
         except OSError as e:  # no symlink privilege on Windows
             self.skipTest(f"symlinks unavailable: {e}")
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
 
         with self.assertRaises(UpdateError) as ctx:
-            run_update(install_dir=link, endpoint=self.endpoint, out=lambda _: None)
+            self.update(link)
         self.assertIn("链接", ctx.exception.message)
+
+
+class ManifestValidationTests(UpdateTestBase):
+    def _expect_rejected(self, zip_bytes: bytes, needle: str) -> None:
+        install = self.make_install()
+        _ReleaseHandler.releases = {NEW_VERSION: zip_bytes}
+
+        with self.assertRaises(UpdateError) as ctx:
+            self.update(install)
+
+        self.assertIn(needle, ctx.exception.message)
+        self.assertEqual(OLD_VERSION, self.official_version())
+        self.assertEqual([], self.residual_dirs())
+
+    def test_missing_manifest_rejected(self) -> None:
+        self._expect_rejected(_build_zip(omit_manifest=True), "release-manifest.json")
+
+    def test_extra_top_dir_rejected(self) -> None:
+        self._expect_rejected(
+            _build_zip(skills=("aaw-workflow", "sneaky"), manifest_skills=["aaw-workflow"]),
+            "不一致",
+        )
+
+    def test_reserved_name_rejected(self) -> None:
+        self._expect_rejected(
+            _build_zip(manifest_skills=["aaw-workflow", ".aaw-evil"]), "非法 Skill 名称"
+        )
+
+    def test_overlapping_lists_rejected(self) -> None:
+        self._expect_rejected(
+            _build_zip(removed=("aaw-workflow",)), "列表交叉"
+        )
+
+    def test_missing_external_skill_rejected(self) -> None:
+        self._expect_rejected(_build_zip(external=("needs-me",)), "needs-me")
+
+    def test_present_external_skill_accepted(self) -> None:
+        install = self.make_install(extra_skills=("needs-me",))
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip(external=("needs-me",))}
+
+        result = self.update(install)
+
+        self.assertEqual("updated", result["status"])
+        # external skill is referenced, not managed: left as-is
+        self.assertIn(OLD_VERSION, (self.root / "skills" / "needs-me" / "SKILL.md").read_text("utf-8"))
+
+
+class LockSemanticsTests(UpdateTestBase):
+    def test_shared_locks_coexist_and_block_exclusive(self) -> None:
+        (self.root / "skills").mkdir()
+        a = InstallLock(self.root / "skills")
+        b = InstallLock(self.root / "skills")
+        c = InstallLock(self.root / "skills")
+        try:
+            a.acquire_shared(timeout=1)
+            b.acquire_shared(timeout=1)  # shared locks coexist
+            with self.assertRaises(LockTimeout):
+                c.acquire_exclusive(timeout=0.4)
+            a.release()
+            b.release()
+            c.acquire_exclusive(timeout=1)  # all shared released -> exclusive ok
+        finally:
+            a.close()
+            b.close()
+            c.close()
+
+    def test_exclusive_blocks_shared(self) -> None:
+        (self.root / "skills").mkdir()
+        holder = InstallLock(self.root / "skills")
+        other = InstallLock(self.root / "skills")
+        try:
+            holder.acquire_exclusive(timeout=1)
+            with self.assertRaises(LockTimeout):
+                other.acquire_shared(timeout=0.4)
+            holder.release()
+            other.acquire_shared(timeout=1)
+        finally:
+            holder.close()
+            other.close()
+
+    def test_update_times_out_when_shared_lock_held_elsewhere(self) -> None:
+        install = self.make_install()
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
+        holder = InstallLock(self.root / "skills")
+        holder.acquire_shared(timeout=1)
+        try:
+            with self.assertRaises(UpdateError) as ctx:
+                self.update(install)
+            self.assertIn("超时", ctx.exception.message)
+            self.assertEqual(OLD_VERSION, self.official_version())
+        finally:
+            holder.close()
+
+        # holder gone: update proceeds
+        result = self.update(install)
+        self.assertEqual("updated", result["status"])
+
+    def test_lock_upgrade_rereads_version_and_yields(self) -> None:
+        # by the time the exclusive lock is acquired, the install already
+        # reached latest (concurrent updater finished first)
+        install = self.make_install(version=NEW_VERSION)
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
+        skills_root = self.root / "skills"
+        lock = InstallLock(skills_root)
+        lock.acquire_shared(timeout=1)
+        try:
+            result = cli_update._perform_update(
+                install, skills_root, lock, NEW_VERSION,
+                f"aaw-skills-{NEW_VERSION}.zip", len(_ReleaseHandler.releases[NEW_VERSION]),
+                self.endpoint, lambda _: None,
+            )
+            self.assertIsNone(result)
+            self.assertEqual("exclusive", lock.mode)
+            self.assertEqual([], self.residual_dirs())  # own stage removed
+        finally:
+            lock.close()
+
+    def test_foreign_stage_is_never_cleaned(self) -> None:
+        install = self.make_install()
+        foreign = self.root / "skills" / ".aaw-stage-someoneelse"
+        (foreign / "payload").mkdir(parents=True)
+        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
+
+        result = self.update(install)
+
+        self.assertEqual("updated", result["status"])
+        self.assertTrue(foreign.is_dir())  # not a residual transaction, not ours
 
 
 class ResidualTransactionTests(UpdateTestBase):
     def _make_tx(self, phase: str, skills: list[str]) -> Path:
         skills_root = self.root / "skills"
-        tx_dir = skills_root / ".aaw-update-deadbeef"
+        tx_dir = skills_root / ".aaw-txn-deadbeef"
         (tx_dir / "backup").mkdir(parents=True)
         manifest = {
-            "schema": 1,
+            "schema": 2,
             "tx_id": "deadbeef",
-            "owner_token": "tok",
             "skills_root": str(skills_root),
             "latest_version": NEW_VERSION,
             "skills": skills,
+            "removed_skills": [],
             "phase": phase,
             "steps": {},
         }
@@ -258,7 +445,7 @@ class ResidualTransactionTests(UpdateTestBase):
         (tx_dir / "recover.py").write_text(cli_update._RECOVER_SCRIPT, "utf-8")
         return tx_dir
 
-    def test_interrupted_backup_phase_is_recovered_before_new_transaction(self) -> None:
+    def test_interrupted_backup_phase_is_recovered_before_query(self) -> None:
         # old aaw-workflow was moved to backup/, official position empty (killed mid-backup)
         self.make_install()
         tx_dir = self._make_tx("backup", ["aaw-workflow"])
@@ -267,34 +454,23 @@ class ResidualTransactionTests(UpdateTestBase):
         _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
 
         install = self.root / "skills" / "aaw-workflow"
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+        result = self.update(install)
 
         # residue recovered first (old copy restored), then updated to latest
-        self.assertTrue(result["updated"])
+        self.assertEqual("updated", result["status"])
+        self.assertEqual(OLD_VERSION, result["from_version"])
         self.assertEqual(NEW_VERSION, self.official_version())
-        self.assertEqual([], self.residual_tx_dirs())
+        self.assertEqual([], self.residual_dirs())
 
-    def test_committed_residue_is_cleaned(self) -> None:
-        install = self.make_install()
-        tx_dir = self._make_tx("committed", ["aaw-workflow"])
-        (tx_dir / "backup" / "aaw-workflow").mkdir()
-        _ReleaseHandler.releases = {NEW_VERSION: _build_zip()}
-
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
-
-        self.assertTrue(result["updated"])
-        self.assertEqual([], self.residual_tx_dirs())
-        self.assertEqual(NEW_VERSION, self.official_version())
-
-    def test_residue_left_untouched_when_no_new_release(self) -> None:
-        # no release on the server: the update flow is never entered, residue stays
+    def test_residue_recovered_even_without_new_release(self) -> None:
+        # docs §4.2: local recovery happens before (and regardless of) the query
         install = self.make_install()
         self._make_tx("committed", ["aaw-workflow"])
 
-        result = run_update(install_dir=install, endpoint=self.endpoint, out=lambda _: None)
+        result = self.update(install)
 
-        self.assertFalse(result["updated"])
-        self.assertEqual(1, len(self.residual_tx_dirs()))
+        self.assertEqual("up_to_date", result["status"])
+        self.assertEqual([], self.residual_dirs())
         self.assertEqual(OLD_VERSION, self.official_version())
 
     def test_recover_transaction_is_reentrant(self) -> None:
@@ -309,9 +485,7 @@ class ResidualTransactionTests(UpdateTestBase):
         self.assertEqual("rolled-back", recover_transaction(tx_dir))
         self.assertEqual(OLD_VERSION, self.official_version())
         self.assertFalse(tx_dir.exists())
-
-        # rerunning recovery over an already-recovered site must not exist/raise
-        self.assertEqual([], self.residual_tx_dirs())
+        self.assertEqual([], self.residual_dirs())
 
     def test_generated_recover_script_restores_old_version(self) -> None:
         self.make_install(version=NEW_VERSION)  # official = swapped-in new copy
@@ -339,20 +513,21 @@ class ManualUpdateCliTests(CliTestBase):
 
         self.assertIn("已是最新", result.stdout)
 
-    def test_update_json_reports_not_updated(self) -> None:
+    def test_update_json_reports_up_to_date_status(self) -> None:
         result = self.run_cli("update", "--json")
 
         payload = json.loads(result.stdout)
-        self.assertTrue(payload["ok"])
-        self.assertFalse(payload["updated"])
+        self.assertEqual("up_to_date", payload["status"])
+        self.assertEqual([], payload["updated_skills"])
 
-    def test_update_fails_when_server_unreachable(self) -> None:
+    def test_update_fails_with_exit_1_when_server_unreachable(self) -> None:
         result = self.run_cli(
-            "update",
+            "update", "--json",
             expect=1,
             extra_env={"AAW_TELEMETRY_ENDPOINT": "http://127.0.0.1:1"},
         )
 
+        self.assertEqual("failed", json.loads(result.stdout)["status"])
         self.assertIn("更新失败", result.stderr)
 
 

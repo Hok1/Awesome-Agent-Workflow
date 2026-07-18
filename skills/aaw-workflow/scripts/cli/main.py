@@ -37,7 +37,10 @@ def app_callback(
 
 
 def _get_manager() -> WorkflowManager:
-    return WorkflowManager(SDD)
+    try:
+        return WorkflowManager(SDD)
+    except WorkflowError as e:
+        _die(str(e))
 
 
 def _get_telemetry() -> TelemetryStore:
@@ -390,22 +393,31 @@ def rollback(
 def update(
     use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON 输出")] = False,
 ):
-    """更新 AAW skills 到服务端发布的最新版本。"""
+    """更新 AAW skills 到服务端发布的最新版本。
+
+    退出码: up_to_date/updated -> 0, failed -> 1, recovery_required -> 2。
+    """
     try:
         result = run_update()
     except UpdateError as e:
+        status = "recovery_required" if e.fatal else "failed"
+        if use_json:
+            _echo_json({"status": status, "error": e.message})
         message = f"更新失败: {e.message}"
         if e.hint:
             message += f"\n  {e.hint}"
-        _die(message)
+        typer.echo(message, err=True)
+        raise typer.Exit(2 if e.fatal else 1)
 
     if use_json:
-        _echo_json({"ok": True, **result})
-    elif result["updated"]:
-        typer.echo(f"更新完成: {result['old_version']} -> {result['new_version']}")
-        typer.echo("  已更新 skills: " + ", ".join(result["skills"]))
+        _echo_json(result)
+    elif result["status"] == "updated":
+        typer.echo(f"更新完成: {result['from_version']} -> {result['to_version']}")
+        typer.echo("  已更新 skills: " + ", ".join(result["updated_skills"]))
+        if result["removed_skills"]:
+            typer.echo("  已移除 skills: " + ", ".join(result["removed_skills"]))
     else:
-        typer.echo(f"已是最新版本 ({result['old_version']})")
+        typer.echo(f"已是最新版本 ({result['from_version']})")
 
 
 def main() -> None:
