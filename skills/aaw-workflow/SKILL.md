@@ -81,27 +81,7 @@ python <skill-dir>/scripts/aaw.py start --entry ar --var SR=SR-XXX --var AR=AR-X
 3. 若有多个 `ready`，向用户列出 `id/name/type/input/output` 并让用户选择。
 4. 若 `inputs.blocked=true`，先补齐 `inputs.missing_required` 中列出的 required 输入；缺失时不要执行子 skill，也不要执行 `commands.done`。
 5. 若 `deliverables.can_skip=true`，说明强制交付件已存在；不要重复执行子 skill。若 `data` 为空，可直接执行 `commands.done`；若 `data` 不为空，仍需先按 `data.fields` 构造数据文件。
-6. **写入会话隔离标记**：在加载子技能之前，写入 `.sdd/.current_session`，确保 question-tracker MCP Server 将 `.question_state.json` 写入当前 SR 的隔离目录，避免跨 SR 状态污染。缺失时 MCP 会抛 `SessionNotFoundError`。
-
-   **SR 编号推导**（按优先级，任一命中即停止）：
-
-   1. 步骤 1 中执行了 `next --sr <SR> --json`，`<SR>` 即当前 SR 编号。如果上下文中 `--sr` 参数值明确，直接使用。
-   2. 若不确定，执行 `python <skill-dir>/scripts/aaw.py status --json`，从输出中提取 `"sr"` 字段。
-   3. 若仍不确定，扫描 `./.sdd/` 下以非数字前缀开头的子目录（如 `SR-*`），请用户确认当前处理的是哪个 SR。
-
-   确定 SR 后，执行（以实际 SR 值替换 `<SR>`，不得保留示例值）：
-
-   ```
-   printf "./.sdd/%s/" "<SR>" > .sdd/.current_session
-   ```
-
-   文件最终内容示例（假设 SR-001，一行，不含引号、不含尾随空格）：
-
-   ```
-   ./.sdd/SR-001/
-   ```
-
-   验证：执行 `cat .sdd/.current_session` 确认内容正确。
+6. **会话隔离标记**：`.sdd/.current_session` 由 CLI 在 `start`/`next` 时自动写入，无需手工维护。它确保 question-tracker MCP Server 将 `.question_state.json` 写入当前 SR 的隔离目录，避免跨 SR 状态污染。
 7. 按 `execution` 执行：
    - `skill`：加载并完整执行 `skill` 中列出的子技能；若同时存在 `prompt` 或 `data_prompt`，在子技能完成后继续按其说明收集数据。
    - `prompt`：按 `prompt` 执行。
