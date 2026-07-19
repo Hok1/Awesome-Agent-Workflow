@@ -68,9 +68,12 @@ python <skill-dir>/scripts/aaw.py start --entry ar --var SR=SR-XXX --var AR=AR-X
 - `input` / `output`：输入和交付件列表；路径项会带 `exists`。
 - `inputs`：required 输入检查结果；若 `blocked=true` 或 `missing_required` 非空，不要执行该工作单，也不要执行 `done`。
 - `deliverables`：强制交付件检查结果；`commands.done` 也会校验 required output，缺失时 CLI 会拒绝推进。
+- `user_confirm`：当前工作单完成后，流转到下游时的用户确认策略；`skip` 表示直接放行，`ask` 表示默认询问用户，`must` 表示必须用户确认。
 - `commands.done`：完成当前 step 的可执行命令模板；若需要数据，默认使用 `--data-file <JSON_FILE>`。
 - `commands.done_argv`：同一命令的参数数组形式，便于工具调用。
 - `commands.done_inline`：使用 `--data '<JSON>'` 的备用命令；仅在确认当前 shell 引号行为可靠时使用。
+
+当 `next --json` 返回 `status=awaiting_user_confirm` 时，说明上一工作单已经完成，但下游尚未放行。此时不要执行任何子 skill，也不要尝试重复 `done`；应向用户说明待放行的来源 step 和下游 step，用户确认后执行返回的 `commands.user_confirm`。
 
 ## 执行循环
 
@@ -78,17 +81,18 @@ python <skill-dir>/scripts/aaw.py start --entry ar --var SR=SR-XXX --var AR=AR-X
 
 1. 执行 `next --sr SR-XXX --json`。
 2. 若 `done=true`，流程结束。
-3. 若有多个 `ready`，向用户列出 `id/name/type/input/output` 并让用户选择。
-4. 若 `inputs.blocked=true`，先补齐 `inputs.missing_required` 中列出的 required 输入；缺失时不要执行子 skill，也不要执行 `commands.done`。
-5. 若 `deliverables.can_skip=true`，说明强制交付件已存在；不要重复执行子 skill。若 `data` 为空，可直接执行 `commands.done`；若 `data` 不为空，仍需先按 `data.fields` 构造数据文件。
-6. 按 `execution` 执行：
+3. 若 `status=awaiting_user_confirm`，向用户确认是否放行到 `pending_user_confirm.planned_next`；用户确认后执行 `commands.user_confirm`，然后回到第 1 步。
+4. 若有多个 `ready`，向用户列出 `id/name/type/input/output` 并让用户选择。
+5. 若 `inputs.blocked=true`，先补齐 `inputs.missing_required` 中列出的 required 输入；缺失时不要执行子 skill，也不要执行 `commands.done`。
+6. 若 `deliverables.can_skip=true`，说明强制交付件已存在；不要重复执行子 skill。若 `data` 为空，可直接执行 `commands.done`；若 `data` 不为空，仍需先按 `data.fields` 构造数据文件。
+7. 按 `execution` 执行：
    - `skill`：加载并完整执行 `skill` 中列出的子技能；若同时存在 `prompt` 或 `data_prompt`，在子技能完成后继续按其说明收集数据。
    - `prompt`：按 `prompt` 执行。
    - `manual`：等待用户或外部动作完成。
    - `noop`：无需额外执行，按工作单继续推进。
-7. 对照 `deliverables.required` 检查强制交付件；缺失时不要执行 done。
-8. 若 `data` 不为空，根据 `data.fields` 和 `data_prompt` 构造 JSON，写入 `data_file.path`，然后执行 `commands.done`。
-9. 执行 `commands.done`，然后回到第 1 步。
+8. 对照 `deliverables.required` 检查强制交付件；缺失时不要执行 done。
+9. 若 `data` 不为空，根据 `data.fields` 和 `data_prompt` 构造 JSON，写入 `data_file.path`，然后执行 `commands.done`。
+10. 执行 `commands.done`。若返回 `state=awaiting_user_confirm`，向用户确认后执行 `commands.user_confirm`；否则回到第 1 步。
 
 ### 门禁节点
 
@@ -114,6 +118,7 @@ python <skill-dir>/scripts/aaw.py next --sr SR-XXX --json
 python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --json
 python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data-file data.json --json
 python <skill-dir>/scripts/aaw.py done --sr SR-XXX <id> --data '<JSON>' --json  # 备用
+python <skill-dir>/scripts/aaw.py user-confirm --sr SR-XXX --json
 
 # 回退
 python <skill-dir>/scripts/aaw.py rollback --sr SR-XXX <id> --json

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,41 +24,112 @@ from .models import (
 
 _DEFINITIONS_DIR = Path(__file__).parent / "definitions"
 _VAR_RE = re.compile(r"\{([^{}]+)\}")
+_USER_CONFIRM_VALUES = {"skip", "ask", "must"}
+# skills root of this install: cli/ -> scripts/ -> aaw-workflow/ -> skills root
+# (lexical, no symlink resolution -- same self-location rule as cli.update)
+_SKILLS_ROOT = Path(os.path.abspath(__file__)).parents[3]
 
 
 # ---------------------------------------------------------------------------
-# Workflow definition loader
+# Workflow definition loader (three layers, docs/auto-update-design.md §4.7)
 # ---------------------------------------------------------------------------
 
-def _load_definition() -> dict[str, Any]:
-    """Load all workflow definitions and normalize them into runtime templates."""
-    flow_path = _DEFINITIONS_DIR / "flow.yaml"
-    flow_raw = yaml.safe_load(flow_path.read_text("utf-8")) or {}
-    edges: dict[str, dict[str, Any]] = flow_raw.get("edges", {})
+def _definition_layers(sdd_dir: Path | None) -> list[Path]:
+    """内置 -> 安装级扩展 -> 项目级扩展; only the built-in layer is required.
+
+    Extension layers live OUTSIDE the managed aaw-workflow/ directory so a
+    full-package update never touches them."""
+    layers = [_DEFINITIONS_DIR]
+    install_ext = _SKILLS_ROOT / ".aaw-extensions" / "definitions"
+    if install_ext.is_dir():
+        layers.append(install_ext)
+    if sdd_dir is not None:
+        project_ext = Path(sdd_dir) / ".aaw" / "definitions"
+        if project_ext.is_dir():
+            layers.append(project_ext)
+    return layers
+
+
+def _load_definition(sdd_dir: Path | None = None) -> dict[str, Any]:
+    """Load and merge workflow definitions from all layers.
+
+    Same-named entrypoints, node templates or edges across layers are a hard
+    conflict reporting both source paths -- never a silent override."""
+    entrypoints: dict[str, Any] = {}
+    edges: dict[str, dict[str, Any]] = {}
+    raw_templates: dict[str, dict[str, Any]] = {}
+    sources: dict[str, str] = {}  # "entry:x" / "node:x" / "edge:x" -> source path
+    version = 1
+
+    for layer_dir in _definition_layers(sdd_dir):
+        builtin = layer_dir == _DEFINITIONS_DIR
+        flow_path = layer_dir / "flow.yaml"
+        if flow_path.is_file():
+            flow_raw = yaml.safe_load(flow_path.read_text("utf-8")) or {}
+            if builtin:
+                version = flow_raw.get("version", 1)
+            for key, value in (flow_raw.get("entrypoints") or {}).items():
+                _claim(sources, f"entry:{key}", f"entrypoint {key}", flow_path)
+                entrypoints[key] = value
+            for key, value in (flow_raw.get("edges") or {}).items():
+                _claim(sources, f"edge:{key}", f"edge {key}", flow_path)
+                edges[key] = value
+        elif builtin:
+            raise WorkflowError(f"内置 flow.yaml 不存在: {flow_path}")
+
+        for def_path in sorted(layer_dir.glob("*.yaml")):
+            if def_path.stem == "flow":
+                continue
+            raw = yaml.safe_load(def_path.read_text("utf-8")) or {}
+            _claim(sources, f"node:{def_path.stem}", f"节点 {def_path.stem}", def_path)
+            raw_templates[def_path.stem] = {
+                "raw": raw,
+                "layer_dir": layer_dir,
+                "builtin": builtin,
+                "path": def_path,
+            }
 
     templates: dict[str, dict[str, Any]] = {}
-    for def_path in sorted(_DEFINITIONS_DIR.glob("*.yaml")):
-        if def_path.stem == "flow":
-            continue
-        raw = yaml.safe_load(def_path.read_text("utf-8")) or {}
-        tmpl = _normalize_node_template(raw, def_path.stem)
-        edge = _normalize_edge(edges.get(def_path.stem, {}))
+    for type_name, entry in raw_templates.items():
+        tmpl = _normalize_node_template(entry["raw"], type_name, entry["layer_dir"])
+        if not entry["builtin"]:
+            _check_extension_skills(tmpl, entry["path"])
+        edge = _normalize_edge(edges.get(type_name, {}))
         tmpl["edge"] = edge
         tmpl["available_next"] = _available_next(edge)
         if edge.get("data_schema"):
             tmpl["data_schema"] = edge["data_schema"]
-        templates[def_path.stem] = tmpl
+        templates[type_name] = tmpl
 
     return {
-        "version": flow_raw.get("version", 1),
-        "entrypoints": flow_raw.get("entrypoints", {}),
+        "version": version,
+        "entrypoints": entrypoints,
         "templates": templates,
     }
 
 
-def _normalize_node_template(raw: dict[str, Any], type_name: str) -> dict[str, Any]:
+def _claim(sources: dict[str, str], key: str, label: str, path: Path) -> None:
+    if key in sources:
+        raise WorkflowError(
+            f"definition 冲突: {label} 同时定义于 {sources[key]} 和 {path}"
+        )
+    sources[key] = str(path)
+
+
+def _check_extension_skills(tmpl: dict[str, Any], source: Path) -> None:
+    """Extension YAML skill references are validated at runtime: the target
+    skill directory must exist next to this install (docs §4.7)."""
+    for name in tmpl.get("skill") or []:
+        if not (_SKILLS_ROOT / name / "SKILL.md").is_file():
+            raise WorkflowError(
+                f"扩展 definition {source} 引用的 Skill 不存在或缺少 SKILL.md: "
+                f"{_SKILLS_ROOT / name}"
+            )
+
+
+def _normalize_node_template(raw: dict[str, Any], type_name: str, layer_dir: Path) -> dict[str, Any]:
     skill = normalize_skill(raw.get("skill"))
-    prompt = _normalize_prompt(raw.get("prompt"))
+    prompt = _normalize_prompt(raw.get("prompt"), layer_dir)
     execution = raw.get("execution")
     if not execution:
         if skill:
@@ -80,7 +152,7 @@ def _normalize_node_template(raw: dict[str, Any], type_name: str) -> dict[str, A
     }
 
 
-def _normalize_prompt(raw: Any) -> dict[str, Any] | None:
+def _normalize_prompt(raw: Any, layer_dir: Path) -> dict[str, Any] | None:
     if not raw:
         return None
     if isinstance(raw, str):
@@ -90,7 +162,7 @@ def _normalize_prompt(raw: Any) -> dict[str, Any] | None:
 
     prompt = dict(raw)
     if "template" in prompt:
-        template_path = _DEFINITIONS_DIR / str(prompt["template"])
+        template_path = layer_dir / str(prompt["template"])
         if not template_path.exists():
             raise WorkflowError(f"prompt template 不存在: {template_path}")
         prompt["rendered"] = template_path.read_text("utf-8")
@@ -123,12 +195,39 @@ def _normalize_edge(edge: dict[str, Any]) -> dict[str, Any]:
 
     normalized = dict(edge)
     normalized["kind"] = kind
+    normalized["user_confirm"] = _normalize_user_confirm(normalized.get("user_confirm"))
 
     if kind == "choice" and "choices" not in normalized:
         normalized["choices"] = _legacy_choice_to_choices(edge)
     if kind == "foreach" and "foreach" not in normalized:
         normalized["foreach"] = _infer_foreach_selector(edge)
+    if kind == "choice":
+        normalized["choices"] = [
+            _normalize_choice(choice, normalized["user_confirm"])
+            for choice in normalized.get("choices", [])
+            if isinstance(choice, dict)
+        ]
     return normalized
+
+
+def _normalize_choice(choice: dict[str, Any], default_user_confirm: str) -> dict[str, Any]:
+    normalized = dict(choice)
+    normalized["user_confirm"] = _normalize_user_confirm(
+        normalized.get("user_confirm"),
+        default=default_user_confirm,
+    )
+    return normalized
+
+
+def _normalize_user_confirm(value: Any, default: str = "skip") -> str:
+    if value is None or value == "":
+        return default
+    result = str(value).strip()
+    if result not in _USER_CONFIRM_VALUES:
+        raise WorkflowError(
+            f"user_confirm 只能是 skip / ask / must，当前值: {result}"
+        )
+    return result
 
 
 def _legacy_choice_to_choices(edge: dict[str, Any]) -> list[dict[str, Any]]:
@@ -285,15 +384,9 @@ def write_session_marker(sdd_dir: Path, sr: str) -> Path:
 # Step creation and IO rendering
 # ---------------------------------------------------------------------------
 
-def _resolve_path(sdd_dir: Path, path: str) -> str:
-    abs_sdd = str(sdd_dir.resolve()).replace("\\", "/")
-    if path.startswith(".sdd/"):
-        return abs_sdd + "/" + path[5:]
-    if path == ".sdd":
-        return abs_sdd
-    if path.startswith(".sdd"):
-        return abs_sdd + path[4:]
-    return path
+def _normalize_stored_path(path: str) -> str:
+    """Keep IO paths as repo-relative (``.sdd/...``) so workflow.yaml stays portable."""
+    return path.replace("\\", "/")
 
 
 def _render_io_items(sdd_dir: Path, items: list[dict[str, Any]], vars_: dict[str, Any]) -> list[dict[str, Any]]:
@@ -301,7 +394,7 @@ def _render_io_items(sdd_dir: Path, items: list[dict[str, Any]], vars_: dict[str
     for item in items:
         out = _expand_obj(item, vars_)
         if "path" in out:
-            out["path"] = _resolve_path(sdd_dir, out["path"])
+            out["path"] = _normalize_stored_path(out["path"])
         rendered.append(out)
     return rendered
 
@@ -349,7 +442,7 @@ class WorkflowManager:
 
     def __init__(self, sdd_dir: Path):
         self.sdd_dir = sdd_dir
-        definition = _load_definition()
+        definition = _load_definition(sdd_dir)
         self.entrypoints: dict[str, dict[str, Any]] = definition["entrypoints"]
         self.templates: dict[str, dict[str, Any]] = definition["templates"]
 
@@ -414,6 +507,8 @@ class WorkflowManager:
     # ---- next ----
 
     def get_ready(self, wf: Workflow) -> list[Step]:
+        if wf.pending_user_confirm:
+            return []
         pred_map = self._build_predecessor_map(wf)
         ready: list[Step] = []
         for s in wf.steps:
@@ -425,10 +520,23 @@ class WorkflowManager:
         return ready
 
     def build_next_payload(self, wf: Workflow) -> dict[str, Any]:
+        if wf.pending_user_confirm:
+            return {
+                "sr": wf.sr,
+                "entry": wf.entry,
+                "status": "awaiting_user_confirm",
+                "ready": [],
+                "done": False,
+                "message": "当前步骤已完成，等待用户确认是否放行进入下一步。",
+                "pending_user_confirm": self._pending_user_confirm_payload(wf),
+                "commands": self._user_confirm_commands(wf),
+            }
+
         ready = self.get_ready(wf)
         return {
             "sr": wf.sr,
             "entry": wf.entry,
+            "status": wf.status,
             "ready": [self._step_work_order(wf, s) for s in ready],
             "done": len(ready) == 0 and wf.all_finished(),
         }
@@ -449,6 +557,9 @@ class WorkflowManager:
             "type": step.type,
             "name": step.name,
             "execution": step.execution,
+            "execution_status": step.execution_status,
+            "attempt": step.attempt,
+            "started_at": step.started_at,
             "skill": step.skill,
             "prompt": step.prompt,
             "data_prompt": step.data_prompt,
@@ -457,6 +568,7 @@ class WorkflowManager:
             "output": self._annotate_io(step.output),
             "inputs": self.check_inputs(step),
             "available_next": step.available_next,
+            "user_confirm": self._user_confirm_summary(step),
             "data": step.data_schema,
             "vars": step.vars,
             "deliverables": self.check_deliverables(step),
@@ -468,6 +580,41 @@ class WorkflowManager:
                 "legacy_done": legacy_done,
             },
         }
+
+    def _user_confirm_summary(self, step: Step) -> Any:
+        edge = self.templates[step.type]["edge"]
+        kind = edge.get("kind")
+        if kind in {"direct", "foreach"}:
+            return edge.get("user_confirm", "skip")
+        if kind == "choice":
+            return [
+                {
+                    "when": choice.get("when"),
+                    "to": choice.get("to"),
+                    "user_confirm": choice.get("user_confirm", "skip"),
+                }
+                for choice in edge.get("choices", [])
+            ]
+        return "skip"
+
+    def _pending_user_confirm_payload(self, wf: Workflow) -> dict[str, Any]:
+        pending = dict(wf.pending_user_confirm or {})
+        pending.pop("planned_steps", None)
+        return pending | {
+            "prompt": "当前步骤已完成，等待用户确认是否放行进入下一步。",
+        }
+
+    def _user_confirm_commands(self, wf: Workflow) -> dict[str, Any]:
+        argv = self._user_confirm_argv(wf)
+        return {
+            "user_confirm": " ".join(_quote_arg(arg) for arg in argv),
+            "user_confirm_argv": argv,
+        }
+
+    @staticmethod
+    def _user_confirm_argv(wf: Workflow) -> list[str]:
+        script = str((Path(__file__).resolve().parents[1] / "aaw.py")).replace("\\", "/")
+        return ["python", script, "user-confirm", "--sr", wf.sr, "--json"]
 
     def _data_file(self, wf: Workflow, step: Step) -> Path:
         safe_type = re.sub(r"[^A-Za-z0-9_.-]+", "-", step.type).strip("-") or "step"
@@ -507,21 +654,32 @@ class WorkflowManager:
         edge = self.templates[step.type]["edge"]
         return edge.get("kind") in {"choice", "foreach"} or bool(step.data_schema)
 
-    @staticmethod
-    def _annotate_io(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _resolve(self, stored_path: str) -> Path:
+        """Restore a repo-relative stored path (``.sdd/...``) to an actual FS path.
+
+        Storage keeps paths relative to the repo root; ``sdd_dir.parent`` is that
+        root (``.`` in production, the temp dir in tests), so joining yields the
+        real location without baking in an absolute path.
+        """
+        return self.sdd_dir.parent / stored_path
+
+    def _annotate_io(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         annotated: list[dict[str, Any]] = []
         for item in items:
             out = dict(item)
             if "path" in out:
-                out["exists"] = Path(out["path"]).exists()
+                resolved = self._resolve(out["path"])
+                out["exists"] = resolved.exists()
+                # Keep the stored value repo-relative; expose an absolute path so
+                # the agent can locate the file regardless of its own CWD.
+                out["abs_path"] = str(resolved.resolve()).replace("\\", "/")
             annotated.append(out)
         return annotated
 
-    @staticmethod
-    def check_inputs(step: Step) -> dict[str, Any]:
+    def check_inputs(self, step: Step) -> dict[str, Any]:
         inputs = [item for item in step.input if "path" in item]
         required = [item for item in inputs if item.get("required", True)]
-        missing = [item["path"] for item in required if not Path(item["path"]).exists()]
+        missing = [item["path"] for item in required if not self._resolve(item["path"]).exists()]
         return {
             "required": [item["path"] for item in required],
             "optional": [item["path"] for item in inputs if not item.get("required", True)],
@@ -530,11 +688,10 @@ class WorkflowManager:
             "blocked": len(missing) > 0,
         }
 
-    @staticmethod
-    def check_deliverables(step: Step) -> dict[str, Any]:
+    def check_deliverables(self, step: Step) -> dict[str, Any]:
         outputs = [item for item in step.output if "path" in item]
         required = [item for item in outputs if item.get("required", True)]
-        missing = [item["path"] for item in required if not Path(item["path"]).exists()]
+        missing = [item["path"] for item in required if not self._resolve(item["path"]).exists()]
         return {
             "required": [item["path"] for item in required],
             "optional": [item["path"] for item in outputs if not item.get("required", True)],
@@ -550,27 +707,190 @@ class WorkflowManager:
                 pmap.setdefault(nxt, []).append(s)
         return pmap
 
+    @staticmethod
+    def _occurred_at() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def mark_started(self, wf: Workflow, step_id: int, attempt: int = 1) -> Step:
+        """Persist the actual start signal for a step before it is executed."""
+        step = wf.get_step(step_id)
+        if step is None:
+            raise WorkflowError(f"step {step_id} does not exist")
+        if step.finished:
+            raise WorkflowError(f"step {step_id} is already complete")
+        if attempt < 1:
+            raise WorkflowError("attempt must be at least 1")
+        if step.execution_status == "running":
+            if step.attempt != attempt:
+                raise WorkflowError(f"step {step_id} is already running as attempt {step.attempt}")
+            return step
+        if step.execution_status in {"completed", "failed", "blocked", "superseded"} and attempt <= step.attempt:
+            raise WorkflowError(f"step {step_id} requires an attempt greater than {step.attempt}")
+
+        step.attempt = attempt
+        step.execution_status = "running"
+        step.started_at = self._occurred_at()
+        step.ended_at = None
+        self._save(wf)
+        return step
+
+    def mark_execution_terminal(self, wf: Workflow, step_id: int, status: str, attempt: int = 1) -> Step:
+        """Persist a terminal execution status for an explicitly started step."""
+        if status not in {"completed", "failed", "blocked", "superseded"}:
+            raise WorkflowError(f"invalid execution status: {status}")
+        step = wf.get_step(step_id)
+        if step is None:
+            raise WorkflowError(f"step {step_id} does not exist")
+        if step.attempt != attempt or not step.started_at:
+            raise WorkflowError(f"step {step_id} attempt {attempt} has not been started")
+        step.execution_status = status
+        step.ended_at = self._occurred_at()
+        self._save(wf)
+        return step
+
     # ---- done ----
 
     def mark_done(self, wf: Workflow, step_id: int, data_raw: str | None = None) -> dict[str, Any]:
+        if wf.pending_user_confirm:
+            raise WorkflowError("当前存在待用户确认的流转，请先执行 user-confirm 或 rollback")
         step = wf.get_step(step_id)
         if step is None:
             raise WorkflowError(f"step {step_id} 不存在")
         if step.finished:
             raise WorkflowError(f"step {step_id} 已完成，不能重复 done")
+        if step.execution in {"skill", "prompt"} and not step.started_at:
+            raise WorkflowError(
+                f"step {step_id} has no actual start timestamp; run `aaw next --sr {wf.sr}` before executing the skill"
+            )
         self._ensure_required_inputs(step)
         self._ensure_required_deliverables(step)
 
-        ids, new_steps = self._generate_successors(wf, step, data_raw)
+        ids, new_steps, user_confirm = self._generate_successors(wf, step, data_raw)
         step.finished = True
+        step.execution_status = "completed"
+        step.ended_at = self._occurred_at()
+
+        if ids and self._needs_user_confirm(wf, user_confirm):
+            wf.pending_user_confirm = self._build_pending_user_confirm(
+                wf,
+                step,
+                ids,
+                new_steps,
+                user_confirm,
+            )
+            wf.status = "awaiting_user_confirm"
+            self._save(wf)
+            return {
+                "ok": True,
+                "step_finished": True,
+                "state": "awaiting_user_confirm",
+                "generated": 0,
+                "planned": len(ids),
+                "next": [],
+                "attempt": step.attempt,
+                "started_at": step.started_at,
+                "ended_at": step.ended_at,
+                "message": "当前步骤已完成，等待用户确认是否放行进入下一步。",
+                "pending_user_confirm": self._pending_user_confirm_payload(wf),
+                "commands": self._user_confirm_commands(wf),
+            }
+
         step.next = ids
         wf.steps.extend(new_steps)
 
         if wf.all_finished():
             wf.status = "done"
+        else:
+            wf.status = "in_progress"
 
         self._save(wf)
-        return {"ok": True, "generated": len(ids), "next": ids}
+        return {
+            "ok": True,
+            "step_finished": True,
+            "state": wf.status,
+            "generated": len(ids),
+            "next": ids,
+            "attempt": step.attempt,
+            "started_at": step.started_at,
+            "ended_at": step.ended_at,
+        }
+
+    def _needs_user_confirm(self, wf: Workflow, user_confirm: str) -> bool:
+        if user_confirm == "must":
+            return True
+        if user_confirm == "ask":
+            return not bool(wf.control.get("auto_confirm_all"))
+        return False
+
+    def _build_pending_user_confirm(
+        self,
+        wf: Workflow,
+        step: Step,
+        ids: list[int],
+        new_steps: list[Step],
+        user_confirm: str,
+    ) -> dict[str, Any]:
+        return {
+            "from_step": step.id,
+            "from_type": step.type,
+            "from_name": step.name,
+            "user_confirm": user_confirm,
+            "next_ids": ids,
+            "planned_next": [self._step_summary(s) for s in new_steps],
+            "planned_steps": [s.to_dict() for s in new_steps],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
+    def _step_summary(step: Step) -> dict[str, Any]:
+        return {
+            "id": step.id,
+            "type": step.type,
+            "name": step.name,
+            "execution": step.execution,
+            "skill": step.skill,
+        }
+
+    def user_confirm(self, wf: Workflow) -> dict[str, Any]:
+        pending = wf.pending_user_confirm
+        if not pending:
+            raise WorkflowError("当前没有等待用户确认的流转")
+
+        parent = wf.get_step(int(pending["from_step"]))
+        if parent is None:
+            raise WorkflowError(f"待确认来源 step 不存在: {pending['from_step']}")
+        if not parent.finished:
+            raise WorkflowError(f"待确认来源 step 未完成: {pending['from_step']}")
+
+        next_ids = [int(item) for item in pending.get("next_ids") or []]
+        planned_steps = [Step.from_dict(item) for item in pending.get("planned_steps") or []]
+        existing_ids = {step.id for step in wf.steps}
+        duplicated = [step.id for step in planned_steps if step.id in existing_ids]
+        if duplicated:
+            raise WorkflowError("待确认下游 step 已存在: " + ", ".join(map(str, duplicated)))
+
+        parent.next = next_ids
+        wf.steps.extend(planned_steps)
+        wf.transition_history.append(
+            {
+                "type": "user_confirm",
+                "from_step": parent.id,
+                "from_type": parent.type,
+                "user_confirm": pending.get("user_confirm"),
+                "next_ids": next_ids,
+                "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        wf.pending_user_confirm = None
+        wf.status = "done" if wf.all_finished() else "in_progress"
+        self._save(wf)
+        return {
+            "ok": True,
+            "confirmed": True,
+            "state": wf.status,
+            "generated": len(planned_steps),
+            "next": next_ids,
+        }
 
     def _ensure_required_inputs(self, step: Step) -> None:
         missing = self.check_inputs(step)["missing_required"]
@@ -587,18 +907,20 @@ class WorkflowManager:
         wf: Workflow,
         parent: Step,
         data_raw: str | None,
-    ) -> tuple[list[int], list[Step]]:
+    ) -> tuple[list[int], list[Step], str]:
         edge = self.templates[parent.type]["edge"]
         kind = edge.get("kind", "terminal")
         if kind == "terminal":
-            return [], []
+            return [], [], "skip"
         if kind == "direct":
-            return self._generate_direct(wf, parent, edge)
+            ids, steps = self._generate_direct(wf, parent, edge)
+            return ids, steps, edge.get("user_confirm", "skip")
 
         data = parse_data(data_raw)
         context = {"data": data, "vars": self._parent_vars(wf, parent), **self._parent_vars(wf, parent)}
         if kind == "foreach":
-            return self._generate_foreach(wf, parent, edge, context)
+            ids, steps = self._generate_foreach(wf, parent, edge, context)
+            return ids, steps, edge.get("user_confirm", "skip")
         if kind == "choice":
             return self._generate_choice(wf, parent, edge, context)
         raise WorkflowError(f"未知 edge kind: {kind}")
@@ -640,7 +962,7 @@ class WorkflowManager:
         parent: Step,
         edge: dict[str, Any],
         context: dict[str, Any],
-    ) -> tuple[list[int], list[Step]]:
+    ) -> tuple[list[int], list[Step], str]:
         for choice in edge.get("choices", []):
             if not _eval_when(choice.get("when"), context):
                 continue
@@ -649,12 +971,13 @@ class WorkflowManager:
                 if not isinstance(items, list) or len(items) == 0:
                     raise DataError(f"--data 中 {choice['foreach']} 必须是非空数组")
                 _validate_items(items, choice.get("item_validation"))
-                return self._generate_many(wf, parent, choice["to"], choice.get("vars"), items, context)
+                ids, steps = self._generate_many(wf, parent, choice["to"], choice.get("vars"), items, context)
+                return ids, steps, choice.get("user_confirm", "skip")
 
             vars_ = self._parent_vars(wf, parent)
             vars_.update(_render_vars_mapping(choice.get("vars"), context | {"vars": vars_, **vars_}))
             new_id = wf.next_id()
-            return [new_id], [self._make_successor(choice["to"], new_id, vars_)]
+            return [new_id], [self._make_successor(choice["to"], new_id, vars_)], choice.get("user_confirm", "skip")
         for rejection in _edge_rejections(edge):
             if _eval_when(rejection.get("when"), context):
                 message = rejection.get("message") or "当前数据被工作流配置拒绝，不能推进"
@@ -692,6 +1015,8 @@ class WorkflowManager:
     # ---- rollback ----
 
     def rollback(self, wf: Workflow, step_id: int) -> dict[str, Any]:
+        if wf.pending_user_confirm and int(wf.pending_user_confirm.get("from_step", -1)) != step_id:
+            raise WorkflowError("当前存在待用户确认的流转，请先确认或回退待确认来源 step")
         step = wf.get_step(step_id)
         if step is None:
             raise WorkflowError(f"step {step_id} 不存在")
@@ -716,7 +1041,7 @@ class WorkflowManager:
                 out_path = item.get("path")
                 if not out_path:
                     continue
-                p = Path(out_path)
+                p = self._resolve(out_path)
                 if p.exists() and p.is_file():
                     p.unlink()
                     deleted_files.append(str(p))
@@ -726,6 +1051,8 @@ class WorkflowManager:
 
         step.finished = False
         step.next = []
+        if wf.pending_user_confirm and int(wf.pending_user_confirm.get("from_step", -1)) == step_id:
+            wf.pending_user_confirm = None
         wf.steps = [s for s in wf.steps if s.id not in descendants]
         wf.status = "in_progress"
         self._save(wf)

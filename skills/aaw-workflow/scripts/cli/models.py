@@ -48,6 +48,10 @@ class Step:
     type: str
     name: str
     finished: bool = False
+    execution_status: str = "ready"
+    attempt: int = 1
+    started_at: str | None = None
+    ended_at: str | None = None
     execution: str = "noop"
     skill: list[str] = field(default_factory=list)
     prompt: dict[str, Any] | None = None
@@ -71,6 +75,10 @@ class Step:
             type=data["type"],
             name=data["name"],
             finished=data.get("finished", False),
+            execution_status=data.get("execution_status", "completed" if data.get("finished", False) else "ready"),
+            attempt=data.get("attempt", 1),
+            started_at=data.get("started_at"),
+            ended_at=data.get("ended_at"),
             execution=execution,
             skill=skill,
             prompt=prompt,
@@ -89,6 +97,10 @@ class Step:
             "type": self.type,
             "name": self.name,
             "finished": self.finished,
+            "execution_status": self.execution_status,
+            "attempt": self.attempt,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
             "execution": self.execution,
             "skill": self.skill,
             "prompt": self.prompt,
@@ -122,6 +134,9 @@ class Workflow:
     created_at: str = ""
     vars: dict[str, Any] = field(default_factory=dict)
     steps: list[Step] = field(default_factory=list)
+    pending_user_confirm: dict[str, Any] | None = None
+    control: dict[str, Any] = field(default_factory=dict)
+    transition_history: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Workflow":
@@ -136,6 +151,9 @@ class Workflow:
             created_at=data.get("created_at", ""),
             vars=vars_,
             steps=steps,
+            pending_user_confirm=data.get("pending_user_confirm"),
+            control=data.get("control") or {},
+            transition_history=data.get("transition_history") or [],
         )
 
     def to_yaml(self, path: Path) -> None:
@@ -147,6 +165,12 @@ class Workflow:
             "vars": self.vars,
             "steps": [s.to_dict() for s in self.steps],
         }
+        if self.pending_user_confirm is not None:
+            d["pending_user_confirm"] = self.pending_user_confirm
+        if self.control:
+            d["control"] = self.control
+        if self.transition_history:
+            d["transition_history"] = self.transition_history
         path.write_text(
             yaml.dump(d, allow_unicode=True, default_flow_style=False, sort_keys=False),
             "utf-8",
