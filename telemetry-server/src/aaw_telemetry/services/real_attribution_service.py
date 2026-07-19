@@ -133,15 +133,14 @@ def _start_retry_scheduler(settings, projects, engine: AttributionEngine) -> Non
         while True:
             try:
                 retried = retry_pending_attributions(settings, projects, engine)
-                if retried > 0:
-                    logger.info(
-                        "attribution_retry_scheduler: triggered %d retries",
-                        retried,
-                    )
+                logger.info(
+                    "attribution.retry_scan_completed",
+                    extra={"retried": retried},
+                )
             except Exception as exc:
                 logger.error(
-                    "attribution_retry_scheduler: error=%s",
-                    exc,
+                    "attribution.retry_scheduler_failed",
+                    extra={"error_type": type(exc).__name__},
                     exc_info=True,
                 )
             time.sleep(interval_seconds)
@@ -153,6 +152,9 @@ def _start_retry_scheduler(settings, projects, engine: AttributionEngine) -> Non
     )
     thread.start()
     logger.info(
-        "attribution_retry_scheduler: started (interval=%ds)",
-        interval_seconds,
+        "attribution.retry_scheduler_started",
+        extra={
+            "interval_seconds": interval_seconds,
+            "initial_delay_seconds": 30,
+        },
     )

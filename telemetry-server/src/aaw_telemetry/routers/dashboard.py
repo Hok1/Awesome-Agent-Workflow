@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from typing import Annotated, Literal
@@ -9,6 +10,19 @@ from sqlalchemy.orm import Session
 
 from ..config import ProjectRegistry
 from ..services.queries import QueryService, make_filters
+
+logger = logging.getLogger(__name__)
+
+
+def _log_query(endpoint: str, result: dict, **fields) -> None:
+    extra = {"endpoint": endpoint, **fields}
+    if "total" in result:
+        extra["total"] = result["total"]
+    if isinstance(result.get("items"), list):
+        extra["returned"] = len(result["items"])
+    if isinstance(result.get("points"), list):
+        extra["returned"] = len(result["points"])
+    logger.info("dashboard.query_completed", extra=extra)
 
 
 def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> APIRouter:
@@ -36,11 +50,20 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
 
     @router.get("/dashboard/filter-options")
     def filter_options(query=Depends(filters), session: Session = Depends(session_dependency)):
-        return QueryService(session, projects).filter_options(query)
+        result = QueryService(session, projects).filter_options(query)
+        _log_query(
+            "filter_options",
+            result,
+            repository_count=len(result["repositories"]),
+            user_count=len(result["users"]),
+        )
+        return result
 
     @router.get("/dashboard/overview")
     def overview(query=Depends(filters), session: Session = Depends(session_dependency)):
-        return QueryService(session, projects).overview(query)
+        result = QueryService(session, projects).overview(query)
+        _log_query("overview", result)
+        return result
 
     @router.get("/dashboard/trends")
     def trends(
@@ -48,7 +71,9 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
         query=Depends(filters),
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).trends(query, granularity)
+        result = QueryService(session, projects).trends(query, granularity)
+        _log_query("trends", result, granularity=granularity)
+        return result
 
     @router.get("/dashboard/projects")
     def projects_summary(
@@ -57,7 +82,9 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
         query=Depends(filters),
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).projects_summary(query, page, page_size)
+        result = QueryService(session, projects).projects_summary(query, page, page_size)
+        _log_query("projects", result, page=page, page_size=page_size)
+        return result
 
     @router.get("/dashboard/users")
     def users_summary(
@@ -66,7 +93,9 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
         query=Depends(filters),
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).users_summary(query, page, page_size)
+        result = QueryService(session, projects).users_summary(query, page, page_size)
+        _log_query("users", result, page=page, page_size=page_size)
+        return result
 
     @router.get("/dashboard/steps")
     def steps_summary(
@@ -75,7 +104,9 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
         query=Depends(filters),
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).steps_summary(query, page, page_size)
+        result = QueryService(session, projects).steps_summary(query, page, page_size)
+        _log_query("steps", result, page=page, page_size=page_size)
+        return result
 
     @router.get("/dashboard/workflows")
     def workflows(
@@ -85,14 +116,24 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
         query=Depends(filters),
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).workflows(query, state, page, page_size)
+        result = QueryService(session, projects).workflows(query, state, page, page_size)
+        _log_query(
+            "workflows",
+            result,
+            state=state,
+            page=page,
+            page_size=page_size,
+        )
+        return result
 
     @router.get("/workflows/{workflow_run_id}")
     def workflow_detail(
         workflow_run_id: uuid.UUID,
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).workflow_detail(workflow_run_id)
+        result = QueryService(session, projects).workflow_detail(workflow_run_id)
+        _log_query("workflow_detail", result, workflow_id=str(workflow_run_id))
+        return result
 
     @router.get("/statistics/code-attribution")
     def code_attributions(
@@ -103,8 +144,16 @@ def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> API
         query=Depends(filters),
         session: Session = Depends(session_dependency),
     ):
-        return QueryService(session, projects).code_attributions(
+        result = QueryService(session, projects).code_attributions(
             query, matched_mr_iid, result_status, page, page_size
         )
+        _log_query(
+            "code_attributions",
+            result,
+            result_status=result_status,
+            page=page,
+            page_size=page_size,
+        )
+        return result
 
     return router

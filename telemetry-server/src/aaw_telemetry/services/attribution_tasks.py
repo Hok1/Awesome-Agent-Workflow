@@ -45,10 +45,11 @@ def run_attribution_in_background(
             _execute_attribution(session, dev_run_id, settings, projects, engine)
     except Exception as exc:
         logger.error(
-            "attribution_tasks.run_attribution_in_background: "
-            "unhandled error for dev_run_id=%s, error=%s",
-            dev_run_id,
-            exc,
+            "attribution.background_failed",
+            extra={
+                "dev_run_id": str(dev_run_id),
+                "error_type": type(exc).__name__,
+            },
             exc_info=True,
         )
     finally:
@@ -94,14 +95,20 @@ def retry_pending_attributions(
 
                 dev_run_id = attribution.dev_run_id
                 logger.info(
-                    "retry_pending_attributions: scheduling retry #%d for dev_run_id=%s",
-                    attribution.retry_count + 1,
-                    dev_run_id,
+                    "attribution.retry_scheduled",
+                    extra={
+                        "dev_run_id": str(dev_run_id),
+                        "retry_count": attribution.retry_count + 1,
+                    },
                 )
                 _spawn_retry_thread(dev_run_id, settings, projects, engine)
                 retried += 1
     except Exception as exc:
-        logger.error("retry_pending_attributions: error=%s", exc, exc_info=True)
+        logger.error(
+            "attribution.retry_scan_failed",
+            extra={"error_type": type(exc).__name__},
+            exc_info=True,
+        )
     finally:
         db_engine.dispose()
 
@@ -140,30 +147,43 @@ def _execute_attribution(
 
     dev_run = session.get(DevRun, dev_run_id)
     if dev_run is None:
-        logger.warning("attribution_tasks: dev_run not found, dev_run_id=%s", dev_run_id)
+        logger.warning(
+            "attribution.dev_run_missing",
+            extra={"dev_run_id": str(dev_run_id)},
+        )
         return
 
     attribution = session.get(CodeAttribution, dev_run_id)
     if attribution is not None:
         if attribution.attribution_status == "finalized_match":
             logger.info(
-                "attribution_tasks: attribution already matched, dev_run_id=%s",
-                dev_run_id,
+                "attribution.skipped",
+                extra={
+                    "dev_run_id": str(dev_run_id),
+                    "reason": "already_matched",
+                },
             )
             return
 
         if attribution.retry_count >= MAX_RETRY_COUNT:
             logger.info(
-                "attribution_tasks: max retries reached (%d), dev_run_id=%s",
-                attribution.retry_count,
-                dev_run_id,
+                "attribution.skipped",
+                extra={
+                    "dev_run_id": str(dev_run_id),
+                    "reason": "max_retries_reached",
+                    "retry_count": attribution.retry_count,
+                },
             )
             return
 
         if _retry_window_expired(dev_run.completed_at, now):
             logger.info(
-                "attribution_tasks: retry window expired, dev_run_id=%s",
-                dev_run_id,
+                "attribution.skipped",
+                extra={
+                    "dev_run_id": str(dev_run_id),
+                    "reason": "retry_window_expired",
+                    "retry_count": attribution.retry_count,
+                },
             )
             return
 
@@ -175,8 +195,11 @@ def _execute_attribution(
     )
     if message is None:
         logger.warning(
-            "attribution_tasks: telemetry_message not found, dev_run_id=%s",
-            dev_run_id,
+            "attribution.context_missing",
+            extra={
+                "dev_run_id": str(dev_run_id),
+                "missing": "telemetry_message",
+            },
         )
         _mark_failed(session, dev_run_id, now, "message_not_found")
         return
@@ -187,16 +210,18 @@ def _execute_attribution(
         project_entry = projects.document.projects.get(workflow.project_key)
 
     if dev_run.patch_object_key is None:
-        logger.warning("attribution_tasks: no patch_object_key, dev_run_id=%s", dev_run_id)
+        logger.warning(
+            "attribution.context_missing",
+            extra={"dev_run_id": str(dev_run_id), "missing": "patch_object"},
+        )
         _mark_failed(session, dev_run_id, now, "no_patch_object")
         return
 
     diff_bytes = _read_diff_file(settings, dev_run.patch_object_key)
     if diff_bytes is None:
         logger.warning(
-            "attribution_tasks: diff file not found, key=%s, dev_run_id=%s",
-            dev_run.patch_object_key,
-            dev_run_id,
+            "attribution.diff_missing",
+            extra={"dev_run_id": str(dev_run_id)},
         )
         _mark_failed(session, dev_run_id, now, "diff_file_missing")
         return
@@ -210,9 +235,11 @@ def _execute_attribution(
         )
     except Exception as exc:
         logger.error(
-            "attribution_tasks: attribution engine failed, dev_run_id=%s, error=%s",
-            dev_run_id,
-            exc,
+            "attribution.engine_failed",
+            extra={
+                "dev_run_id": str(dev_run_id),
+                "error_type": type(exc).__name__,
+            },
             exc_info=True,
         )
         _mark_failed(session, dev_run_id, now, f"attribution_error:{exc!r}")
@@ -229,12 +256,13 @@ def _execute_attribution(
     )
 
     logger.info(
-        "attribution_tasks: attribution completed, dev_run_id=%s, status=%s, "
-        "attributed_lines_80=%d, retry_count=%d",
-        dev_run_id,
-        result.get("result_status"),
-        result.get("attributed_lines_80", 0),
-        new_retry_count,
+        "attribution.completed",
+        extra={
+            "dev_run_id": str(dev_run_id),
+            "status": result.get("result_status"),
+            "attributed_lines_80": result.get("attributed_lines_80", 0),
+            "retry_count": new_retry_count,
+        },
     )
 
 

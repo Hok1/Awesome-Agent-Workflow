@@ -14,8 +14,8 @@ import yaml
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 
 
-class JsonFormatter(logging.Formatter):
-    """Stable JSON logs; request bodies, tokens and repository remotes are never included."""
+class TextFormatter(logging.Formatter):
+    """Human-readable structured logs with guarded ``key=value`` fields."""
 
     _standard = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
     _sensitive = {
@@ -29,24 +29,39 @@ class JsonFormatter(logging.Formatter):
         "sha256",
     }
 
+    @staticmethod
+    def _render_value(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return str(value).lower()
+        if isinstance(value, (int, float)):
+            return str(value)
+        rendered = str(value)
+        if not rendered or any(character.isspace() for character in rendered) or any(
+            character in rendered for character in '"=\\'
+        ):
+            return json.dumps(rendered, ensure_ascii=False, separators=(",", ":"))
+        return rendered
+
     def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, Any] = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "event": record.getMessage(),
-            "request_id": request_id_var.get(),
-        }
+        timestamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        message = record.getMessage().replace("\r", "\\r").replace("\n", "\\n")
+        parts = [f"{timestamp} [{record.levelname}]", message]
+        request_id = request_id_var.get()
+        if request_id != "-":
+            parts.append(f"request_id={self._render_value(request_id)}")
         for key, value in record.__dict__.items():
             if (
                 key not in self._standard
                 and key.lower() not in self._sensitive
                 and not key.startswith("_")
             ):
-                payload[key] = value
+                parts.append(f"{key}={self._render_value(value)}")
+        rendered = " ".join(parts)
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))
+            rendered += "\n" + self.formatException(record.exc_info)
+        return rendered
 
 
 def _resolve_config_path(path: Path) -> Path:

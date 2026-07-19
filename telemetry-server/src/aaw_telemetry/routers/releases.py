@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,8 @@ from fastapi.responses import FileResponse
 from ..config import Settings
 from ..errors import ApiError
 from ..schemas import ClientReleaseResponse
+
+logger = logging.getLogger(__name__)
 
 VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 RELEASE_FILE_PATTERN = re.compile(
@@ -51,10 +54,15 @@ def build_releases_router(settings: Settings) -> APIRouter:
     def latest_release() -> ClientReleaseResponse:
         latest = _find_latest_release(settings.release_dir)
         if latest is None:
+            logger.info("client.release_checked", extra={"found": False})
             return ClientReleaseResponse(latest_version=None)
         version, path = latest
         stat = path.stat()
         released_at = datetime.fromtimestamp(stat.st_mtime, UTC).replace(microsecond=0)
+        logger.info(
+            "client.release_checked",
+            extra={"found": True, "version": version, "size_bytes": stat.st_size},
+        )
         return ClientReleaseResponse(
             latest_version=version,
             file_name=path.name,
@@ -73,11 +81,23 @@ def build_releases_router(settings: Settings) -> APIRouter:
     def download_release(version: str, file_name: str) -> FileResponse:
         expected = f"aaw-skills-{version}.zip"
         if VERSION_PATTERN.fullmatch(version) is None or file_name != expected:
+            logger.warning(
+                "client.release_download_failed",
+                extra={"error_code": "RELEASE_NOT_FOUND"},
+            )
             raise ApiError(404, "RELEASE_NOT_FOUND", "release does not exist")
         release_dir = settings.release_dir
         path = release_dir / expected if release_dir is not None else None
         if path is None or not path.is_file():
+            logger.warning(
+                "client.release_download_failed",
+                extra={"error_code": "RELEASE_NOT_FOUND", "version": version},
+            )
             raise ApiError(404, "RELEASE_NOT_FOUND", "release does not exist")
+        logger.info(
+            "client.release_download_started",
+            extra={"version": version, "size_bytes": path.stat().st_size},
+        )
         return FileResponse(path, filename=expected)
 
     return router

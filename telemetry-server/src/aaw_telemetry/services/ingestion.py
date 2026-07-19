@@ -141,8 +141,17 @@ class IngestionService:
             if payload.data.step_type == "task-dev" and payload.data.status == "done":
                 self.session.add(self._create_dev_run(payload, payload_hash, now))
             self.session.commit()
-        except ApiError:
+        except ApiError as exc:
             self.session.rollback()
+            logger.warning(
+                "telemetry.message_rejected",
+                extra={
+                    "message_id": str(payload.message_id),
+                    "workflow_id": str(payload.workflow_id),
+                    "error_code": exc.code,
+                    "retryable": exc.retryable,
+                },
+            )
             raise
         except IntegrityError as exc:
             self.session.rollback()

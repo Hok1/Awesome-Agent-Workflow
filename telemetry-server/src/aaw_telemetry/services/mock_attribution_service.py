@@ -70,10 +70,17 @@ class MockAttributionService(AttributionService):
             for field, value in values.items():
                 setattr(dev_run.attribution, field, value)
         logger.info(
-            "mock_attribution: written, dev_run_id=%s, has_match=%s",
-            dev_run.id,
-            has_match,
+            "attribution.mock_completed",
+            extra={
+                "dev_run_id": str(dev_run.id),
+                "status": values["attribution_status"],
+                "has_match": has_match,
+                "attributed_lines_80": attributed_80,
+            },
         )
 
     def start_retry_scheduler(self, settings, projects) -> None:
-        logger.info("mock_attribution: retry scheduler skipped (no-op)")
+        logger.info(
+            "attribution.retry_scheduler_skipped",
+            extra={"reason": "mock_service"},
+        )

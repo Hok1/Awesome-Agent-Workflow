@@ -6,20 +6,20 @@ disable_existing_loggers: false
 log_directory: logs
 
 formatters:
-  json:
-    (): aaw_telemetry.logging.JsonFormatter
+  text:
+    (): aaw_telemetry.logging.TextFormatter
 
 handlers:
   console:
     class: logging.StreamHandler
     level: INFO
-    formatter: json
+    formatter: text
     stream: ext://sys.stdout
 
   server_file:
     class: concurrent_log_handler.ConcurrentTimedRotatingFileHandler
     level: INFO
-    formatter: json
+    formatter: text
     filename: server.log
     when: midnight
     interval: 1
@@ -32,7 +32,7 @@ handlers:
   error_file:
     class: concurrent_log_handler.ConcurrentRotatingFileHandler
     level: ERROR
-    formatter: json
+    formatter: text
     filename: error.log
     maxBytes: 104857600
     backupCount: 90
@@ -42,7 +42,7 @@ handlers:
   audit_file:
     class: concurrent_log_handler.ConcurrentTimedRotatingFileHandler
     level: INFO
-    formatter: json
+    formatter: text
     filename: audit.log
     when: midnight
     interval: 1

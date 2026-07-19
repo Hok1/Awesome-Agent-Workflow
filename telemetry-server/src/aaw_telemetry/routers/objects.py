@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC
 
@@ -7,10 +8,13 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from ..config import ProjectRegistry, Settings
+from ..errors import ApiError
 from ..logging import request_id_var
 from ..schemas import DiffUploadResponse
 from ..services.attribution_service import AttributionService
 from ..services.objects import ObjectService
+
+logger = logging.getLogger("aaw_telemetry.audit")
 
 
 def _milliseconds(value) -> int:
@@ -51,12 +55,35 @@ def build_objects_router(
         request: Request,
         session: Session = Depends(session_dependency),
     ) -> DiffUploadResponse:
-        upload = await ObjectService(
-            session,
-            settings,
-            projects,
-            attribution_service,
-        ).upload_diff(message_id, request.stream())
+        try:
+            upload = await ObjectService(
+                session,
+                settings,
+                projects,
+                attribution_service,
+            ).upload_diff(message_id, request.stream())
+        except ApiError as exc:
+            logger.warning(
+                "objects.upload_failed",
+                extra={
+                    "message_id": str(message_id),
+                    "error_code": exc.code,
+                    "status_code": exc.status_code,
+                    "retryable": exc.retryable,
+                },
+            )
+            raise
+        except Exception:
+            logger.exception(
+                "objects.upload_failed",
+                extra={
+                    "message_id": str(message_id),
+                    "error_code": "INTERNAL_ERROR",
+                    "status_code": 500,
+                    "retryable": True,
+                },
+            )
+            raise
         return DiffUploadResponse(
             request_id=request_id_var.get(),
             message_id=upload.owner_id,

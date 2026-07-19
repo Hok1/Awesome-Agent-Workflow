@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -44,11 +45,21 @@ def create_app(
     session_factory = build_session_factory(engine)
     get_session = session_dependency(session_factory)
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        logger.info("service.started", extra={"version": "0.1.0"})
+        attribution_service.start_retry_scheduler(settings, projects)
+        try:
+            yield
+        finally:
+            logger.info("service.stopped")
+
     app = FastAPI(
         title="AAW Telemetry Server",
         version="0.1.0",
         docs_url="/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.log_directory = log_directory
@@ -64,10 +75,7 @@ def create_app(
     app.include_router(build_dashboard_router(get_session, projects))
     app.include_router(build_objects_router(get_session, settings, projects, attribution_service))
     app.include_router(build_releases_router(settings))
-    logger.info("service.configured")
-
-    # Start the retry scheduler through the injected attribution service.
-    attribution_service.start_retry_scheduler(settings, projects)
+    logger.info("service.configured", extra={"log_directory": str(log_directory)})
 
     @app.get("/health/live", include_in_schema=False)
     def liveness():
