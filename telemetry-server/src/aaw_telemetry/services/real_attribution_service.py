@@ -134,13 +134,19 @@ def _start_retry_scheduler(settings, projects, engine: AttributionEngine) -> Non
             try:
                 retried = retry_pending_attributions(settings, projects, engine)
                 logger.info(
-                    "attribution.retry_scan_completed",
-                    extra={"retried": retried},
+                    "待重试归因记录扫描完成",
+                    extra={
+                        "event": "attribution.retry_scan_completed",
+                        "retried": retried,
+                    },
                 )
             except Exception as exc:
                 logger.error(
-                    "attribution.retry_scheduler_failed",
-                    extra={"error_type": type(exc).__name__},
+                    "归因重试调度器执行失败",
+                    extra={
+                        "event": "attribution.retry_scheduler_failed",
+                        "error_type": type(exc).__name__,
+                    },
                     exc_info=True,
                 )
             time.sleep(interval_seconds)
@@ -152,8 +158,9 @@ def _start_retry_scheduler(settings, projects, engine: AttributionEngine) -> Non
     )
     thread.start()
     logger.info(
-        "attribution.retry_scheduler_started",
+        "归因失败重试调度器已启动",
         extra={
+            "event": "attribution.retry_scheduler_started",
             "interval_seconds": interval_seconds,
             "initial_delay_seconds": 30,
         },

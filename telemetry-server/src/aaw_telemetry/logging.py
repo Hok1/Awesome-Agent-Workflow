@@ -15,7 +15,7 @@ request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id
 
 
 class TextFormatter(logging.Formatter):
-    """Human-readable structured logs with guarded ``key=value`` fields."""
+    """Readable narrative logs followed by searchable ``key=value`` fields."""
 
     _standard = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
     _sensitive = {
@@ -45,20 +45,30 @@ class TextFormatter(logging.Formatter):
         return rendered
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = (
+            datetime.fromtimestamp(record.created, UTC)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        )
+        location = getattr(record, "location", None) or record.name
+        if location.startswith("aaw_telemetry."):
+            location = location.removeprefix("aaw_telemetry.")
         message = record.getMessage().replace("\r", "\\r").replace("\n", "\\n")
-        parts = [f"{timestamp} [{record.levelname}]", message]
+        fields = []
         request_id = request_id_var.get()
         if request_id != "-":
-            parts.append(f"request_id={self._render_value(request_id)}")
+            fields.append(f"request_id={self._render_value(request_id)}")
         for key, value in record.__dict__.items():
             if (
                 key not in self._standard
                 and key.lower() not in self._sensitive
+                and key != "location"
                 and not key.startswith("_")
             ):
-                parts.append(f"{key}={self._render_value(value)}")
-        rendered = " ".join(parts)
+                fields.append(f"{key}={self._render_value(value)}")
+        rendered = f"{timestamp} [{record.levelname}] [{location}] {message}"
+        if fields:
+            rendered += " | " + " ".join(fields)
         if record.exc_info:
             rendered += "\n" + self.formatException(record.exc_info)
         return rendered
@@ -87,7 +97,7 @@ def configure_logging(
         log_directory = Path.cwd() / log_directory
     log_directory.mkdir(mode=0o750, parents=True, exist_ok=True)
 
-    file_handlers = {"server_file", "error_file", "audit_file"}
+    file_handlers = {"access_file", "server_file", "error_file"}
     for name in file_handlers:
         handler = config.get("handlers", {}).get(name)
         if handler is None:
@@ -104,7 +114,7 @@ def configure_logging(
         config["root"]["level"] = normalized
         config["handlers"]["console"]["level"] = normalized
         config["handlers"]["server_file"]["level"] = normalized
-        config["loggers"]["aaw_telemetry.audit"]["level"] = normalized
+        config["loggers"]["aaw_telemetry.http.access"]["level"] = normalized
 
     logging.config.dictConfig(config)
     logging.captureWarnings(True)

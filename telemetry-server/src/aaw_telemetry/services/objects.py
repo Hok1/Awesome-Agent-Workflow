@@ -16,7 +16,7 @@ from ..errors import ApiError
 from ..models import DevRun, ObjectUpload, TelemetryMessage
 from .attribution_service import AttributionService
 
-logger = logging.getLogger("aaw_telemetry.audit")
+logger = logging.getLogger("aaw_telemetry.objects.diff")
 
 
 def _utc(value: datetime) -> datetime:
@@ -139,10 +139,12 @@ class ObjectService:
         self.attribution_service.on_diff_confirmed(self.session, dev_run, now)
         self.session.commit()
         logger.info(
-            "objects.upload_confirmed",
+            "Dev Patch 上传并校验成功，开发步骤已进入归因处理",
             extra={
+                "event": "objects.upload_confirmed",
                 "upload_id": str(upload.id),
                 "owner_id": str(upload.owner_id),
+                "file_name": message.file_name,
                 "bytes_received": received,
             },
         )

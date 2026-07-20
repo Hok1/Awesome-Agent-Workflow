@@ -45,8 +45,9 @@ def run_attribution_in_background(
             _execute_attribution(session, dev_run_id, settings, projects, engine)
     except Exception as exc:
         logger.error(
-            "attribution.background_failed",
+            "后台归因任务执行失败",
             extra={
+                "event": "attribution.background_failed",
                 "dev_run_id": str(dev_run_id),
                 "error_type": type(exc).__name__,
             },
@@ -95,8 +96,9 @@ def retry_pending_attributions(
 
                 dev_run_id = attribution.dev_run_id
                 logger.info(
-                    "attribution.retry_scheduled",
+                    "未匹配的归因记录已安排再次尝试",
                     extra={
+                        "event": "attribution.retry_scheduled",
                         "dev_run_id": str(dev_run_id),
                         "retry_count": attribution.retry_count + 1,
                     },
@@ -105,8 +107,11 @@ def retry_pending_attributions(
                 retried += 1
     except Exception as exc:
         logger.error(
-            "attribution.retry_scan_failed",
-            extra={"error_type": type(exc).__name__},
+            "扫描待重试归因记录时发生异常",
+            extra={
+                "event": "attribution.retry_scan_failed",
+                "error_type": type(exc).__name__,
+            },
             exc_info=True,
         )
     finally:
@@ -148,8 +153,11 @@ def _execute_attribution(
     dev_run = session.get(DevRun, dev_run_id)
     if dev_run is None:
         logger.warning(
-            "attribution.dev_run_missing",
-            extra={"dev_run_id": str(dev_run_id)},
+            "归因任务对应的开发记录不存在，已跳过处理",
+            extra={
+                "event": "attribution.dev_run_missing",
+                "dev_run_id": str(dev_run_id),
+            },
         )
         return
 
@@ -157,8 +165,9 @@ def _execute_attribution(
     if attribution is not None:
         if attribution.attribution_status == "finalized_match":
             logger.info(
-                "attribution.skipped",
+                "该开发记录已经成功匹配，无需重复归因",
                 extra={
+                    "event": "attribution.skipped",
                     "dev_run_id": str(dev_run_id),
                     "reason": "already_matched",
                 },
@@ -167,8 +176,9 @@ def _execute_attribution(
 
         if attribution.retry_count >= MAX_RETRY_COUNT:
             logger.info(
-                "attribution.skipped",
+                "归因重试次数已达到上限，不再继续处理",
                 extra={
+                    "event": "attribution.skipped",
                     "dev_run_id": str(dev_run_id),
                     "reason": "max_retries_reached",
                     "retry_count": attribution.retry_count,
@@ -178,8 +188,9 @@ def _execute_attribution(
 
         if _retry_window_expired(dev_run.completed_at, now):
             logger.info(
-                "attribution.skipped",
+                "归因重试窗口已经结束，不再继续处理",
                 extra={
+                    "event": "attribution.skipped",
                     "dev_run_id": str(dev_run_id),
                     "reason": "retry_window_expired",
                     "retry_count": attribution.retry_count,
@@ -195,8 +206,9 @@ def _execute_attribution(
     )
     if message is None:
         logger.warning(
-            "attribution.context_missing",
+            "归因所需的步骤上报记录不存在，本次处理失败",
             extra={
+                "event": "attribution.context_missing",
                 "dev_run_id": str(dev_run_id),
                 "missing": "telemetry_message",
             },
@@ -211,8 +223,12 @@ def _execute_attribution(
 
     if dev_run.patch_object_key is None:
         logger.warning(
-            "attribution.context_missing",
-            extra={"dev_run_id": str(dev_run_id), "missing": "patch_object"},
+            "归因所需的 Dev Patch 尚未确认，本次处理失败",
+            extra={
+                "event": "attribution.context_missing",
+                "dev_run_id": str(dev_run_id),
+                "missing": "patch_object",
+            },
         )
         _mark_failed(session, dev_run_id, now, "no_patch_object")
         return
@@ -220,8 +236,11 @@ def _execute_attribution(
     diff_bytes = _read_diff_file(settings, dev_run.patch_object_key)
     if diff_bytes is None:
         logger.warning(
-            "attribution.diff_missing",
-            extra={"dev_run_id": str(dev_run_id)},
+            "已登记的 Dev Patch 文件不存在，本次归因失败",
+            extra={
+                "event": "attribution.diff_missing",
+                "dev_run_id": str(dev_run_id),
+            },
         )
         _mark_failed(session, dev_run_id, now, "diff_file_missing")
         return
@@ -235,8 +254,9 @@ def _execute_attribution(
         )
     except Exception as exc:
         logger.error(
-            "attribution.engine_failed",
+            "归因计算引擎执行失败",
             extra={
+                "event": "attribution.engine_failed",
                 "dev_run_id": str(dev_run_id),
                 "error_type": type(exc).__name__,
             },
@@ -256,8 +276,9 @@ def _execute_attribution(
     )
 
     logger.info(
-        "attribution.completed",
+        "代码归因计算已完成",
         extra={
+            "event": "attribution.completed",
             "dev_run_id": str(dev_run_id),
             "status": result.get("result_status"),
             "attributed_lines_80": result.get("attributed_lines_80", 0),

@@ -14,7 +14,7 @@ from ..schemas import DiffUploadResponse
 from ..services.attribution_service import AttributionService
 from ..services.objects import ObjectService
 
-logger = logging.getLogger("aaw_telemetry.audit")
+logger = logging.getLogger("aaw_telemetry.objects.diff")
 
 
 def _milliseconds(value) -> int:
@@ -64,8 +64,9 @@ def build_objects_router(
             ).upload_diff(message_id, request.stream())
         except ApiError as exc:
             logger.warning(
-                "objects.upload_failed",
+                "Dev Patch 上传或校验失败，文件未确认",
                 extra={
+                    "event": "objects.upload_failed",
                     "message_id": str(message_id),
                     "error_code": exc.code,
                     "status_code": exc.status_code,
@@ -75,8 +76,9 @@ def build_objects_router(
             raise
         except Exception:
             logger.exception(
-                "objects.upload_failed",
+                "处理 Dev Patch 时发生未预期异常",
                 extra={
+                    "event": "objects.upload_failed",
                     "message_id": str(message_id),
                     "error_code": "INTERNAL_ERROR",
                     "status_code": 500,

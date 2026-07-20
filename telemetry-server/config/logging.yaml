@@ -29,27 +29,27 @@ handlers:
     utc: true
     use_gzip: true
 
+  access_file:
+    class: concurrent_log_handler.ConcurrentTimedRotatingFileHandler
+    level: INFO
+    formatter: text
+    filename: access.log
+    when: midnight
+    interval: 1
+    backupCount: 30
+    maxBytes: 104857600
+    encoding: utf-8
+    utc: true
+    use_gzip: true
+
   error_file:
     class: concurrent_log_handler.ConcurrentRotatingFileHandler
-    level: ERROR
+    level: WARNING
     formatter: text
     filename: error.log
     maxBytes: 104857600
     backupCount: 90
     encoding: utf-8
-    use_gzip: true
-
-  audit_file:
-    class: concurrent_log_handler.ConcurrentTimedRotatingFileHandler
-    level: INFO
-    formatter: text
-    filename: audit.log
-    when: midnight
-    interval: 1
-    backupCount: 180
-    maxBytes: 104857600
-    encoding: utf-8
-    utc: true
     use_gzip: true
 
 root:
@@ -60,13 +60,11 @@ root:
     - error_file
 
 loggers:
-  aaw_telemetry.audit:
+  aaw_telemetry.http.access:
     level: INFO
     handlers:
-      - console
-      - server_file
+      - access_file
       - error_file
-      - audit_file
     propagate: false
 
   uvicorn.error:

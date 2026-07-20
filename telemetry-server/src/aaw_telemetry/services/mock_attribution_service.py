@@ -70,8 +70,9 @@ class MockAttributionService(AttributionService):
             for field, value in values.items():
                 setattr(dev_run.attribution, field, value)
         logger.info(
-            "attribution.mock_completed",
+            "Mock 代码归因已完成",
             extra={
+                "event": "attribution.mock_completed",
                 "dev_run_id": str(dev_run.id),
                 "status": values["attribution_status"],
                 "has_match": has_match,
@@ -81,6 +82,9 @@ class MockAttributionService(AttributionService):
 
     def start_retry_scheduler(self, settings, projects) -> None:
         logger.info(
-            "attribution.retry_scheduler_skipped",
-            extra={"reason": "mock_service"},
+            "当前使用 Mock 归因，不需要启动失败重试调度器",
+            extra={
+                "event": "attribution.retry_scheduler_skipped",
+                "reason": "mock_service",
+            },
         )

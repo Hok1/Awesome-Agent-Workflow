@@ -9,13 +9,15 @@ from conftest import DIFF, message, sync, upload_diff
 
 from aaw_telemetry.logging import TextFormatter, configure_logging, request_id_var
 
-LOG_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[[A-Z]+\] ")
+LOG_PREFIX = re.compile(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[[A-Z]+\] \[[^\]]+\] "
+)
 
 
 def _flush_logs() -> None:
     for handler in logging.getLogger().handlers:
         handler.flush()
-    for handler in logging.getLogger("aaw_telemetry.audit").handlers:
+    for handler in logging.getLogger("aaw_telemetry.http.access").handlers:
         handler.flush()
 
 
@@ -25,7 +27,7 @@ def _lines(path: Path) -> list[str]:
 
 
 def _event_line(path: Path, event: str) -> str:
-    return next(line for line in reversed(_lines(path)) if f"] {event}" in line)
+    return next(line for line in reversed(_lines(path)) if f"event={event}" in line)
 
 
 def test_text_formatter_matches_the_human_readable_contract():
@@ -46,7 +48,8 @@ def test_text_formatter_matches_the_human_readable_contract():
     rendered = formatter.format(record)
 
     assert LOG_PREFIX.match(rendered)
-    assert "[INFO] a text message" in rendered
+    assert "[INFO] [test] a text message" in rendered
+    assert " | " in rendered
     assert "status=finalized_match" in rendered
     assert 'description="two words"' in rendered
     assert "enabled=true" in rendered
@@ -55,11 +58,11 @@ def test_text_formatter_matches_the_human_readable_contract():
 def test_formatter_includes_identity_fields_and_filters_secrets():
     formatter = TextFormatter()
     record = logging.LogRecord(
-        "aaw_telemetry.test",
+        "aaw_telemetry.telemetry.sync",
         logging.ERROR,
         __file__,
         1,
-        "operation.failed",
+        "上报处理失败",
         (),
         None,
     )
@@ -74,6 +77,7 @@ def test_formatter_includes_identity_fields_and_filters_secrets():
         request_id_var.reset(token)
 
     assert "request_id=req-test" in rendered
+    assert "[telemetry.sync] 上报处理失败" in rendered
     assert "error_code=EXPECTED" in rendered
     assert "password" not in rendered
     assert "must-not-be-logged" not in rendered
@@ -100,19 +104,21 @@ def test_formatter_escapes_message_line_breaks():
     assert "first line\\nforged line" in rendered
 
 
-def test_structured_message_logs_are_traceable_without_identity_or_hash(client):
+def test_business_message_is_readable_and_traceable(client):
     payload = message()
     response = sync(client, payload)
 
     log_directory = client.app.state.log_directory
-    line = _event_line(log_directory / "audit.log", "telemetry.message_processed")
+    line = _event_line(log_directory / "server.log", "telemetry.message_processed")
 
     assert LOG_PREFIX.match(line)
+    assert "[telemetry.sync] 新的步骤上报已保存" in line
     assert f"message_id={payload['message_id']}" in line
     assert f"workflow_id={payload['workflow_id']}" in line
     assert f"request_id={response.headers['X-Request-ID']}" in line
-    rendered = (log_directory / "audit.log").read_text(encoding="utf-8")
-    assert payload["user_email"] not in rendered
+    rendered = (log_directory / "server.log").read_text(encoding="utf-8")
+    assert f"user_email={payload['user_email'].lower()}" in rendered
+    assert f"user_name={payload['user_name']}" in rendered
     assert payload["data"]["file"]["sha256"] not in rendered
 
 
@@ -126,10 +132,11 @@ def test_service_start_and_scheduler_decision_are_logged(client):
     )
 
     assert "version=0.1.0" in started
+    assert "[system] Telemetry Server 已启动" in started
     assert "reason=mock_service" in scheduler
 
 
-def test_workflow_consistency_failure_has_an_audit_event(client):
+def test_workflow_consistency_failure_has_a_readable_business_event(client):
     first = message()
     assert sync(client, first).status_code == 200
     conflicting = message(
@@ -141,12 +148,13 @@ def test_workflow_consistency_failure_has_an_audit_event(client):
 
     assert response.status_code == 400
     line = _event_line(
-        client.app.state.log_directory / "audit.log",
+        client.app.state.log_directory / "server.log",
         "telemetry.message_rejected",
     )
     assert "error_code=INVALID_REQUEST" in line
     assert f"message_id={conflicting['message_id']}" in line
-    assert conflicting["user_email"] not in line
+    assert f"user_email={conflicting['user_email'].lower()}" in line
+    assert "事务已回滚" in line
 
 
 def test_upload_success_and_failure_have_safe_audit_events(client):
@@ -155,9 +163,10 @@ def test_upload_success_and_failure_have_safe_audit_events(client):
     upload_diff(client, payload)
 
     log_directory = client.app.state.log_directory
-    confirmed = _event_line(log_directory / "audit.log", "objects.upload_confirmed")
+    confirmed = _event_line(log_directory / "server.log", "objects.upload_confirmed")
     assert "bytes_received=" in confirmed
     assert f"owner_id={payload['message_id']}" in confirmed
+    assert "[objects.diff] Dev Patch 上传并校验成功" in confirmed
 
     failed_payload = message(
         message_id="33333333-3333-4333-8333-333333333333",
@@ -171,17 +180,17 @@ def test_upload_success_and_failure_have_safe_audit_events(client):
     )
     assert response.status_code == 422
 
-    failed = _event_line(log_directory / "audit.log", "objects.upload_failed")
+    failed = _event_line(log_directory / "server.log", "objects.upload_failed")
     assert "error_code=FILE_HASH_MISMATCH" in failed
     assert "status_code=422" in failed
-    rendered = (log_directory / "audit.log").read_text(encoding="utf-8")
+    rendered = (log_directory / "server.log").read_text(encoding="utf-8")
     assert payload["data"]["file"]["sha256"] not in rendered
     assert failed_payload["data"]["file"]["sha256"] not in rendered
     assert DIFF.decode() not in rendered
     assert "wrong diff" not in rendered
 
 
-def test_dashboard_queries_write_non_sensitive_result_summaries(client):
+def test_dashboard_queries_only_write_access_log(client):
     payload = message()
     sync(client, payload)
 
@@ -192,28 +201,35 @@ def test_dashboard_queries_write_non_sensitive_result_summaries(client):
     assert response.status_code == 200
 
     log_directory = client.app.state.log_directory
-    line = _event_line(log_directory / "server.log", "dashboard.query_completed")
-    assert "endpoint=workflows" in line
-    assert "total=1" in line
-    assert "returned=1" in line
-    assert "page=1" in line
-    assert "page_size=10" in line
-    assert payload["user_email"] not in line
+    access_line = _event_line(log_directory / "access.log", "http.request_completed")
+    assert "[http.access] GET /api/v1/dashboard/workflows 返回 200" in access_line
+    assert "status_code=200" in access_line
+    assert "dashboard.query_completed" not in (
+        log_directory / "server.log"
+    ).read_text(encoding="utf-8")
 
 
 def test_request_and_error_logs_are_written_to_separate_files(client):
+    assert (client.app.state.log_directory / "access.log").is_file()
     assert (client.app.state.log_directory / "error.log").is_file()
     response = client.get("/health/live")
     logging.getLogger("aaw_telemetry.test").error(
-        "test.expected_error",
-        extra={"error_code": "EXPECTED", "password": "must-not-be-logged"},
+        "测试预期错误",
+        extra={
+            "event": "test.expected_error",
+            "error_code": "EXPECTED",
+            "password": "must-not-be-logged",
+        },
     )
 
     log_directory = client.app.state.log_directory
-    request = _event_line(log_directory / "server.log", "http.request_completed")
+    request = _event_line(log_directory / "access.log", "http.request_completed")
     error = _event_line(log_directory / "error.log", "test.expected_error")
     assert f"request_id={response.headers['X-Request-ID']}" in request
     assert "status_code=200" in request
+    assert "http.request_completed" not in (
+        log_directory / "server.log"
+    ).read_text(encoding="utf-8")
     assert "error_code=EXPECTED" in error
     assert "password" not in error
     assert "must-not-be-logged" not in (
@@ -240,7 +256,7 @@ def test_exception_traceback_is_rendered_on_following_lines():
 
     first_line, traceback = rendered.split("\n", 1)
     assert LOG_PREFIX.match(first_line)
-    assert "[ERROR] test.exception" in first_line
+    assert "[ERROR] [test] test.exception" in first_line
     assert "Traceback (most recent call last):" in traceback
     assert "RuntimeError: expected failure" in traceback
 

@@ -9,7 +9,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .logging import request_id_var
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aaw_telemetry.http")
+access_logger = logging.getLogger("aaw_telemetry.http.access")
 
 
 class RequestBodyLimitMiddleware:
@@ -74,8 +75,9 @@ class RequestBodyLimitMiddleware:
         )
         await send({"type": "http.response.body", "body": body})
         logger.warning(
-            "http.request_rejected",
+            "请求体超过服务端限制，已拒绝处理",
             extra={
+                "event": "http.request_rejected",
                 "method": scope.get("method"),
                 "path": scope.get("path"),
                 "error_code": "PAYLOAD_TOO_LARGE",
@@ -119,14 +121,18 @@ class RequestContextMiddleware:
                 if status_code >= 400
                 else logging.INFO
             )
-            logger.log(
+            method = scope.get("method")
+            path = scope.get("path")
+            access_logger.log(
                 level,
-                "http.request_completed",
+                f"{method} {path} 返回 {status_code}，耗时 {duration_ms} ms",
                 extra={
-                    "method": scope.get("method"),
-                    "path": scope.get("path"),
+                    "event": "http.request_completed",
+                    "method": method,
+                    "path": path,
                     "status_code": status_code,
                     "duration_ms": duration_ms,
+                    "client_ip": scope.get("client", ("-", 0))[0],
                 },
             )
             request_id_var.reset(token)

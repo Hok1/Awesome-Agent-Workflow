@@ -20,7 +20,7 @@ from ..models import (
 )
 from ..schemas import TelemetrySyncRequest, TelemetrySyncResponse
 
-logger = logging.getLogger("aaw_telemetry.audit")
+logger = logging.getLogger("aaw_telemetry.telemetry.sync")
 
 
 def _datetime(milliseconds: int) -> datetime:
@@ -98,10 +98,14 @@ class IngestionService:
         if existing is not None:
             if existing.payload_hash != payload_hash:
                 logger.warning(
-                    "telemetry.message_rejected",
+                    "上报消息与已有消息内容冲突，已拒绝写入",
                     extra={
+                        "event": "telemetry.message_rejected",
                         "message_id": str(payload.message_id),
                         "workflow_id": str(payload.workflow_id),
+                        "sr": payload.sr,
+                        "user_email": payload.user_email,
+                        "user_name": payload.user_name,
                         "error_code": "MESSAGE_CONFLICT",
                         "retryable": False,
                     },
@@ -112,10 +116,14 @@ class IngestionService:
                     "message_id already exists with different normalized content",
                 )
             logger.info(
-                "telemetry.message_processed",
+                "收到重复的步骤上报，已按幂等规则返回已有结果",
                 extra={
+                    "event": "telemetry.message_processed",
                     "message_id": str(payload.message_id),
                     "workflow_id": str(payload.workflow_id),
+                    "sr": payload.sr,
+                    "user_email": payload.user_email,
+                    "user_name": payload.user_name,
                     "step_type": payload.data.step_type,
                     "outcome": "duplicate",
                 },
@@ -126,12 +134,14 @@ class IngestionService:
                 status="duplicate",
             )
 
+        workflow_created = False
         try:
             workflow = self._lock_workflow(payload.workflow_id)
             if workflow is None:
                 workflow = self._create_workflow(payload, payload_hash, now)
                 self.session.add(workflow)
                 self.session.flush()
+                workflow_created = True
             else:
                 self._validate_and_update_workflow(workflow, payload, payload_hash, now)
 
@@ -144,10 +154,14 @@ class IngestionService:
         except ApiError as exc:
             self.session.rollback()
             logger.warning(
-                "telemetry.message_rejected",
+                "步骤上报未通过业务约束校验，事务已回滚",
                 extra={
+                    "event": "telemetry.message_rejected",
                     "message_id": str(payload.message_id),
                     "workflow_id": str(payload.workflow_id),
+                    "sr": payload.sr,
+                    "user_email": payload.user_email,
+                    "user_name": payload.user_name,
                     "error_code": exc.code,
                     "retryable": exc.retryable,
                 },
@@ -156,10 +170,14 @@ class IngestionService:
         except IntegrityError as exc:
             self.session.rollback()
             logger.warning(
-                "telemetry.message_rejected",
+                "步骤上报违反数据关系或唯一性约束，事务已回滚",
                 extra={
+                    "event": "telemetry.message_rejected",
                     "message_id": str(payload.message_id),
                     "workflow_id": str(payload.workflow_id),
+                    "sr": payload.sr,
+                    "user_email": payload.user_email,
+                    "user_name": payload.user_name,
                     "error_code": "INVALID_REQUEST",
                     "retryable": False,
                 },
@@ -171,13 +189,23 @@ class IngestionService:
             ) from exc
 
         logger.info(
-            "telemetry.message_processed",
+            (
+                "新的步骤上报已保存，并创建了对应工作流"
+                if workflow_created
+                else "新的步骤上报已保存，工作流状态已更新"
+            ),
             extra={
+                "event": "telemetry.message_processed",
                 "message_id": str(payload.message_id),
                 "workflow_id": str(payload.workflow_id),
+                "sr": payload.sr,
+                "repository": payload.repository,
+                "user_email": payload.user_email,
+                "user_name": payload.user_name,
                 "step_type": payload.data.step_type,
                 "step_status": payload.data.status,
                 "has_file": payload.data.file is not None,
+                "workflow_created": workflow_created,
                 "outcome": "accepted",
             },
         )

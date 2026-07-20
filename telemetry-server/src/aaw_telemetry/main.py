@@ -20,7 +20,7 @@ from .routers.releases import build_releases_router
 from .routers.telemetry import build_telemetry_router
 from .services.attribution_service import AttributionService
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aaw_telemetry.system")
 
 
 def create_app(
@@ -47,12 +47,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        logger.info("service.started", extra={"version": "0.1.0"})
+        logger.info(
+            "Telemetry Server 已启动，可以接收请求",
+            extra={"event": "service.started", "version": "0.1.0"},
+        )
         attribution_service.start_retry_scheduler(settings, projects)
         try:
             yield
         finally:
-            logger.info("service.stopped")
+            logger.info("Telemetry Server 已停止", extra={"event": "service.stopped"})
 
     app = FastAPI(
         title="AAW Telemetry Server",
@@ -75,7 +78,10 @@ def create_app(
     app.include_router(build_dashboard_router(get_session, projects))
     app.include_router(build_objects_router(get_session, settings, projects, attribution_service))
     app.include_router(build_releases_router(settings))
-    logger.info("service.configured", extra={"log_directory": str(log_directory)})
+    logger.info(
+        "服务配置加载完成",
+        extra={"event": "service.configured", "log_directory": str(log_directory)},
+    )
 
     @app.get("/health/live", include_in_schema=False)
     def liveness():
@@ -88,7 +94,11 @@ def create_app(
                 connection.execute(text("SELECT 1"))
             return {"status": "ok"}
         except Exception as exc:
-            logger.error("health.database_unavailable", exc_info=exc)
+            logger.error(
+                "数据库连接不可用，服务暂未就绪",
+                extra={"event": "health.database_unavailable"},
+                exc_info=exc,
+            )
             return JSONResponse(status_code=503, content={"status": "unavailable"})
 
     @app.get("/self-test", include_in_schema=False)
@@ -103,8 +113,9 @@ def create_app(
         level = logging.ERROR if exc.status_code >= 500 else logging.WARNING
         logger.log(
             level,
-            "http.api_error",
+            "接口请求未能完成，已返回业务错误",
             extra={
+                "event": "http.api_error",
                 "status_code": exc.status_code,
                 "error_code": exc.code,
                 "retryable": exc.retryable,
@@ -128,8 +139,13 @@ def create_app(
             location = ".".join(str(part) for part in item["loc"])
             details.append(f"{location}: {item['msg']}")
         logger.warning(
-            "http.validation_failed",
-            extra={"path": request.url.path, "error_code": code, "error_count": len(details)},
+            "接口参数校验失败，已拒绝请求",
+            extra={
+                "event": "http.validation_failed",
+                "path": request.url.path,
+                "error_code": code,
+                "error_count": len(details),
+            },
         )
         return JSONResponse(
             status_code=400,
@@ -143,7 +159,11 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(_: Request, exc: Exception):
-        logger.exception("http.unhandled_error", exc_info=exc)
+        logger.exception(
+            "处理接口请求时发生未预期异常",
+            extra={"event": "http.unhandled_error"},
+            exc_info=exc,
+        )
         return JSONResponse(
             status_code=500,
             content={

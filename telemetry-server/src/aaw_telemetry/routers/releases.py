@@ -12,7 +12,7 @@ from ..config import Settings
 from ..errors import ApiError
 from ..schemas import ClientReleaseResponse
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aaw_telemetry.client.release")
 
 VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 RELEASE_FILE_PATTERN = re.compile(
@@ -54,14 +54,22 @@ def build_releases_router(settings: Settings) -> APIRouter:
     def latest_release() -> ClientReleaseResponse:
         latest = _find_latest_release(settings.release_dir)
         if latest is None:
-            logger.info("client.release_checked", extra={"found": False})
+            logger.info(
+                "客户端检查更新，但当前没有可用发布包",
+                extra={"event": "client.release_checked", "found": False},
+            )
             return ClientReleaseResponse(latest_version=None)
         version, path = latest
         stat = path.stat()
         released_at = datetime.fromtimestamp(stat.st_mtime, UTC).replace(microsecond=0)
         logger.info(
-            "client.release_checked",
-            extra={"found": True, "version": version, "size_bytes": stat.st_size},
+            f"客户端检查更新，当前最新版本为 {version}",
+            extra={
+                "event": "client.release_checked",
+                "found": True,
+                "version": version,
+                "size_bytes": stat.st_size,
+            },
         )
         return ClientReleaseResponse(
             latest_version=version,
@@ -82,21 +90,32 @@ def build_releases_router(settings: Settings) -> APIRouter:
         expected = f"aaw-skills-{version}.zip"
         if VERSION_PATTERN.fullmatch(version) is None or file_name != expected:
             logger.warning(
-                "client.release_download_failed",
-                extra={"error_code": "RELEASE_NOT_FOUND"},
+                "客户端请求的发布包名称或版本不合法，已拒绝下载",
+                extra={
+                    "event": "client.release_download_failed",
+                    "error_code": "RELEASE_NOT_FOUND",
+                },
             )
             raise ApiError(404, "RELEASE_NOT_FOUND", "release does not exist")
         release_dir = settings.release_dir
         path = release_dir / expected if release_dir is not None else None
         if path is None or not path.is_file():
             logger.warning(
-                "client.release_download_failed",
-                extra={"error_code": "RELEASE_NOT_FOUND", "version": version},
+                "客户端请求的发布包不存在，无法开始下载",
+                extra={
+                    "event": "client.release_download_failed",
+                    "error_code": "RELEASE_NOT_FOUND",
+                    "version": version,
+                },
             )
             raise ApiError(404, "RELEASE_NOT_FOUND", "release does not exist")
         logger.info(
-            "client.release_download_started",
-            extra={"version": version, "size_bytes": path.stat().st_size},
+            f"客户端开始下载 {version} 发布包",
+            extra={
+                "event": "client.release_download_started",
+                "version": version,
+                "size_bytes": path.stat().st_size,
+            },
         )
         return FileResponse(path, filename=expected)
 

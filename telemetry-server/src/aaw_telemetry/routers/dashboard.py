@@ -22,7 +22,10 @@ def _log_query(endpoint: str, result: dict, **fields) -> None:
         extra["returned"] = len(result["items"])
     if isinstance(result.get("points"), list):
         extra["returned"] = len(result["points"])
-    logger.info("dashboard.query_completed", extra=extra)
+    logger.debug(
+        "Dashboard 查询已完成",
+        extra={"event": "dashboard.query_completed", **extra},
+    )
 
 
 def build_dashboard_router(session_dependency, projects: ProjectRegistry) -> APIRouter:
