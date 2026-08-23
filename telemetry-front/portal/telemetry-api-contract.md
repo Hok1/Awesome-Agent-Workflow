@@ -495,7 +495,7 @@ Content-Type: application/json
 | `from` | date | 当前日期前29天 | cohort开始日期 |
 | `to` | date | 当前日期 | cohort结束日期 |
 | `project_key` | string，可重复 | 全部 | 项目过滤 |
-| `git_user_email` | Email，可重复 | 全部 | Git用户过滤 |
+| `user_name` | string，可重复 | 全部 | Git用户名过滤 |
 | `aaw_version` | Version，可重复 | 全部 | 版本过滤 |
 | `sr` | string | 全部 | SR精确匹配 |
 | `ar` | string | 全部 | AR精确匹配 |
@@ -549,13 +549,15 @@ Authorization: Bearer <admin-token>
       {"project_key": "order-service", "display_name": "订单服务"}
     ],
     "git_users": [
-      {"email": "zhangsan@company.com", "name": "张三"}
+      {"git_user_name": "张三"}
     ],
     "aaw_versions": ["0.2.0"],
     "result_statuses": ["pending", "finalized_match", "finalized_no_match", "failed"]
   }
 }
 ```
+
+筛选项读取对应 `workflow_kind` 下的全量历史数据，不应用 `from`、`to` 或其他页面筛选条件。人员筛选的展示值和请求值都使用用户名，不使用邮箱。
 
 ### 7.2 总览
 
@@ -625,7 +627,7 @@ Authorization: Bearer <admin-token>
 ### 7.4 项目汇总
 
 ```http
-GET /api/v1/dashboard/projects?from=2026-07-01&to=2026-07-31&page=1&page_size=50&statistics_only=false
+GET /api/v1/dashboard/projects?from=2026-07-01&to=2026-07-31&page=1&page_size=50&top_size=7&statistics_only=false
 Authorization: Bearer <admin-token>
 ```
 
@@ -637,6 +639,15 @@ Authorization: Bearer <admin-token>
   "page": 1,
   "page_size": 50,
   "total": 1,
+  "statistics_total": 1,
+  "top_items": [
+    {
+      "project_key": "order-service",
+      "dev_effective_lines": 18200,
+      "attributed_lines_80": 10240,
+      "attributed_lines_90": 8760
+    }
+  ],
   "items": [
     {
       "project_key": "order-service",
@@ -656,7 +667,9 @@ Authorization: Bearer <admin-token>
 }
 ```
 
-未匹配 `projects.yaml` 的项目返回 `included_in_statistics=false`。其使用次数和代码量保留原始值，`attribution_rate_80/90` 返回 `null`，供前端标注“未纳入统计”。
+`top_size` 可选，范围为 0～100。大于 0 时，响应增加 `top_items` 和 `statistics_total`：前者是已纳入统计项目中按同一规则排序后的前 N 项，不受当前分页影响；后者是已纳入统计的项目总数。前端可同时渲染包含未配置项目的分页表格和只包含统计范围项目的 Top N，避免重复调用项目汇总接口。
+
+未匹配 `projects.yaml` 的项目返回 `included_in_statistics=false`。其使用次数和代码量保留原始值，`attribution_rate_80/90` 返回 `null`，供前端标注“未纳入统计”。`statistics_only=true` 时，分页列表也只返回已纳入统计的项目。
 
 ### 7.5 Skill/环节汇总
 

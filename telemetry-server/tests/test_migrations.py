@@ -11,7 +11,7 @@ def _scripts() -> ScriptDirectory:
 
 
 def test_migration_graph_has_one_head() -> None:
-    assert _scripts().get_heads() == ["0014_merge_diff_archive_heads"]
+    assert _scripts().get_heads() == ["0015_dashboard_perf_indexes"]
 
 
 def test_merge_revision_joins_both_schema_branches() -> None:
