@@ -116,7 +116,7 @@ SR 入口必须提供 `--requirement-file`（原始需求文件），CLI 会将�
 
 AR 入口要求当前仓库已经执行过 `repo-init`，并且存在 `.sdd/software_architecture.md`。如果该文件缺失，`next --json` 会在工作单的 `inputs` 中标记 blocked，且 `done` 会失败。
 
-dev 入口不要求 `--requirement-file`，也不要求 `.sdd/software_architecture.md`。它面向个人开发者的轻量迭代：`dev-init` 会引导确认需求（用户提供了较长原文时可落盘为可选的 `.sdd/{SR}/requirement.md`），随后 `dev-design` 用单份 `.sdd/{SR}/dev-design.md` 承接功能设计、模块边界与详细设计，`dev-design-gate` 做 6 项轻量准入检查，最后复用 `task-split` / `task-dev`（轻量模式）完成拆分与开发。用户只给一句话需求时可直接启动，不必先准备需求文件。
+dev 入口不要求 `--requirement-file`，也不要求 `.sdd/software_architecture.md`。它面向个人开发者的轻量迭代：`dev-init` 会引导确认需求（用户提供了较长原文时可落盘为可选的 `.sdd/{SR}/requirement.md`），随后 `dev-design` 用单份 `.sdd/{SR}/dev-design.md` 承接功能设计、模块边界与详细设计（必经 ASIS 代码取证，现状摘要与附录写进同一文档），`dev-design-gate` 做 7 项轻量准入检查，最后复用 `task-split` / `task-dev`（轻量模式）完成拆分与开发。用户只给一句话需求时可直接启动，不必先准备需求文件。
 
 也可以使用通用变量形式：
 
