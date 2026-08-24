@@ -81,8 +81,8 @@ CLI 状态是进度事实来源。上下文压缩或会话恢复后，不凭记�
 ### 1. 实现与测试
 
 1. 完整读取任务事实来源（见「模式判定」对应表）：
-   - 严格模式：模块目录下的 `tasks-overview.md`、`模块详细设计说明书.md`、`模块测试用例设计.md`、`.context/模块设计门禁结果.md`、`.sdd/software_architecture.md`，以及存在时的 `.sdd/spec.md`。
-   - 轻量模式：`.sdd/{SR}/tasks-overview.md`、`.sdd/{SR}/dev-design.md`，以及存在时的 `.sdd/{SR}/.context/dev-design-gate.md`、`.sdd/software_architecture.md`、`.sdd/spec.md`。
+   - 严格模式：模块目录下的 `tasks-overview.md`、`模块详细设计说明书.md`、`模块测试用例设计.md`、`.context/模块设计门禁结果.md`、`.sdd/software_architecture.md`，以及存在时的 `.sdd/spec.md`、`.sdd/AICodingGuidelines.md`。
+   - 轻量模式：`.sdd/{SR}/tasks-overview.md`、`.sdd/{SR}/dev-design.md`，以及存在时的 `.sdd/{SR}/.context/dev-design-gate.md`、`.sdd/software_architecture.md`、`.sdd/spec.md`、`.sdd/AICodingGuidelines.md`。
 2. 确认当前 Task 是串行顺序中应执行的任务、前置 Task 已完成、执行门禁通过（严格模式为模块设计门禁“通过”，轻量模式为 `dev-design-gate.md` 结论为通过，无该文件时以工作单就绪状态为准），且任务中的设计与验收引用都能在权威文档中定位。存在阻塞时停止并报告。
 3. 从设计来源中提取当前 Task 涉及的契约、流程、异常语义、配置、依赖边界和非功能约束；结合当前代码确定实现位置，只探索和修改当前范围。
 4. 严格按已评审设计实现，不重命名契约、不丢字段、不简化流程、不改变异常语义，不提前实现后续 Task，也不做无关重构。设计与代码事实冲突时停止并回流，不得自行改设计。

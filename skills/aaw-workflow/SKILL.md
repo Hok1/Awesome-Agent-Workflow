@@ -98,7 +98,7 @@ uv run <skill-dir>/scripts/aaw.py start --entry dev --sr SR-XXX --json
 |---|---|---|---|
 | `sr` | 企业/严谨流程，需求需完整留痕 | `SR` + `--requirement-file` | 11 步，产出约 11 份文档 |
 | `ar` | 已有架构基线，从某个 AR 直接切入 | `SR` `AR` `描述` | 从 `ar-clarify` 起 |
-| `dev` | 个人开发者/轻量迭代，追求快速出代码 | `SR` | 5 步，只产 `dev-design.md` 与 `tasks-overview.md` |
+| `dev` | 个人开发者/轻量迭代，追求快速出代码 | `SR` | 5 步，产 `dev-design.md`、`tasks-overview.md` 及 `.context/` 下门禁报告 |
 
 SR 入口必须提供 `--requirement-file`（原始需求文件），CLI 会将其原样保存为
 `.sdd/{SR}/original-requirement.md`，作为 `sr-design` 和 `sr-design-gate` 的正式输入。
