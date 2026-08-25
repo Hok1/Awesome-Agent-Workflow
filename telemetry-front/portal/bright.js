@@ -92,7 +92,18 @@
     compOrder: "desc",
     compQuery: "",
     compSe: [],
+    compMaster: [],
     compUsed: "all",
+    // AI Master 运营
+    aiMasters: null,
+    aiMastersFailed: false,
+    assignments: null,
+    amSummary: null,
+    amSummaryFailed: false,
+    amDetail: null,
+    amDetailFailed: false,
+    amSelectedMaster: null,
+    amSubTab: "summary",
   };
 
   const charts = {};
@@ -276,6 +287,7 @@
     if (btn.dataset.retry === "steps") refetchSteps();
     else if (btn.dataset.retry === "workflows") refetchWorkflows();
     else if (btn.dataset.retry === "components") refetchComponents();
+    else if (btn.dataset.retry === "amSummary") refetchAmSummary();
   });
 
   function buildSegments() {
@@ -359,6 +371,28 @@
         headers: { Accept: "application/json" },
         credentials: CFG.credentials,
         signal: ctrl.signal,
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function httpRequest(method, path, body) {
+    const url = new URL(CFG.apiBase + path, window.location.origin);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), CFG.timeout);
+    try {
+      const resp = await fetch(url.toString(), {
+        method,
+        headers: {
+          Accept: "application/json",
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        },
+        credentials: CFG.credentials,
+        signal: ctrl.signal,
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       return await resp.json();
@@ -594,6 +628,89 @@
         },
       };
     },
+
+    // ── AI Master 运营 ─────────────────────────────
+    async aiMasters() {
+      const res = await httpGet("/ai-masters");
+      return {
+        code: 0,
+        data: {
+          items: (res.items || []).map((m) => ({
+            id: m.id,
+            name: m.name,
+            componentCount: m.component_count ?? 0,
+          })),
+        },
+      };
+    },
+
+    async assignments() {
+      const res = await httpGet("/ai-masters/assignments");
+      return {
+        code: 0,
+        data: { assignments: res.assignments || {} },
+      };
+    },
+
+    async aiMasterOperations(params) {
+      const filter = buildFilterParams(params);
+      const res = await httpGet("/ai-masters/operations", filter);
+      return {
+        code: 0,
+        data: {
+          items: (res.items || []).map((c) => ({
+            aiMasterId: c.ai_master_id,
+            name: c.name,
+            totalComponents: c.total_components ?? 0,
+            tierCounts: c.tier_counts || { none: 0, three: 0, five: 0, no_data: 0 },
+            lowestRequiredRate: c.lowest_required_rate ?? null,
+          })),
+        },
+      };
+    },
+
+    async aiMasterDetail(id, params) {
+      const filter = buildFilterParams(params);
+      const res = await httpGet(`/ai-masters/${id}/components`, filter);
+      return {
+        code: 0,
+        data: {
+          aiMasterId: res.ai_master_id,
+          name: res.name,
+          items: (res.items || []).map((r) => ({
+            componentId: r.component_id,
+            componentName: r.name,
+            se: r.se,
+            usedAaw: Boolean(r.used_aaw),
+            effectiveLines: r.effective_lines ?? 0,
+            attributionRate80: r.attribution_rate_80,
+            tier: r.tier,
+          })),
+        },
+      };
+    },
+
+    async aiMasterCreate(name) {
+      const res = await httpRequest("POST", "/ai-masters", { name });
+      return { code: 0, data: { id: res.id, name: res.name } };
+    },
+
+    async aiMasterRename(id, name) {
+      const res = await httpRequest("PATCH", `/ai-masters/${id}`, { name });
+      return { code: 0, data: { id: res.id, name: res.name } };
+    },
+
+    async aiMasterDelete(id) {
+      const res = await httpRequest("DELETE", `/ai-masters/${id}`);
+      return { code: 0, data: { id: res.id, deleted: res.deleted } };
+    },
+
+    async assignComponent(componentId, aiMasterId) {
+      const res = await httpRequest("PUT", `/ai-masters/assignments/${componentId}`, {
+        ai_master_id: aiMasterId,
+      });
+      return { code: 0, data: { component_id: res.component_id, ai_master_id: res.ai_master_id } };
+    },
   };
 
   const StatsApi = CFG.useMock ? MockApi : RealApi;
@@ -639,6 +756,12 @@
       .catch((err) => { console.error("工作流接口请求失败：", err); return null; });
     const compP = isTestDashboard ? Promise.resolve(null) : StatsApi.components(params)
       .catch((err) => { console.error("组件接口请求失败：", err); return null; });
+    const amMastersP = isTestDashboard ? Promise.resolve(null) : StatsApi.aiMasters()
+      .catch((err) => { console.error("AI Master 名单请求失败：", err); return null; });
+    const amAssignmentsP = isTestDashboard ? Promise.resolve(null) : StatsApi.assignments()
+      .catch((err) => { console.error("AI Master 归属请求失败：", err); return null; });
+    const amSummaryP = isTestDashboard ? Promise.resolve(null) : StatsApi.aiMasterOperations(params)
+      .catch((err) => { console.error("AI Master 运营请求失败：", err); return null; });
 
     let res;
     try {
@@ -654,7 +777,9 @@
     if (res.code !== 0) { console.error(res.message); return; }
     state.data = res.data;
 
-    const [steps, wf, comp] = await Promise.all([stepsP, wfP, compP]);
+    const [steps, wf, comp, amMasters, amAssignments, amSummary] = await Promise.all([
+      stepsP, wfP, compP, amMastersP, amAssignmentsP, amSummaryP,
+    ]);
     if (token !== reqToken) return;
     state.stepsFailed = steps == null;
     state.workflowsFailed = wf == null;
@@ -662,6 +787,14 @@
     state.workflows = wf && wf.code === 0 ? wf.data : null;
     state.componentsFailed = comp == null;
     state.components = comp && comp.code === 0 ? comp.data : null;
+    state.aiMastersFailed = amMasters == null;
+    state.aiMasters = amMasters && amMasters.code === 0 ? amMasters.data : null;
+    state.assignments = amAssignments && amAssignments.code === 0 ? amAssignments.data.assignments : {};
+    state.amSummaryFailed = amSummary == null;
+    state.amSummary = amSummary && amSummary.code === 0 ? amSummary.data : null;
+    // 明细视图依赖选中的 AI Master，换主过滤后让用户重新选择。
+    state.amDetail = null;
+    state.amDetailFailed = false;
 
     paintAll();
     $(".stage").setAttribute("aria-busy", "false");
@@ -733,6 +866,34 @@
     renderComponents();
   }
 
+  // 仅重取 AI Master 名单 + 聚合（空态重试用）；明细在子逻辑里单独拉。
+  async function refetchAmSummary() {
+    const token = reqToken;
+    const params = {
+      components: state.selComponents,
+      persons: state.selPersons,
+      timeRange: state.timeRange,
+    };
+    let masters;
+    let summary;
+    try {
+      [masters, summary] = await Promise.all([
+        StatsApi.aiMasters(),
+        StatsApi.aiMasterOperations(params),
+      ]);
+    } catch (err) {
+      console.error("AI Master 运营请求失败：", err);
+      masters = null;
+      summary = null;
+    }
+    if (token !== reqToken) return;
+    state.aiMastersFailed = masters == null;
+    state.aiMasters = masters && masters.code === 0 ? masters.data : null;
+    state.amSummaryFailed = summary == null;
+    state.amSummary = summary && summary.code === 0 ? summary.data : null;
+    renderAiMaster();
+  }
+
   function stampSync() {
     const now = new Date();
     const p = (n) => String(n).padStart(2, "0");
@@ -754,6 +915,7 @@
       renderSteps();
       renderWorkflows();
       renderComponents();
+      renderAiMaster();
     }
   }
 
@@ -1438,11 +1600,13 @@
     const unassignedId = data.unassignedId || "__unassigned__";
     const q = state.compQuery.trim().toLocaleLowerCase("zh-CN");
     const seSel = state.compSe;
+    const masterSel = state.compMaster;
     const used = state.compUsed;
     // SE 未归类行（se 为 null）在 SE 筛选生效时天然被排除。
     const match = (r) => {
       if (q && !String(r.componentName ?? "").toLocaleLowerCase("zh-CN").includes(q)) return false;
       if (seSel.length && !seSel.includes(r.se)) return false;
+      if (masterSel.length && !masterSel.includes(masterOf(r.componentId).masterName)) return false;
       if (used === "used" && !r.usedAaw) return false;
       if (used === "unused" && r.usedAaw) return false;
       return true;
@@ -1454,19 +1618,25 @@
 
     const key = state.compSort;
     const dir = state.compOrder === "asc" ? 1 : -1;
-    const num = (r) => {
-      const v = r[key];
+    const val = (r) => {
+      let v = r[key];
+      if (key === "masterName") v = masterOf(r.componentId).masterName;
       if (v == null) return null;
+      if (typeof v === "string") return v;
       return typeof v === "boolean" ? (v ? 1 : 0) : Number(v);
     };
-    rows.sort((a, b) => {
-      const va = num(a), vb = num(b);
+    const cmp = (a, b) => {
+      const va = val(a), vb = val(b);
       if (va == null && vb == null) return byName(a, b);
       if (va == null) return 1;          // 空值恒排最后
       if (vb == null) return -1;
+      if (typeof va === "string" || typeof vb === "string") {
+        return String(va).localeCompare(String(vb), "zh-CN") * dir;
+      }
       if (va === vb) return byName(a, b);
       return (va - vb) * dir;
-    });
+    };
+    rows.sort(cmp);
     return { rows, unassigned };
   }
   const byName = (a, b) =>
@@ -1496,7 +1666,7 @@
 
     body.innerHTML = "";
     if (!list.length) {
-      const hasFilter = !!state.compQuery.trim() || state.compSe.length > 0 || state.compUsed !== "all";
+      const hasFilter = !!state.compQuery.trim() || state.compSe.length > 0 || state.compMaster.length > 0 || state.compUsed !== "all";
       let msg;
       if (state.componentsFailed) {
         msg = `组件数据加载失败，<button type="button" class="retry-link" data-retry="components">重试</button>`;
@@ -1505,7 +1675,7 @@
       } else {
         msg = "当前筛选下暂无组件数据";
       }
-      body.innerHTML = `<tr class="empty-row"><td colspan="5">${msg}</td></tr>`;
+      body.innerHTML = `<tr class="empty-row"><td colspan="6">${msg}</td></tr>`;
       syncCompSortIndicator();
       return;
     }
@@ -1513,13 +1683,15 @@
     const unassignedId = (data && data.unassignedId) || "__unassigned__";
     list.forEach((r) => {
       const tr = document.createElement("tr");
-      if (r.componentId === unassignedId) tr.className = "comp-row--unassigned";
+      const isUnassignedRow = r.componentId === unassignedId;
+      if (isUnassignedRow) tr.className = "comp-row--unassigned";
       const used = r.usedAaw
         ? '<span class="used-yes">是</span>'
         : '<span class="used-no">否</span>';
       tr.innerHTML = `
         <td class="td-name">${esc(r.componentName)}</td>
         <td class="td-name">${r.se ? esc(r.se) : "—"}</td>
+        <td class="td-name">${masterCell(r, isUnassignedRow)}</td>
         <td>${used}</td>
         <td>${fmtFull(r.effectiveLines ?? 0)}</td>
         <td>${rateCell(r.attributionRate80, "80")}</td>`;
@@ -1528,12 +1700,264 @@
     syncCompSortIndicator();
   }
 
+  // 推导某组件的所属 AI Master（归属映射 + 名单合并；组件表格用）。
+  function masterOf(componentId) {
+    const masterId = (state.assignments || {})[componentId] || null;
+    const master = (state.aiMasters && state.aiMasters.items || [])
+      .find((m) => m.id === masterId) || null;
+    return { masterId: master ? master.id : (masterId || null), masterName: master ? master.name : null };
+  }
+
+  // AI Master 单元格：已加载名单时渲染下拉（可直接改挂），否则仅纯文本展示。
+  // 已分配组件只能改挂到其它 AI Master，不能清空回"未分配"；
+  // 未分配组件（含首挂）用禁用占位项提示，选中任一 AI Master 即完成首挂。
+  function masterCell(r, isUnassignedRow) {
+    const masters = (state.aiMasters && state.aiMasters.items) || [];
+    const { masterId, masterName } = masterOf(r.componentId);
+    if (isUnassignedRow || !masters.length) {
+      return masterName ? esc(masterName) : "未分配";
+    }
+    const opts = masters.map((m) =>
+      `<option value="${esc(m.id)}" ${masterId === m.id ? "selected" : ""}>${esc(m.name)}</option>`
+    );
+    if (!masterId) {
+      opts.unshift('<option value="" disabled>未分配</option>');   // 不可回选，仅占位
+    }
+    return `<select class="comp-master-select" data-component-id="${esc(r.componentId)}" data-previous="${esc(masterId || "")}" aria-label="所属 AI Master">${opts.join("")}</select>`;
+  }
+
   function syncCompSortIndicator() {
     document.querySelectorAll(".ledger--comp th[data-comp-sort]").forEach((th) => {
       th.removeAttribute("data-active");
       if (th.dataset.compSort === state.compSort) {
         th.setAttribute("data-active", state.compOrder === "asc" ? "↑" : "↓");
       }
+    });
+  }
+
+  // ══ AI MASTER · 运营 ═════════════════════════════════╗
+  const AM_TIER_LABEL = {
+    none: "无要求",
+    three: "需≥3",
+    five: "需≥5",
+    no_data: "无数据",
+  };
+
+  function tierBadge(tier) {
+    const label = AM_TIER_LABEL[tier] || "无数据";
+    return `<span class="am-tier am-tier--${tier}">${esc(label)}</span>`;
+  }
+
+  // 组件表格的 AI Master 筛选项（多选），来自名单，按名字排序。
+  function syncCompMasterOptions() {
+    const mount = document.getElementById("fCompMaster");
+    if (!mount) return;
+    const masters = (state.aiMasters && state.aiMasters.items) || [];
+    const names = masters.map((m) => m.name).sort((a, b) => a.localeCompare(b, "zh-CN"));
+    const signature = names.join("\u0001");
+    if (mount.dataset.signature === signature) return;
+    mount.dataset.signature = signature;
+    state.compMaster = state.compMaster.filter((name) => names.includes(name));
+    buildMultiSelect(
+      "fCompMaster",
+      masters.map((m) => ({ id: m.name, name: m.name })),
+      () => state.compMaster,
+      (v) => { state.compMaster = v; },
+      "AI Master",
+      renderComponents      // 纯前端过滤，不触发 onFilterChange
+    );
+  }
+
+  // 运营页总入口：按命名空间渲染名单、聚合卡、并在子 tab 间切换。
+  function renderAiMaster() {
+    renderAmMasterList();
+    syncCompMasterOptions();
+    syncAmMasterSelect();
+    const note = $("#amNote");
+    if (note) {
+      const masters = (state.aiMasters && state.aiMasters.items) || [];
+      const summary = state.amSummary && state.amSummary.items || [];
+      const handled = summary.filter((c) => c.aiMasterId).length;
+      const unassigned = summary.find((c) => !c.aiMasterId);
+      let parts = `${fmtFull(masters.length)} 位 AI Master`;
+      if (summary.length) parts += ` · 已分配 ${fmtFull(handled)} 个组件`;
+      if (unassigned && unassigned.totalComponents > 0) {
+        parts += ` · 未分配 ${fmtFull(unassigned.totalComponents)} 个`;
+      }
+      note.textContent = parts;
+    }
+    applyAmSubTab();
+    if (state.amSubTab === "summary") {
+      renderAmSummary();
+    } else {
+      renderAmDetail();
+    }
+  }
+
+  function applyAmSubTab() {
+    document.querySelectorAll("[data-am-panel]").forEach((el) => {
+      el.hidden = el.dataset.amPanel !== state.amSubTab;
+    });
+    document.querySelectorAll("#amSubTabs button[data-amtab]").forEach((b) => {
+      b.setAttribute("aria-selected", String(b.dataset.amtab === state.amSubTab));
+    });
+  }
+
+  function renderAmMasterList() {
+    const wrap = document.getElementById("amMasterList");
+    if (!wrap) return;
+    const masters = (state.aiMasters && state.aiMasters.items) || [];
+    wrap.innerHTML = "";
+    if (!masters.length) {
+      wrap.innerHTML = '<p class="am-empty">暂无 AI Master，请在右侧输入名称新增。</p>';
+      return;
+    }
+    masters.forEach((m) => {
+      const row = document.createElement("div");
+      row.className = "am-master-row";
+      row.innerHTML = `
+        <span class="am-master-name">${esc(m.name)}</span>
+        <span class="am-master-count">${fmtFull(m.componentCount ?? 0)} 个组件</span>
+        <span class="am-master-actions">
+          <button type="button" class="am-btn" data-am-action="rename" data-id="${esc(m.id)}" data-name="${esc(m.name)}">改名</button>
+          <button type="button" class="am-btn am-btn--danger" data-am-action="delete" data-id="${esc(m.id)}" data-name="${esc(m.name)}">删除</button>
+        </span>`;
+      wrap.appendChild(row);
+    });
+  }
+
+  function renderAmSummary() {
+    const wrap = document.getElementById("amCards");
+    if (!wrap) return;
+    const items = (state.amSummary && state.amSummary.items) || [];
+    wrap.innerHTML = "";
+    if (state.amSummaryFailed) {
+      wrap.innerHTML = `<div class="am-empty"><button type="button" class="retry-link" data-retry="amSummary">重试</button>（聚合数据加载失败）</div>`;
+      return;
+    }
+    if (!items.length) {
+      wrap.innerHTML = '<p class="am-empty">暂无 AI Master，请先在名单管理里新增。</p>';
+      return;
+    }
+    items.forEach((c) => {
+      const t = c.tierCounts || {};
+      const lowest = c.lowestRequiredRate == null
+        ? "—"
+        : fmtPct(c.lowestRequiredRate);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "am-card" + (c.aiMasterId ? "" : " am-card--unassigned");
+      card.setAttribute("data-am-master-id", c.aiMasterId || "");
+      card.addEventListener("click", () => {
+        if (!c.aiMasterId) return;   // 未分配卡不可下钻
+        setAmTab("detail");
+        setAmMaster(c.aiMasterId, c.name);
+      });
+      card.innerHTML = `
+        <span class="am-card__name">${c.aiMasterId ? esc(c.name) : "未分配（待分配）"}</span>
+        <span class="am-card__total">${fmtFull(c.totalComponents)} 个组件</span>
+        <span class="am-card__tiers">
+          <span class="am-chip am-chip--none">无要求 ${fmtFull(t.none || 0)}</span>
+          <span class="am-chip am-chip--three">需≥3 ${fmtFull(t.three || 0)}</span>
+          <span class="am-chip am-chip--five">需≥5 ${fmtFull(t.five || 0)}</span>
+          <span class="am-chip am-chip--no_data">无数据 ${fmtFull(t.no_data || 0)}</span>
+        </span>
+        <span class="am-card__lowest">需处理组件最低采纳率 <strong>${lowest}</strong></span>`;
+      wrap.appendChild(card);
+    });
+  }
+
+  // 明细页：选中 AI Master 后懒加载其组件明细。
+  function syncAmMasterSelect() {
+    const sel = document.getElementById("amMasterSelect");
+    if (!sel) return;
+    const masters = (state.aiMasters && state.aiMasters.items) || [];
+    const current = state.amSelectedMaster;
+    if (sel.dataset.signature === masters.map((m) => m.id).join("\u0001") &&
+        sel.value === (current || "")) return;
+    sel.innerHTML = '<option value="">请选择 AI Master</option>'
+      .concat('', ...masters.map((m) =>
+        `<option value="${esc(m.id)}" ${m.id === current ? "selected" : ""}>${esc(m.name)}</option>`
+      ));
+    sel.dataset.signature = masters.map((m) => m.id).join("\u0001");
+  }
+
+  function loadAmDetail(masterId) {
+    if (!masterId) {
+      state.amDetail = null;
+      renderAmDetail();
+      return;
+    }
+    const token = reqToken;
+    const params = {
+      components: state.selComponents,
+      persons: state.selPersons,
+      timeRange: state.timeRange,
+    };
+    StatsApi.aiMasterDetail(masterId, params)
+      .then((res) => {
+        if (token !== reqToken) return;
+        state.amDetailFailed = res == null;
+        state.amDetail = res && res.code === 0 ? res.data : null;
+        renderAmDetail();
+      })
+      .catch((err) => {
+        console.error("AI Master 明细请求失败：", err);
+        if (token !== reqToken) return;
+        state.amDetailFailed = true;
+        state.amDetail = null;
+        renderAmDetail();
+      });
+  }
+
+  function setAmTab(tab) {
+    if (state.amSubTab === tab) return;
+    state.amSubTab = tab;
+    applyAmSubTab();
+    if (tab === "summary") {
+      renderAmSummary();
+    } else {
+      renderAmDetail();
+    }
+  }
+
+  function setAmMaster(masterId, name) {
+    state.amSelectedMaster = masterId;
+    syncAmMasterSelect();
+    loadAmDetail(masterId);
+  }
+
+  function renderAmDetail() {
+    const body = document.getElementById("amDetailBody");
+    if (!body) return;
+    syncAmMasterSelect();
+    const detail = state.amDetail;
+    body.innerHTML = "";
+    if (!state.amSelectedMaster) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="6">请选择上方 AI Master 查看其组件明细</td></tr>';
+      return;
+    }
+    if (state.amDetailFailed) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="6">组件明细加载失败</td></tr>';
+      return;
+    }
+    if (!detail || !detail.items || !detail.items.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="6">该 AI Master 名下暂无组件</td></tr>';
+      return;
+    }
+    detail.items.forEach((r) => {
+      const tr = document.createElement("tr");
+      const used = r.usedAaw
+        ? '<span class="used-yes">是</span>'
+        : '<span class="used-no">否</span>';
+      tr.innerHTML = `
+        <td class="td-name">${esc(r.componentName)}</td>
+        <td class="td-name">${r.se ? esc(r.se) : "—"}</td>
+        <td>${used}</td>
+        <td>${fmtFull(r.effectiveLines ?? 0)}</td>
+        <td>${rateCell(r.attributionRate80, "80")}</td>
+        <td class="td-name">${tierBadge(r.tier)}</td>`;
+      body.appendChild(tr);
     });
   }
 
@@ -1584,6 +2008,123 @@
         renderComponents();
       });
     });
+    // 组件表格里行内改挂 AI Master：change 后调接口并刷新组件与运营视图。
+    document.addEventListener("change", async (e) => {
+      const sel = e.target.closest(".comp-master-select");
+      if (!sel) return;
+      const componentId = sel.dataset.componentId;
+      const aiMasterId = sel.value || null;
+      const previous = sel.dataset.previous || "";
+      sel.disabled = true;
+      try {
+        await StatsApi.assignComponent(componentId, aiMasterId);
+        sel.dataset.previous = aiMasterId || "";
+        await refreshAmData();
+      } catch (err) {
+        console.error("AI Master 归属保存失败：", err);
+        sel.value = previous;
+      } finally {
+        sel.disabled = false;
+      }
+    });
+  }
+
+  // AI Master 运营页交互：名单增删改、子 tab、明细下拉选择。
+  function bindAiMasterControls() {
+    const addBtn = $("#amAddBtn");
+    const newName = $("#amNewName");
+    if (addBtn && newName) {
+      const doAdd = async () => {
+        const name = (newName.value || "").trim();
+        if (!name) return;
+        addBtn.disabled = true;
+        try {
+          await StatsApi.aiMasterCreate(name);
+          newName.value = "";
+          await refreshAmData();
+        } catch (err) {
+          console.error("新增 AI Master 失败：", err);
+          alert("新增 AI Master 失败，请重试");
+        } finally {
+          addBtn.disabled = false;
+        }
+      };
+      addBtn.addEventListener("click", doAdd);
+      newName.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); doAdd(); }
+      });
+    }
+
+    // 名单增删改（事件委托）。
+    document.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-am-action]");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const name = btn.dataset.name || "";
+      try {
+        if (btn.dataset.amAction === "rename") {
+          const next = prompt("重命名 AI Master：", name);
+          if (next == null || !next.trim()) return;
+          await StatsApi.aiMasterRename(id, next.trim());
+          await refreshAmData();
+        } else if (btn.dataset.amAction === "delete") {
+          if (!confirm(`确认删除 AI Master「${name}」？其名下组件将变为未分配。`)) return;
+          await StatsApi.aiMasterDelete(id);
+          if (state.amSelectedMaster === id) setAmMaster(null, null);
+          await refreshAmData();
+        }
+      } catch (err) {
+        console.error("AI Master 操作失败：", err);
+        alert("操作失败，请重试");
+      }
+    });
+
+    // 运营子 tab 切换。
+    const subTabs = $("#amSubTabs");
+    if (subTabs) {
+      subTabs.querySelectorAll("button[data-amtab]").forEach((b) => {
+        b.addEventListener("click", () => setAmTab(b.dataset.amtab));
+      });
+    }
+
+    // 明细页：下拉选择 AI Master。
+    const masterSelect = $("#amMasterSelect");
+    if (masterSelect) {
+      masterSelect.addEventListener("change", () => {
+        setAmMaster(masterSelect.value || null, null);
+      });
+    }
+  }
+
+  // 名单/归属变更后，重取名单 + 归属 + 聚合 + 组件（保持三处一致）。
+  async function refreshAmData() {
+    const params = {
+      components: state.selComponents,
+      persons: state.selPersons,
+      timeRange: state.timeRange,
+    };
+    try {
+      const [masters, assignments, summary, comp] = await Promise.all([
+        StatsApi.aiMasters(),
+        StatsApi.assignments(),
+        StatsApi.aiMasterOperations(params),
+        StatsApi.components(params),
+      ]);
+      state.aiMastersFailed = masters == null;
+      state.aiMasters = masters && masters.code === 0 ? masters.data : null;
+      state.assignments = assignments && assignments.code === 0 ? assignments.data.assignments : {};
+      state.amSummaryFailed = summary == null;
+      state.amSummary = summary && summary.code === 0 ? summary.data : null;
+      state.componentsFailed = comp == null;
+      state.components = comp && comp.code === 0 ? comp.data : null;
+    } catch (err) {
+      console.error("刷新数据失败：", err);
+      return;
+    }
+    renderAiMaster();
+    renderComponents();
+    // 若明细页已选中某 AI Master，归属变化可能影响其组件，重新拉取。
+    if (state.amSelectedMaster) loadAmDetail(state.amSelectedMaster);
   }
 
   // ── util: hex + alpha ──────────────────────────────────
@@ -1638,7 +2179,7 @@
     buildTrendToggle();
     buildWfStateToggle();
     bindSort();
-    if (!isTestDashboard) { buildTabs(); bindComponentControls(); }
+    if (!isTestDashboard) { buildTabs(); bindComponentControls(); bindAiMasterControls(); }
 
     $("#btnReset").addEventListener("click", () => {
       state.selComponents = [];
@@ -1646,6 +2187,7 @@
       state.timeRange = "90d";
       state.compQuery = "";
       state.compSe = [];
+      state.compMaster = [];
       state.compUsed = "all";
       const compSearch = $("#compSearch");
       if (compSearch) compSearch.value = "";
@@ -1657,6 +2199,8 @@
       // renderTrigger 渲染，外部改 state 不会自动刷新），并刷新使用状态分段。
       const compSeMount = document.getElementById("fCompSe");
       if (compSeMount) delete compSeMount.dataset.signature;
+      const compMasterMount = document.getElementById("fCompMaster");
+      if (compMasterMount) delete compMasterMount.dataset.signature;
       buildCompUsedSegs();
       onFilterChange();
     });
