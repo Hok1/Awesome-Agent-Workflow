@@ -15,6 +15,7 @@ from .database import build_engine, build_session_factory, session_dependency
 from .errors import ApiError
 from .logging import configure_logging, request_id_var
 from .middleware import RequestBodyLimitMiddleware, RequestContextMiddleware
+from .routers.ai_masters import build_ai_masters_router
 from .routers.dashboard import build_dashboard_router
 from .routers.issues import build_issues_router
 from .routers.objects import build_objects_router
@@ -124,6 +125,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
     app.include_router(build_telemetry_router(get_session, projects, settings))
     app.include_router(build_dashboard_router(get_session, projects))
+    app.include_router(build_ai_masters_router(get_session, projects))
     app.include_router(build_testing_telemetry_router(get_session, projects, settings))
     app.include_router(
         build_dashboard_router(

@@ -7,7 +7,7 @@
 
 <link rel="stylesheet" href="vendor/fonts.css" />
 
-<link rel="stylesheet" href="bright.css?v=20260822-1" />
+<link rel="stylesheet" href="bright.css?v=20260825-2" />
 </head>
 <body data-loading="true">
 
@@ -63,6 +63,7 @@
   <div class="tabs" id="boardTabs" role="tablist" aria-label="看板板块">
     <button type="button" role="tab" data-tab="overview" aria-selected="true">采纳概览</button>
     <button type="button" role="tab" data-tab="components" aria-selected="false">组件使用情况</button>
+    <button type="button" role="tab" data-tab="aimaster" aria-selected="false">AI Master 运营</button>
   </div>
 
   <!-- ── HERO ────────────────────────────────────────── -->
@@ -283,6 +284,7 @@
         <h2>组件明细 · 全量</h2>
         <div class="comp-filters">
           <div class="multi multi--sm" id="fCompSe" data-placeholder="全部 SE"></div>
+          <div class="multi multi--sm" id="fCompMaster" data-placeholder="全部 AI Master"></div>
           <div class="segs segs--sm" id="fCompUsed" role="radiogroup" aria-label="是否使用 AAW"></div>
           <input type="search" id="compSearch" class="comp-search"
                  placeholder="搜索组件名" aria-label="搜索组件名" autocomplete="off" />
@@ -294,12 +296,70 @@
             <tr>
               <th class="th-name">组件名</th>
               <th class="th-name">SE</th>
+              <th class="th-name" data-comp-sort="masterName">所属 AI Master</th>
               <th data-comp-sort="usedAaw">是否使用AAW</th>
               <th class="th-num" data-comp-sort="effectiveLines">生成代码量</th>
               <th class="th-num" data-comp-sort="attributionRate80">采纳率·80%</th>
             </tr>
           </thead>
           <tbody id="compBody"></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <!-- ── AI MASTER · 运营 ───────────────────────────── -->
+  <section class="lane" id="panelAiMaster" data-panel="aimaster" hidden>
+    <div class="lane__head">
+      <span class="lane__eyebrow">AI MASTER</span>
+      <h2 class="lane__title">AI Master · 运营</h2>
+      <p class="lane__note" id="amNote">—</p>
+    </div>
+
+    <!-- 名单管理 -->
+    <article class="card" style="--span:12">
+      <header class="card__head card__head--filters">
+        <h2>名单管理</h2>
+        <div class="am-manage">
+          <input type="text" id="amNewName" class="am-input"
+                 placeholder="新 AI Master 名称" aria-label="新 AI Master 名称" autocomplete="off" />
+          <button type="button" id="amAddBtn" class="am-btn am-btn--primary">新增</button>
+        </div>
+      </header>
+      <div class="am-master-list" id="amMasterList"></div>
+    </article>
+
+    <!-- 运营子切换 -->
+    <div class="am-subtabs" id="amSubTabs" role="tablist" aria-label="AI Master 运营视图">
+      <button type="button" role="tab" data-amtab="summary" aria-selected="true">聚合总览</button>
+      <button type="button" role="tab" data-amtab="detail" aria-selected="false">组件明细</button>
+    </div>
+
+    <!-- 聚合总览 -->
+    <article class="am-summary" data-am-panel="summary">
+      <div class="am-cards" id="amCards"></div>
+    </article>
+
+    <!-- 组件明细 -->
+    <article class="am-detail" data-am-panel="detail" hidden>
+      <div class="am-detail-head">
+        <select id="amMasterSelect" class="am-select" aria-label="选择 AI Master">
+          <option value="">请选择 AI Master</option>
+        </select>
+      </div>
+      <div class="table-wrap table-wrap--scroll">
+        <table class="ledger ledger--am">
+          <thead>
+            <tr>
+              <th class="th-name">组件名</th>
+              <th class="th-name">SE</th>
+              <th>是否使用AAW</th>
+              <th class="th-num">生成代码量</th>
+              <th class="th-num">采纳率·80%</th>
+              <th class="th-name">档位</th>
+            </tr>
+          </thead>
+          <tbody id="amDetailBody"></tbody>
         </table>
       </div>
     </article>
@@ -314,7 +374,7 @@
 
 <script src="vendor/echarts.min.js"></script>
 <script src="config.js"></script>
-<script src="mock-data.js?v=20260822-1"></script>
-<script src="bright.js?v=20260822-1"></script>
+<script src="mock-data.js?v=20260825-1"></script>
+<script src="bright.js?v=20260825-1"></script>
 </body>
 </html>

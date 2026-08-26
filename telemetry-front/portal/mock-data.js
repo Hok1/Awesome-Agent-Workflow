@@ -173,7 +173,23 @@
     return points;
   }
 
-  // ── mock endpoints ────────────────────────────────────
+  // ── AI Master mock state ──────────────────────────────
+  // 内存里维护名单与归属，使增删改在 mock 模式下行为一致。
+  const AI_MASTERS = [
+    { id: "am-001", name: "张轶勃" },
+    { id: "am-002", name: "徐哲威" },
+    { id: "am-003", name: "宋东方" },
+  ];
+  const COMPONENT_MASTER_MAP = {};   // componentId -> masterId
+  // 预置若干组件归属，让 mock 运营视图有可看的内容。
+  COMPONENT_MASTER_MAP["comp-01"] = "am-001";
+  COMPONENT_MASTER_MAP["comp-02"] = "am-001";
+  COMPONENT_MASTER_MAP["comp-03"] = "am-001";
+  COMPONENT_MASTER_MAP["comp-04"] = "am-002";
+  COMPONENT_MASTER_MAP["comp-05"] = "am-002";
+  COMPONENT_MASTER_MAP["comp-06"] = "am-003";
+
+  // mock endpoints ────────────────────────────────────
   const MockApi = {
     filterOptions() {
       return Promise.resolve({
@@ -435,6 +451,150 @@
         },
       });
     },
+
+    // ── AI Master 运营 ───────────────────────────────
+    aiMasters() {
+      return Promise.resolve({
+        code: 0,
+        message: "ok",
+        data: {
+          items: AI_MASTERS.map((m) => ({
+            id: m.id,
+            name: m.name,
+            componentCount: Object.values(COMPONENT_MASTER_MAP).filter((id) => id === m.id).length,
+          })),
+        },
+      });
+    },
+
+    assignments() {
+      return Promise.resolve({
+        code: 0,
+        message: "ok",
+        data: { assignments: Object.assign({}, COMPONENT_MASTER_MAP) },
+      });
+    },
+
+    // 档位：>=0.65 无要求；0.50~0.65 需3；<0.50 需5；null 无数据。
+    aiMasterOperations(params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const comps = resolve(params.components, COMPONENTS);
+      const days = RANGE_DAYS[timeRange] || 7;
+      const cards = AI_MASTERS.map((m) => {
+        const owned = comps.filter((c) => COMPONENT_MASTER_MAP[c.id] === m.id);
+        const counts = { none: 0, three: 0, five: 0, no_data: 0 };
+        const required = [];
+        owned.forEach((c) => {
+          const used = seed("used" + c.id + timeRange) < 0.56;
+          let val = null;
+          if (used) {
+            const effective = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+            val = rate(round(effective * 0.62), effective) + seed("ar" + c.id) * 0.2;
+          }
+          if (val == null) counts.no_data += 1;
+          else if (val >= 0.65) counts.none += 1;
+          else if (val >= 0.5) { counts.three += 1; required.push(val); }
+          else { counts.five += 1; required.push(val); }
+        });
+        return {
+          aiMasterId: m.id,
+          name: m.name,
+          totalComponents: owned.length,
+          tierCounts: counts,
+          lowestRequiredRate: required.length ? Math.min(...required) : null,
+        };
+      });
+      // 未分配卡
+      const unassigned = comps.filter((c) => !COMPONENT_MASTER_MAP[c.id]);
+      const uCounts = { none: 0, three: 0, five: 0, no_data: 0 };
+      unassigned.forEach((c) => {
+        const used = seed("used" + c.id + timeRange) < 0.56;
+        let val = null;
+        if (used) {
+          const effective = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+          val = rate(round(effective * 0.62), effective) + seed("ar" + c.id) * 0.2;
+        }
+        if (val == null) uCounts.no_data += 1;
+        else if (val >= 0.65) uCounts.none += 1;
+        else if (val >= 0.5) uCounts.three += 1;
+        else uCounts.five += 1;
+      });
+      if (unassigned.length) {
+        cards.push({
+          aiMasterId: null,
+          name: "未分配",
+          totalComponents: unassigned.length,
+          tierCounts: uCounts,
+          lowestRequiredRate: null,
+        });
+      }
+      return Promise.resolve({ code: 0, message: "ok", data: { items: cards } });
+    },
+
+    aiMasterDetail(id, params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const name = (AI_MASTERS.find((m) => m.id === id) || {}).name || "";
+      const comps = resolve(params.components, COMPONENTS);
+      const days = RANGE_DAYS[timeRange] || 7;
+      const items = comps
+        .filter((c) => COMPONENT_MASTER_MAP[c.id] === id)
+        .map((c) => {
+          const used = seed("used" + c.id + timeRange) < 0.56;
+          let effective = 0;
+          let val = null;
+          if (used) {
+            effective = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+            val = rate(round(effective * 0.62), effective) + seed("ar" + c.id) * 0.2;
+          }
+          const tier = val == null ? "no_data"
+            : val >= 0.65 ? "none"
+            : val >= 0.5 ? "three"
+            : "five";
+          return {
+            componentId: c.id,
+            componentName: c.name,
+            se: used ? (["张轶勃", "徐哲威", "宋东方", "张立肖", "孙杨宇鑫"][Math.abs(c.id.length) % 5]) : null,
+            usedAaw: used,
+            effectiveLines: effective,
+            attributionRate80: val,
+            tier,
+          };
+        });
+      return Promise.resolve({
+        code: 0, message: "ok",
+        data: { aiMasterId: id, name, items },
+      });
+    },
+
+    aiMasterCreate(name) {
+      const id = "am-" + String(AI_MASTERS.length + 1).padStart(3, "0");
+      AI_MASTERS.push({ id, name });
+      return Promise.resolve({ code: 0, message: "ok", data: { id, name } });
+    },
+
+    aiMasterRename(id, name) {
+      const m = AI_MASTERS.find((x) => x.id === id);
+      if (m) m.name = name;
+      return Promise.resolve({ code: 0, message: "ok", data: { id, name } });
+    },
+
+    aiMasterDelete(id) {
+      const idx = AI_MASTERS.findIndex((m) => m.id === id);
+      if (idx >= 0) AI_MASTERS.splice(idx, 1);
+      Object.keys(COMPONENT_MASTER_MAP).forEach((cid) => {
+        if (COMPONENT_MASTER_MAP[cid] === id) delete COMPONENT_MASTER_MAP[cid];
+      });
+      return Promise.resolve({ code: 0, message: "ok", data: { id, deleted: true } });
+    },
+
+    assignComponent(componentId, aiMasterId) {
+      if (aiMasterId) COMPONENT_MASTER_MAP[componentId] = aiMasterId;
+      else delete COMPONENT_MASTER_MAP[componentId];
+      return Promise.resolve({
+        code: 0, message: "ok",
+        data: { component_id: componentId, ai_master_id: aiMasterId },
+      });
+    },
   };
 
   // simulate network latency so the loading choreography is visible
@@ -449,5 +609,13 @@
     steps: withLatency(MockApi.steps),
     workflows: withLatency(MockApi.workflows),
     components: withLatency(MockApi.components),
+    aiMasters: withLatency(MockApi.aiMasters),
+    assignments: withLatency(MockApi.assignments),
+    aiMasterOperations: withLatency(MockApi.aiMasterOperations),
+    aiMasterDetail: withLatency(MockApi.aiMasterDetail),
+    aiMasterCreate: withLatency(MockApi.aiMasterCreate),
+    aiMasterRename: withLatency(MockApi.aiMasterRename),
+    aiMasterDelete: withLatency(MockApi.aiMasterDelete),
+    assignComponent: withLatency(MockApi.assignComponent),
   };
 })(window);

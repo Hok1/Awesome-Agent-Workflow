@@ -327,6 +327,42 @@ class IssueActivity(Base):
     issue: Mapped[Issue] = relationship(back_populates="activities")
 
 
+class AiMaster(Base):
+    """An AI Master role: a named owner who oversees several components."""
+
+    __tablename__ = "ai_master"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_ai_master_name"),
+        Index("ix_ai_master_name", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class ComponentAiMaster(Base):
+    """Assigns a component (yaml key) to one AI Master.
+
+    The component itself is declared in projects.yaml, not in the database, so the
+    component_id here is a plain string key rather than a foreign key.
+    """
+
+    __tablename__ = "component_ai_master"
+    __table_args__ = (
+        UniqueConstraint("component_id", name="uq_component_ai_master_component"),
+        Index("ix_component_ai_master_master", "ai_master_id"),
+    )
+
+    component_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    ai_master_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ai_master.id", ondelete="CASCADE"), nullable=False
+    )
+
+    ai_master: Mapped[AiMaster] = relationship()
+
+
 class IssueImage(Base):
     """A normalized raster image temporarily uploaded or bound to one issue."""
 
