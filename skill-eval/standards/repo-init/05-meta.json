@@ -1,0 +1,68 @@
+{
+  "skill": "repo-init",
+  "skill_id": "98e65391-bf74-43b3-a814-e8cb5143ca37",
+  "suite_id": "8e073c69-8621-4600-88ff-e285280f5ae6",
+  "suite_name": "repo-init-rbs-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [],
+    "preflight": [],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 30,
+  "followups": [],
+  "graders": [
+    {
+      "id": "repoinit-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "e8571363-7df2-4e6a-9e1f-05c7b0a8630c",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "e8571363-7df2-4e6a-9e1f-05c7b0a8630c",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "quality_score": 100.0,
+        "duration_ms": 293297,
+        "grader_stdout": "NOTES: [架构文档 6222 字符, 占位符 0, 真实模块路径 5/5] REPOINIT-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "quality_score": 100.0,
+        "duration_ms": 538652,
+        "grader_stdout": "NOTES: [架构文档 6197 字符, 占位符 0, 真实模块路径 5/5] REPOINIT-ASSERT-PASS"
+      }
+    ],
+    "iteration_history": [
+      {
+        "round": "v1",
+        "experiment": "3f9ba3a3",
+        "note": "防伪断言误伤「crate名/职责域」写法（rbs-core/auth）"
+      },
+      {
+        "round": "v2",
+        "experiment": "a901a933",
+        "note": "current infra_error（服务中断）；no_skill 100"
+      },
+      {
+        "round": "v3",
+        "experiment": "e8571363",
+        "note": "定稿轮，双 100"
+      }
+    ],
+    "note": "spec.md 语言模板表无 Rust 分支，两组均静默跳过 spec.md——已记录上报"
+  }
+}

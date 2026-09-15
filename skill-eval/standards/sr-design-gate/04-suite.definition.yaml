@@ -1,0 +1,39 @@
+schema_version: 1
+name: sr-design-gate-SR1-sm2-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: 07075243-041d-41e3-b1d3-17c228e1676a
+  name: sr-design-gate
+setup:
+  commands:
+  - cmd /c mkdir .sdd\SR-1
+  - cmd /c copy /Y "C:\tmp\ctx4gate\original-requirement.md" ".sdd\SR-1\original-requirement.md"
+  - cmd /c copy /Y "C:\tmp\ctx4gate\SR-design.md" ".sdd\SR-1\SR-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx4gate\assert_gate.py" ".sdd\SR-1\assert_gate.py"
+  - cmd /c copy /Y "C:\tmp\ctx4gate\preflight_fixture.py" ".sdd\SR-1\preflight_fixture.py"
+  preflight:
+  - python .sdd\SR-1\preflight_fixture.py
+  network: false
+  timeout_seconds: 900
+cases:
+- id: sr1-sm2-gate
+  name: SR-1 SM2 设计的 SR 设计门禁检查
+  input: "你使用 sr-design-gate skill，对下面这份已经写好的 SR 设计文档执行 SR 设计门禁检查。\n\n【工作目录】当前目录（globaltrustauthority-rbs，Rust workspace）。\n\n【待检查的输入（均已就位，直接读取，不要修改）】\n- 原始需求：.sdd/SR-1/original-requirement.md\n- 待检查的 SR 设计：.sdd/SR-1/SR-design.md\n- 架构基线：本仓库没有软件架构文档，按 skill 规定处理该情形\n\n【本次执行方式（重要，请严格遵守）】\n1. 你是无头执行，没有人类在旁回答问题。sr-design-gate 前置工作流确认环节请跳过：不要回调 aaw-workflow，不要选池，直接执行该 skill 正文。\n2. 本环境不提供 question-tracker MCP。不要真正调用工具、不要等待回答。\n3. 严格按 sr-design-gate skill 正文执行：逐个准入维度判定 达标/未达标/不适用，按 gate-checklist.md\n   及其 crypto-gate-checklist.md 定级 P0/P1/P2，给出结论与建议。\n\n【输出要求】\n1. 把完整的门禁报告写入 .sdd/SR-1/SR-design-gate.md。报告中的每个维度判定与每条冲突都必须写明依据\n   （引用被检查文档的章节/位置或检查清单条款），不得只有结论。\n2. 把门禁结论按 sr-design-gate skill 的数据契约写入 .sdd/SR-1/gate-data.json，字段为：\n   gate_result（pass / fail / blocked）、recommendation、report（恒为实际报告路径，不得为 null）、\n   summary（含 unqualified_dimensions、p0_conflicts、p1_conflicts、p2_findings、\n   pending_questions、blocking_issues 六个计数）。\n3. 最后回复：给出报告路径与 gate_result，并逐条列出你判定的未达标维度及其理由。\n"
+  expected: "门禁应判定为「不通过」(gate_result=fail)，而不是 pass。\n\n这份 SR 设计文档存在三处彼此独立的缺陷，分别落在三个不同的准入维度上：\n\n1. 敏感参数安全（未达标，P0）：文档在 rbs-cli 的请求/输入契约表中新增了 `--export-private-key`\n   （把当前 SM2 私钥以 PEM 写出到目标路径）。crypto-gate-checklist.md 规定：存在此类导出接口\n   但完全未声明导出策略，记 P0。全文除该接口行本身外没有任何导出策略（授权、审计、口令保护、\n   最小权限、生命周期）的声明。\n\n2. 契约完整性（未达标，P1）：同一个 `--export-private-key` 接口只有一行字段契约，没有错误模型\n   （目标路径不可写、文件已存在、与 --private-key-file 同时给出时的行为等），也没有治理属性\n   （认证鉴权、幂等、超时、重试、版本兼容性）。gate-checklist.md 的「接口契约完整性判定」第 3、4 条\n   适用项缺失即记 P1 且该维度未达标。\n\n3. 图表变更表达（未达标）：架构图的图例中列出了「删除」状态但图中没有任何删除对象（违反\n   图表检查规则 5「图例包含未实际使用的状态，均判未达标」）；同时图中有 9 个节点被标为 changed\n   但所有连线仍是新增/不变两种颜色，存在「只给节点着色而遗漏连线」（违反规则 6）。\n\n因此 summary.unqualified_dimensions 应为 3，p0_conflicts 至少为 1，gate_result 应为 fail。\n报告须逐维度写明依据，且必须覆盖「敏感参数安全」「契约完整性」「图表变更表达」这三个维度名。\n"
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 6
+  graders:
+  - id: gate-assert
+    type: command
+    name: 门禁结论黑盒断言（读报告与回传数据）
+    weight: 100.0
+    hard_gate: false
+    command: python .sdd/SR-1/assert_gate.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 120

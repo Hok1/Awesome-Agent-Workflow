@@ -1,0 +1,53 @@
+schema_version: 1
+name: dev-design-gate-SR2-clean-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: 3925aecb-91fd-4f8a-a6a4-2b434a403f9e
+  name: dev-design-gate
+setup:
+  commands:
+  - cmd /c mkdir .sdd\SR-2\.context
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\fixture\requirement.md" ".sdd\SR-2\requirement.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\fixture\dev-design.md" ".sdd\SR-2\dev-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\fixture\test-design.md" ".sdd\SR-2\test-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\preflight_devgate.py" ".sdd\SR-2\preflight_devgate.py"
+  preflight:
+  - python .sdd\SR-2\preflight_devgate.py clean
+  network: false
+  timeout_seconds: 900
+cases:
+- id: sr2-devgate-clean
+  name: SR-2 轻量设计门禁（干净）
+  input: "你使用 dev-design-gate skill，对 SR-2 的轻量设计执行准入门禁。\n\n【工作目录】当前目录（globaltrustauthority-rbs，Rust workspace）。\n\n【输入（已就位，直接读取，不得修改）】\n- 轻量设计：.sdd/SR-2/dev-design.md\n- 测试设计：.sdd/SR-2/test-design.md\n- 需求原文：.sdd/SR-2/requirement.md\n\n【本次执行方式（重要，请严格遵守）】\n1. 你是无头执行，由 aaw-workflow 工作单调用，没有人类在旁。前置的工作流确认环节跳过；\n   需要用户确认的问题按 skill 规定处理，不要等待回答。\n2. 本环境不提供任何 MCP 工具。网络不可用。\n3. 严格按 skill 正文规定的 3 项准入检查、结论判定与报告骨架执行；\n   本环境无 aaw CLI——data_schema 回传跳过，只在报告中如实给出统计数字。\n\n【输出要求】\n1. 按 skill 的产物契约把门禁报告写入对应路径（SR=SR-2）。\n2. 最后回复：给出报告路径、结论、建议、未达标项清单。\n"
+  expected: '两份输入为本测评手写的合规轻量文档（无植入缺陷）。门禁应：
+
+
+    - 把报告写入 .sdd/SR-2/.context/dev-design-gate.md（references/gate-report.md 骨架）。
+
+    - 结论为 通过/不通过/阻塞 之一；建议为 可进入任务拆分/修正后重新门禁/阻塞 之一。
+
+    - 3 项准入检查（决策已收敛/代码论断可回溯/契约与验收可执行）逐项判定。
+
+    - 不修改任何输入文件；结论为通过时统计三项计数全 0。
+
+
+    依据：dev-design-gate SKILL.md 3 项准入检查、结论判定、报告边界。
+
+    '
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 12
+  graders:
+  - id: devgate-assert
+    type: command
+    name: 轻量门禁黑盒断言（形式契约）
+    weight: 100.0
+    hard_gate: false
+    command: python C:\tmp\ctx5dg2\assert_devgate_common.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 180

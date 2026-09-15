@@ -1,0 +1,33 @@
+schema_version: 1
+name: repo-init-rbs-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: 98e65391-bf74-43b3-a814-e8cb5143ca37
+  name: repo-init
+setup:
+  commands: []
+  preflight: []
+  network: false
+  timeout_seconds: 900
+cases:
+- id: rbs-repo-init
+  name: RBS 仓 SDD 初始化
+  input: "你使用 repo-init skill，对当前代码仓执行 SDD 初始化。\n\n【工作目录】当前目录（globaltrustauthority-rbs，Rust workspace）。\n\n【本次执行方式（重要，请严格遵守）】\n1. 你是无头执行，由 aaw-workflow 工作单调用，没有人类在旁。前置的工作流确认环节跳过；\n   需要用户确认的问题按 skill 规定处理。\n2. 本环境无法启动 SubAgent——各 Phase 的 subagent 派发由你自行完成同等只读勘察与写作。\n3. 本环境不提供任何 MCP 工具。网络不可用。\n4. 用户确认环节（Phase 7）：输出规定的提醒文本后即视为本轮结束，不等待答复。\n5. 本环境无 aaw CLI——跳过工作单 commands 调用。\n6. 严格按 skill 正文规定的 Phase 顺序与产物契约执行。\n\n【输出要求】\n1. 按 skill 规定产出 .sdd/ 结构与软件架构文档、AGENTS.md。\n2. 最后回复：给出产物清单、识别的模块列表、以及 Phase 7 提醒文本。\n"
+  expected: "产出：\n\n- .sdd/software_architecture.md：模板固定章节（文档元数据/目录/系统概览/模块清单）\n  保留；豁免区（目录/1.2/1.3）之外的 {{}} 占位符全部填充；模块职责表落到真实\n  代码路径（rbs/core、rbs/rest、tools 等），且产物引用的路径全部真实存在。\n- AGENTS.md：识别 Rust 语言与 cargo 构建/测试命令。\n\n依据：repo-init SKILL.md Phase 1-7 与 references/software_architecture.md 模板契约。\n"
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 30
+  graders:
+  - id: repoinit-assert
+    type: command
+    name: repo-init 黑盒断言（架构文档/占位符清零/路径真实/AGENTS 识别）
+    weight: 100.0
+    hard_gate: false
+    command: python C:\tmp\ctx5ri\assert_repoinit.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 120

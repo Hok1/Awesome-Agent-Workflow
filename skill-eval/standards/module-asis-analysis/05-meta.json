@@ -1,0 +1,90 @@
+{
+  "skill": "module-asis-analysis",
+  "skill_id": "e0e40bd8-a10a-469e-abde-77b7603610a3",
+  "suite_id": "dfcaec95-a72f-460e-abfc-fdd3d4874abc",
+  "suite_name": "module-asis-analysis-SR1-rbcore-eval-v3",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\SR-design.md\" \".sdd\\SR-1\\SR-design.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5aa\\fixture\\software_architecture.md\" \".sdd\\software_architecture.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5aa\\preflight_asis.py\" \".sdd\\SR-1\\preflight_asis.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_asis.py with-arch"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 20,
+  "followups": [],
+  "graders": [
+    {
+      "id": "asis-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "38ec8cee-2ff8-461c-b05b-ac1c2005d516",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "38ec8cee-2ff8-461c-b05b-ac1c2005d516",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "run_id": "a769a268-a1b2-4073-a3f1-120302d37b00",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 357694,
+        "exit_code": 0,
+        "error_kind": null,
+        "grader_stdout": "NOTES: [context 产物候选=1, 结论编号=A1..A16, 证据编号数=47, 产物引用代码路径数=19] ASIS-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "run_id": "6c541dd8-c097-4216-928e-b283bfb19df6",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 285137,
+        "exit_code": 0,
+        "error_kind": null,
+        "grader_stdout": "NOTES: [context 产物候选=1, 结论编号=A1..A14, 证据编号数=16, 产物引用代码路径数=22] ASIS-ASSERT-PASS"
+      }
+    ],
+    "sibling_experiment": {
+      "variant": "no-arch",
+      "suite_id": "add9d83e-25d1-4803-a661-f387f1d21653",
+      "experiment_id": "b0a28d76-3878-4b00-a78f-0f3827d3abcd",
+      "runs": [
+        {
+          "group_name": "current",
+          "quality_score": 100.0,
+          "duration_ms": 88538,
+          "grader_stdout": "ASIS-BLOCKED-ASSERT-PASS（context 产物=1 带 blocked 标记，无契约外新增）"
+        },
+        {
+          "group_name": "no_skill",
+          "quality_score": 100.0,
+          "duration_ms": 92830,
+          "grader_stdout": "ASIS-BLOCKED-ASSERT-PASS（同上）"
+        }
+      ]
+    },
+    "note": "no_skill 组在本模型上已非「无 skill 基线」——训练语料含 AAW skill 体系，详见 00-source-standard.md §5"
+  }
+}

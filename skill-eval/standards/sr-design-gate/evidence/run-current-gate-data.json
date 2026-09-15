@@ -1,0 +1,13 @@
+{
+  "gate_result": "fail",
+  "recommendation": "回 SR-design 整改",
+  "report": ".sdd/SR-1/SR-design-gate.md",
+  "summary": {
+    "unqualified_dimensions": 3,
+    "p0_conflicts": 1,
+    "p1_conflicts": 1,
+    "p2_findings": 7,
+    "pending_questions": 0,
+    "blocking_issues": 0
+  }
+}

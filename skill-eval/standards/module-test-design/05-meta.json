@@ -1,0 +1,78 @@
+{
+  "skill": "module-test-design",
+  "skill_id": "9e72f62c-876d-416c-85d8-0b85fe141790",
+  "suite_id": "260d8640-67b9-407b-b3c3-15d4f1129092",
+  "suite_name": "module-test-design-SR1-rbcore-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1\\AR-1\\rbs-core\\.context",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5aa\\fixture\\software_architecture.md\" \".sdd\\software_architecture.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5td\\fixture\\模块详细设计说明书.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块详细设计说明书.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5td\\fixture\\详细设计上下文.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\.context\\详细设计上下文.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5td\\preflight_testdesign.py\" \".sdd\\SR-1\\preflight_testdesign.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_testdesign.py"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 20,
+  "followups": [],
+  "graders": [
+    {
+      "id": "testdesign-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "2305ce3a-73c1-4445-ab33-9e0ade34e776",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "2305ce3a-73c1-4445-ab33-9e0ade34e776",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "run_id": "51352a82-bd6e-4fea-b9dd-f7b4a91160d7",
+        "status": "completed",
+        "quality_score": 100.0,
+        "duration_ms": 222450,
+        "exit_code": 0,
+        "grader_stdout": "NOTES: [产物字符数=18028, TC 用例条目数=27] TESTDESIGN-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "run_id": "7249c233-f7d1-4b51-a253-47cb6fdc447c",
+        "status": "completed",
+        "quality_score": 100.0,
+        "duration_ms": 175608,
+        "exit_code": 0,
+        "grader_stdout": "NOTES: [产物字符数=20517, TC 用例条目数=39] TESTDESIGN-ASSERT-PASS"
+      }
+    ],
+    "iteration_history": [
+      {
+        "round": "v1",
+        "experiment": "7c1f73ff",
+        "note": "断言 5 的章节定位从全文首次出现处截取，命中摘要句而非矩阵章节，双双误报"
+      },
+      {
+        "round": "v2",
+        "experiment": "2305ce3a",
+        "note": "定稿轮，双 100"
+      }
+    ],
+    "note": "no_skill 组凭语料先验即合规（体系发现 2）；有效结论为 current 组通过全部硬性门槛"
+  }
+}

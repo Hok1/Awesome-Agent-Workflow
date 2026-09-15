@@ -1,0 +1,22 @@
+{
+  "components": [
+    {
+      "evidence": "exit_code=1\nstdout:\nNOTES: [\"mermaid �������=3\", \"check_mermaid.py exit=2\", \"\", \"ͼ��=statediagram-v2,sequencediagram,sequencediagram\", \"stateDiagram ת����=8 ״̬������=6\", \"sequenceDiagram ��=2\"]\nGATE-ASSERT-FAIL\n  [1] skill �Դ�У����ȱʧ��C:\\code\\workspace\\Awesome-Agent-Workflow\\skill-eval\\.skill-eval-data\\workspaces\\39b410c3-486f-43b1-9f1d-92f0d663ac9f\\runs\\2231ab1f-8a90-4c44-9590-ca9eaeea70db\\workspace\\.aaw-eval\\skills\\mermaid-diagram\\scripts\\check_mermaid.py\n  [2] ����У����δͨ����ͼ���ܱ��룩\n  exit=2\n  stdout=\n  stderr=checker missing\n\nstderr:\n",
+      "grader_id": "mermaid-assert",
+      "grader_type": "command",
+      "hard_gate": false,
+      "invalid": false,
+      "name": "图表产物黑盒断言（存在性/可编译/图型匹配/路径覆盖/无自造标识符）",
+      "passed": false,
+      "reasoning": "",
+      "score": 0.0,
+      "weight": 100.0
+    }
+  ],
+  "hard_gates_passed": 0,
+  "hard_gates_total": 0,
+  "invalid": false,
+  "judge_error": null,
+  "quality_score": 0.0,
+  "skill_invoked": "no"
+}

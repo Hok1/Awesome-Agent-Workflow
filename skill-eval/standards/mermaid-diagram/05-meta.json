@@ -1,0 +1,76 @@
+{
+  "skill": "mermaid-diagram",
+  "skill_id": "48060bae-ecde-4154-b5ef-ebda5c91f267",
+  "suite_id": "15a54472-8c59-457f-a757-4e8ae970da1e",
+  "suite_name": "mermaid-diagram-SR1-key-lifecycle-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5mm\\fixture\\key-lifecycle-context.md\" \".sdd\\SR-1\\key-lifecycle-context.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5mm\\assert_mermaid.py\" \".sdd\\SR-1\\assert_mermaid.py\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5mm\\preflight_fixture.py\" \".sdd\\SR-1\\preflight_fixture.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_fixture.py"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 10,
+  "followups": [],
+  "graders": [
+    {
+      "id": "mermaid-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "39b410c3-486f-43b1-9f1d-92f0d663ac9f",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "39b410c3-486f-43b1-9f1d-92f0d663ac9f",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "run_id": "fec1c715-f491-45c1-a155-c44dacc6049f",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 103191,
+        "exit_code": 0,
+        "error_kind": null,
+        "grader_stdout": "NOTES: [mermaid 代码块数=2, check_mermaid.py exit=0, validated 2 diagram(s) offline, 图型=statediagram-v2,sequencediagram, stateDiagram 转换数=10 状态声明数=6, sequenceDiagram 数=1] MERMAID-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "run_id": "2231ab1f-8a90-4c44-9590-ca9eaeea70db",
+        "status": "completed",
+        "quality_score": 0.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 120288,
+        "exit_code": 0,
+        "error_kind": null,
+        "grader_stdout": "NOTES: [mermaid 代码块数=3, check_mermaid.py exit=2, 图型=statediagram-v2,sequencediagram,sequencediagram, stateDiagram 转换数=8 状态声明数=6, sequenceDiagram 数=2] GATE-ASSERT-FAIL [1] skill 自带校验器缺失（no_skill 组不安装 skill 包） [2] 离线校验器未通过 exit=2"
+      }
+    ],
+    "post_hoc": {
+      "note": "用本地 check_mermaid.py 对两组产物补做离线编译验证（不改判分）",
+      "current_artifact": "2 图全部 [OK]，exit=0",
+      "noskill_artifact": "3 图全部 [OK]，exit=0 —— no_skill 组的图本身合规，判 0 的唯一原因是 workspace 内无校验器可跑（断言 1 fail-closed）；且其产物文末谎称已执行该校验"
+    },
+    "note": "current 组为被测组；no_skill 组是平台强制内置的空对照组（orchestrator.py:171 硬编码，无 API 可关）"
+  }
+}

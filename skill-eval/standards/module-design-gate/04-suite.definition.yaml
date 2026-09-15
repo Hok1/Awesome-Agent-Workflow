@@ -1,0 +1,57 @@
+schema_version: 1
+name: module-design-gate-SR1-rbcore-clean-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: 1fb699f8-52ba-4e6e-925b-5a6ba9d98a76
+  name: module-design-gate
+setup:
+  commands:
+  - cmd /c mkdir .sdd\SR-1\AR-1\rbs-core\.context
+  - cmd /c copy /Y "C:\tmp\ctx4gate\original-requirement.md" ".sdd\SR-1\original-requirement.md"
+  - cmd /c copy /Y "C:\tmp\ctx4gate\SR-design.md" ".sdd\SR-1\SR-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx5aa\fixture\software_architecture.md" ".sdd\software_architecture.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg\fixture\AR-clarify.md" ".sdd\SR-1\AR-1\AR-clarify.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg\fixture\模块详细设计说明书.md" ".sdd\SR-1\AR-1\rbs-core\模块详细设计说明书.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg\fixture\模块测试用例设计.md" ".sdd\SR-1\AR-1\rbs-core\模块测试用例设计.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg\fixture\详细设计上下文.md" ".sdd\SR-1\AR-1\rbs-core\.context\详细设计上下文.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg\preflight_gate.py" ".sdd\SR-1\preflight_gate.py"
+  preflight:
+  - python .sdd\SR-1\preflight_gate.py clean
+  network: false
+  timeout_seconds: 900
+cases:
+- id: sr1-rbcore-gate-clean
+  name: SR-1 rbs-core 模块设计门禁（干净三件套）
+  input: "你使用 module-design-gate skill，对 rbs-core 模块的 SR-1/AR-1 设计三件套执行模块设计门禁。\n\n【工作目录】当前目录（globaltrustauthority-rbs，Rust workspace）。\n\n【输入（已就位，直接读取，不得修改）】\n- 正式说明书：.sdd/SR-1/AR-1/rbs-core/模块详细设计说明书.md\n- 测试设计：.sdd/SR-1/AR-1/rbs-core/模块测试用例设计.md\n- 详细设计上下文：.sdd/SR-1/AR-1/rbs-core/.context/详细设计上下文.md\n- 上游反查基线：.sdd/SR-1/SR-design.md、.sdd/SR-1/AR-1/AR-clarify.md\n- 原始需求：.sdd/SR-1/original-requirement.md\n\n【本次执行方式（重要，请严格遵守）】\n1. 你是无头执行，由 aaw-workflow 工作单调用，没有人类在旁。前置的工作流确认环节跳过；\n   需要用户或上游确认的问题，按 skill 规定处理，不要等待回答。\n2. 本环境不提供任何 MCP 工具。网络不可用。\n3. 严格按 skill 正文规定的强制工作步骤、八维度准入与结论/建议枚举执行。\n\n【输出要求】\n1. 按 skill 的产物契约把门禁结果写入对应路径（SR=SR-1，AR=AR-1，模块组名=rbs-core）。\n2. 最后回复：给出结果路径、门禁结论、门禁建议、未达标维度清单。\n"
+  expected: '三件套为本链路真实合规产物（无植入缺陷）。门禁应：
+
+
+    - 把结果写入 .sdd/SR-1/AR-1/rbs-core/.context/模块设计门禁结果.md。
+
+    - 结论为 通过/不通过/阻塞 之一；建议为七值枚举之一，且与结论一致。
+
+    - 不修改任何输入文件。
+
+    - 报告中引用的 D/TC/A/E 编号必须能在对应输入中反查。
+
+
+    依据：module-design-gate SKILL.md 门禁结论、成果物协作规则、工作流程。
+
+    '
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 20
+  graders:
+  - id: mdg-assert
+    type: command
+    name: 模块门禁黑盒断言（形式契约）
+    weight: 100.0
+    hard_gate: false
+    command: python C:\tmp\ctx5dg\assert_gate_common.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 180

@@ -1,0 +1,48 @@
+schema_version: 1
+name: module-asis-analysis-noarch-block-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: e0e40bd8-a10a-469e-abde-77b7603610a3
+  name: module-asis-analysis
+setup:
+  commands:
+  - cmd /c mkdir .sdd\SR-1
+  - cmd /c copy /Y "C:\tmp\ctx4gate\original-requirement.md" ".sdd\SR-1\original-requirement.md"
+  - cmd /c copy /Y "C:\tmp\ctx4gate\SR-design.md" ".sdd\SR-1\SR-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx5aa\preflight_asis.py" ".sdd\SR-1\preflight_asis.py"
+  preflight:
+  - python .sdd\SR-1\preflight_asis.py no-arch
+  network: false
+  timeout_seconds: 900
+cases:
+- id: sr1-rbscore-asis-blocked
+  name: SR-1 rbs-core 模块 ASIS（无架构基线，期望 fail-closed）
+  input: "你使用 module-asis-analysis skill，对目标模块做 SR-1 需求的 ASIS 现状分析。\n\n【工作目录】当前目录（globaltrustauthority-rbs，Rust\
+    \ workspace）。\n\n【输入（已就位，直接读取，不要修改）】\n- 原始需求：.sdd/SR-1/original-requirement.md\n\
+    - 上游 SR 设计：.sdd/SR-1/SR-design.md（SM2 接入的总体设计，本次 ASIS 的需求上下文）\n\n【本次分析任务】\n- 目标模块：rbs-core（rbs/core/）\n\
+    - 分析切片：SR-1 中 SM2 用户认证与公钥登记相关部分——现有验签入口、算法分派、\n  用户公钥登记链路、配置与测试现状\n- SR=SR-1，AR=AR-1（SM2\
+    \ 用户认证），模块组名=rbs-core\n\n【本次执行方式（重要，请严格遵守）】\n1. 你是无头执行，由 aaw-workflow 工作单调用，没有人类在旁。前置的工作流确认环节跳过，\n\
+    \   不要回调 aaw-workflow；执行中需要用户或上游确认的问题，按 skill 规定处理，\n   不要等待回答。\n2. 本环境无法启动 SubAgent——按\
+    \ skill 对应该情形的规定处理并留痕。\n3. 本环境不提供任何 MCP 工具。网络不可用。\n4. 严格按 skill 正文规定的阶段流水线与产物契约执行。\n\
+    \n【输出要求】\n1. 按 skill 的产物契约产出到对应路径（SR=SR-1，AR=AR-1，模块组名=rbs-core）。\n2. 最后回复：给出产物路径、整体状态、主要结论与阻塞/待确认项清单。\n"
+  expected: "本用例刻意不提供 .sdd/software_architecture.md。skill 必须 fail-closed：\n\n- 立即中断\
+    \ ASIS，不得用代码结构、README 或目录布局推断模块边界。\n- 若产出 .context/详细设计上下文.md，其中必须显式标记阻塞\n  （blocked\
+    \ / ASIS 阻塞 / 状态：阻塞 / 立即中断），且不得声明确定的模块边界；\n  不产出任何文件（中断无残留）同样合规。\n- 任何情况下不得创建《模块详细设计说明书.md》。\n\
+    - 不得把分析写到契约外路径伪装成合规产出。\n\n依据：module-asis-analysis SKILL.md 模块边界规则第 2 条与「阻塞与降级输出」。\n"
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 20
+  graders:
+  - id: asis-assert
+    type: command
+    name: ASIS 产物黑盒断言
+    weight: 100.0
+    hard_gate: false
+    command: python C:\tmp\ctx5aa\assert_asis_blocked.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 120
