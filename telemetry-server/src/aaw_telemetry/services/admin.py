@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..errors import ApiError
 from ..models import CodeAttribution, DevRun, ObjectUpload, TelemetryMessage, WorkflowRun
+from .queries import any_like
 from .workflow_admin import WorkflowAdminService
 
 logger = logging.getLogger("aaw_telemetry.admin.attribution")
@@ -107,9 +108,9 @@ class AdminAttributionService:
                 CodeAttribution.result_status == filters.result_status
             )
         if filters.repository:
-            statement = statement.where(
-                TelemetryMessage.repository.like(f"%{filters.repository}%")
-            )
+            repository_condition = any_like(TelemetryMessage.repository, filters.repository)
+            if repository_condition is not None:
+                statement = statement.where(repository_condition)
         if filters.user:
             like = f"%{filters.user}%"
             statement = statement.where(
@@ -592,13 +593,14 @@ class AdminAttributionService:
                 .group_by(CodeAttribution.attribution_status)
             ).all()
         )
+        timeout_floor = max(60.0, self.settings.attribution_timeout_seconds * 2)
         stale_running = self.session.execute(
             select(func.count())
             .select_from(CodeAttribution)
             .where(
                 CodeAttribution.attribution_status == "running",
                 CodeAttribution.server_updated_at
-                <= now - timedelta(seconds=max(60.0, self.settings.attribution_timeout_seconds * 2)),
+                <= now - timedelta(seconds=timeout_floor),
             )
         ).scalar_one()
         overdue_retry = self.session.execute(

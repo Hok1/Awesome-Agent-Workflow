@@ -25,6 +25,7 @@ from ..services.admin import (
     RecordFilters,
 )
 from ..services.log_viewer import LOG_FILES, MAX_LINES, describe_files, read_tail
+from ..services.owner_overview import OwnerOverviewService
 from ..services.registry import RegistryService
 from ..services.version_ops import DEFAULT_WINDOW_DAYS, VersionOpsService
 from ..services.workflow_admin import WorkflowAdminService
@@ -163,6 +164,7 @@ def build_admin_router(
                 "active": workflow_counts.get(False, 0),
                 "deleted": workflow_counts.get(True, 0),
             },
+            "owners": OwnerOverviewService(session, projects).overview(),
             "logs": describe_files(log_directory),
         }
 
@@ -378,7 +380,8 @@ def build_admin_router(
             payload.algorithm_version, payload.workflow_kind, payload.entry,
             payload.from_date, payload.to_date, payload.excluded,
         )
-        if payload.action == "exclude" and not payload.dry_run and not (payload.reason or "").strip():
+        needs_reason = payload.action == "exclude" and not payload.dry_run
+        if needs_reason and not (payload.reason or "").strip():
             raise ApiError(400, "EXCLUSION_REASON_REQUIRED", "批量无关化必须填写原因")
         return AdminAttributionService(session, settings).bulk(
             action=payload.action,

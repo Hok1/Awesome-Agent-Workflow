@@ -7,12 +7,25 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import UNASSIGNED_COMPONENT_ID, UNASSIGNED_COMPONENT_NAME, ProjectRegistry
 from ..errors import ApiError
 from ..models import DevRun, TelemetryMessage, WorkflowRun
+
+
+def any_like(column, raw: str | None):
+    """包含匹配，支持逗号分隔多值：`a,b` → LIKE %a% OR LIKE %b%。
+
+    管理台里一个责任方（SE / AI Master）通常覆盖多个仓库，按责任方下钻时需要
+    "命中任一仓库"。返回 None 表示该条件不参与过滤（空串或只有分隔符）。
+    """
+    terms = [term.strip() for term in (raw or "").replace("，", ",").split(",")]
+    terms = [term for term in terms if term]
+    if not terms:
+        return None
+    return or_(*(column.like(f"%{term}%") for term in terms))
 
 
 @dataclass
@@ -687,7 +700,9 @@ class QueryService:
                 "attribution_rate_90": (
                     attributed_90 / effective if rates_included and effective else None
                 ),
-                **_merge_intent_fields(effective, attributed_80, attributed_90, statistics_devs_all),
+                **_merge_intent_fields(
+                    effective, attributed_80, attributed_90, statistics_devs_all
+                ),
                 **_testing_adoption_fields(filters, statistics_attrs),
             }
             if group == "repository":
@@ -887,7 +902,9 @@ class QueryService:
             ).all()
         )
         # 已删除的产出仍要标注出来（管理台详情互通），但不计入行数与归因汇总
-        devs_all = self._devs([row.id for row in messages], include_upload=True, include_deleted=True)
+        devs_all = self._devs(
+            [row.id for row in messages], include_upload=True, include_deleted=True
+        )
         devs = [row for row in devs_all if not row.admin_excluded]
         dev_by_id = {row.id: row for row in devs_all}
         steps = []

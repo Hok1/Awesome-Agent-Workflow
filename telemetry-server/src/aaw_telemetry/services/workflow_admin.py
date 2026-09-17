@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 from ..config import Settings
 from ..errors import ApiError
 from ..models import CodeAttribution, DevRun, ObjectUpload, TelemetryMessage, WorkflowRun
+from .queries import any_like
 
 logger = logging.getLogger("aaw_telemetry.admin.workflow")
 
@@ -173,7 +174,9 @@ class WorkflowAdminService:
                 WorkflowRun.last_activity_at < threshold,
             )
         if repository:
-            statement = statement.where(WorkflowRun.project_key.like(f"%{repository}%"))
+            repository_condition = any_like(WorkflowRun.project_key, repository)
+            if repository_condition is not None:
+                statement = statement.where(repository_condition)
         if user:
             like = f"%{user}%"
             statement = statement.where(
@@ -444,7 +447,7 @@ class WorkflowAdminService:
         raw = None
         source = None
         used_key = None
-        for source, path in candidates:
+        for label, path in candidates:
             try:
                 resolved = path.resolve()
             except OSError:
@@ -452,6 +455,7 @@ class WorkflowAdminService:
             if not resolved.is_relative_to(root) or not resolved.is_file():
                 continue
             raw = resolved.read_bytes()
+            source = label
             used_key = str(path.relative_to(root)) if path.is_relative_to(root) else None
             break
         if raw is None:
