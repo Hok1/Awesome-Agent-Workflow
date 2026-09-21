@@ -1,7 +1,7 @@
 """本地演示启动器：遥测服务 + 门户静态资源同源伺服。
 
 生产环境门户由 nginx 伺服（telemetry-front/nginx.portal.conf）；本地预览时
-用本模块把 portal 目录挂到 /portal，管理台（/admin）里引用的
+用本模块把 portal 目录挂到 /portal，运营后台（/admin）里引用的
 /portal/vendor/fonts.css 才能加载。
 
 用法（在 telemetry-server 目录）：

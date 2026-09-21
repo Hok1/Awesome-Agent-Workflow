@@ -226,5 +226,5 @@ print(f"双口径: 全量采纳率 {full_rate and round(full_rate, 3)}"
       f" · 实验性占比 {overview['experimental_share'] and round(overview['experimental_share'], 3)}"
       f" · 已无关化 {overview['excluded_lines']} 行")
 print("==================================")
-print(f"管理台  {BASE}/admin")
+print(f"运营后台  {BASE}/admin")
 print(f"采纳看板 {BASE}/portal/bright.html")

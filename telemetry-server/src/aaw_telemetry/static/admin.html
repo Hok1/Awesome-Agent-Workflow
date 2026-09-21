@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>遥测管理台 · AAW Telemetry Ops</title>
+  <title>遥测运营后台 · AAW Telemetry Ops</title>
   <link rel="stylesheet" href="/portal/vendor/fonts.css">
   <style>
     /* ═══════════════════════════════════════════════════════════
-       遥测管理台 — Telemetry Ops
+       遥测运营后台 — Telemetry Ops
        Same design language as the Adoption Studio portal:
        warm paper, soft color blooms, iris voice, rounded cards.
        ═══════════════════════════════════════════════════════════ */
@@ -321,7 +321,7 @@
     .console .line--warn  { color: #FFC46B; }
     .console mark { background: rgba(75, 63, 228, .6); color: #fff; border-radius: 3px; padding: 0 1px; }
 
-    /* ── 异常：沿用管理台卡片和表格，只补充异常领域的少量语义 ── */
+    /* ── 异常：沿用运营后台卡片和表格，只补充异常领域的少量语义 ── */
     .an-mode { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 16px; background: rgba(75,63,228,.06); border: 1px solid var(--edge); border-radius: 12px; }
     .an-mode .btn { border: 0; background: transparent; }
     .an-mode .btn.is-active { color: #fff; background: var(--iris); box-shadow: var(--sh-iris); }
@@ -600,12 +600,12 @@
       </svg>
     </span>
     <div class="mark__text">
-      <strong>遥测管理台</strong>
+      <strong>遥测运营后台</strong>
       <span>TELEMETRY&nbsp;OPS</span>
     </div>
   </div>
 
-  <nav class="portal-nav" aria-label="管理台导航">
+  <nav class="portal-nav" aria-label="运营后台导航">
     <div class="side-nav__group">
       <span class="side-nav__label">使用与质量</span>
       <button data-tab="anomalies" class="is-active">异常总览</button>
@@ -1361,7 +1361,7 @@ const fmtInt = (n) => (n ?? 0).toLocaleString("en-US");
 const fmtRate = (rate) => (rate == null ? "—" : (rate * 100).toFixed(1) + "%");
 
 /* ------------------------------ 通用分页 ------------------------------
-   管理台所有列表统一走这里：状态、每页条数、翻页按钮渲染与点击。
+   运营后台所有列表统一走这里：状态、每页条数、翻页按钮渲染与点击。
    用法：const pager = makePager("comp", 15, renderCompRows)，渲染函数
    从 pager.slice(rows) 取当前页，pager.render(total) 写入页脚。 */
 const PAGER_SIZE = 15;

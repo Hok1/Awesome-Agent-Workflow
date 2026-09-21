@@ -3,7 +3,7 @@
 实现归因契约（contracts/src/aaw_contracts/attribution.py）：
 POST /api/v1/attributions 接收 AttributionRequest，返回 AttributionResult。
 
-行为设计（便于演示遥测管理台的各种归因状态）：
+行为设计（便于演示遥测运营后台的各种归因状态）：
 - diff 有新增有效行          → finalized_match：三档行数、置信度、MR 信息齐全
 - AR 号包含 "NOMATCH"        → finalized_no_match（即使有新增行，用于演示未匹配与无关化口径）
 - AR 号包含 "FAIL"           → 返回 500，模拟引擎异常（产生失败/退避重试记录）

@@ -23,6 +23,6 @@ Start-Process -NoNewWindow $py -ArgumentList "-m","uvicorn","tools.local_demo:ap
 
 Write-Host ""
 Write-Host "就绪后："
-Write-Host "  管理台   http://127.0.0.1:8000/admin"
+Write-Host "  运营后台   http://127.0.0.1:8000/admin"
 Write-Host "  采纳看板 http://127.0.0.1:8000/portal/bright.html"
 Write-Host "  预置数据 $py tools\seed_demo_data.py"

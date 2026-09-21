@@ -144,7 +144,7 @@ def build_admin_router(
     # ------------------------------------------------------------------
     # Overview
 
-    @router.get("/overview", summary="管理台总览")
+    @router.get("/overview", summary="运营后台总览")
     def overview(session: Session = Depends(session_dependency)):
         attribution = AdminAttributionService(session, settings)
         components = session.execute(

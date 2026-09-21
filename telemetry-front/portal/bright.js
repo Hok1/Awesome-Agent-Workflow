@@ -646,7 +646,7 @@
 
     // 三条线各自独立容错：任一接口失败只让对应段落显示空态，
     // 不牵连其它图表。主统计失败才算整页失败。
-    // 组件/AI Master 明细已并入遥测管理台，门户不再拉取这些数据。
+    // 组件/AI Master 明细已并入遥测运营后台，门户不再拉取这些数据。
     const statsP = StatsApi.statistics(params);
     const stepsP = isTestDashboard ? Promise.resolve(null) : StatsApi.steps({
       ...params,

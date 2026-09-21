@@ -18,7 +18,7 @@ from ..models import DevRun, TelemetryMessage, WorkflowRun
 def any_like(column, raw: str | None):
     """包含匹配，支持逗号分隔多值：`a,b` → LIKE %a% OR LIKE %b%。
 
-    管理台里一个责任方（SE / AI Master）通常覆盖多个仓库，按责任方下钻时需要
+    运营后台里一个责任方（SE / AI Master）通常覆盖多个仓库，按责任方下钻时需要
     "命中任一仓库"。返回 None 表示该条件不参与过滤（空串或只有分隔符）。
     """
     terms = [term.strip() for term in (raw or "").replace("，", ",").split(",")]
@@ -917,7 +917,7 @@ class QueryService:
                 .order_by(TelemetryMessage.step_started_at.asc(), TelemetryMessage.id.asc())
             ).all()
         )
-        # 已删除的产出仍要标注出来（管理台详情互通），但不计入行数与归因汇总
+        # 已删除的产出仍要标注出来（运营后台详情互通），但不计入行数与归因汇总
         devs_all = self._devs(
             [row.id for row in messages], include_upload=True, include_deleted=True
         )
