@@ -689,23 +689,6 @@
       </div>
     </div>
     <div class="card">
-      <h2>AI Master 运营 <span class="count" id="amMeta">时间不限 · 档位规则：采纳率 ≥65% 达标 · 50-65% 需 3 问 · <50% 需 5 问</span></h2>
-      <div class="toolbar">
-        <label>时间
-          <select id="amWindow">
-            <option value="0" selected>不限</option>
-            <option value="7">近 7 天</option>
-            <option value="30">近 30 天</option>
-            <option value="90">近 90 天</option>
-            <option value="365">近 365 天</option>
-          </select>
-        </label>
-        <span class="mono muted" style="font-size:12.5px;">使用/采纳/活跃按所选时间窗口统计</span>
-      </div>
-      <div class="stones" id="amOpsCards" style="grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));"></div>
-      <div id="amOpsDetail" style="margin-top:14px;"></div>
-    </div>
-    <div class="card">
       <h2>AI Master 名单 <span class="count">删除后其组件回到「未分配」</span></h2>
       <div class="toolbar">
         <input id="amNewName" size="16" placeholder="新 AI Master 姓名" autocomplete="off">
@@ -1892,55 +1875,21 @@ $("#compBody").addEventListener("click", (event) => {
 });
 
 /* --------------------------- AI Master view --------------------------- */
-let amOpsData = null;
 let amRoster = [];
 let amAssignComps = [];
 let amAssignments = {};
 
-// 档位阈值与后端 ai_masters.tier_for 保持一致（0.65 / 0.50）
-function tierFor(rate) {
-  if (rate == null) return "no_data";
-  if (rate >= 0.65) return "none";
-  return rate >= 0.5 ? "three" : "five";
-}
-
-const TIER_BADGES = {
-  none: ["badge--finalized_match", "达标"],
-  three: ["badge--retry_pending", "3问"],
-  five: ["badge--failed", "5问"],
-  no_data: ["badge--not_queued", "无数据"],
-};
-
 async function loadAiMaster() {
   try {
-    const days = $("#amWindow").value;
-    const from = days === "0" ? "" : `&from=${utcDay(-(Number(days) - 1))}`;
-    const [ops, masters, comps, assignments] = await Promise.all([
-      api(`/api/v1/ai-masters/operations?${from ? "from=" + utcDay(-(Number(days) - 1)) + "&" : ""}workflow_kind=aaw`),
+    const [masters, comps, assignments] = await Promise.all([
       api("/api/v1/ai-masters"),
-      api(`/api/v1/dashboard/components?workflow_kind=aaw${from}`),
+      api("/api/v1/dashboard/components?workflow_kind=aaw"),
       api("/api/v1/ai-masters/assignments"),
     ]);
-    $("#amMeta").textContent = `${days === "0" ? "时间不限" : `近 ${days} 天`} · 档位规则：采纳率 ≥65% 达标 · 50-65% 需 3 问 · <50% 需 5 问`;
     markSync(true);
-    amOpsData = ops.items || [];
     amRoster = masters.items || [];
     amAssignComps = comps.items || [];
     amAssignments = assignments.assignments || {};
-    $("#amOpsCards").innerHTML = amOpsData.map((c) => {
-      const tiers = c.tier_counts || {};
-      const chips = Object.entries(TIER_BADGES)
-        .map(([key, [cls, label]]) => `<span class="badge ${cls}">${label} ${tiers[key] ?? 0}</span>`)
-        .join(" ");
-      return `
-      <div class="stone" data-am-detail="${esc(c.ai_master_id ?? "")}" style="cursor:pointer; --halo:radial-gradient(circle, rgba(75,63,228,.14), transparent 70%);">
-        <small>${esc(c.name)} · ${c.total_repos} 仓库 · ${c.total_components} 组件</small>
-        <div style="margin:8px 0 4px;">${chips}</div>
-        <span class="muted mono" style="font-size:12.5px;">${days === "0" ? "累计工作流" : `近 ${days} 天工作流`} ${c.workflows_30d} · 活跃 ${c.active_users} 人 · 闲置仓库 ${c.idle_repos}</span>
-        <span class="muted mono" style="display:block; font-size:12.5px;">最低要求采纳率 ${c.lowest_required_rate == null ? "—" : fmtRate(c.lowest_required_rate)} · 点击看仓库明细</span>
-      </div>`;
-    }).join("") || '<span class="muted">尚无 AI Master，请在下方名单中新增</span>';
-    $("#amOpsDetail").innerHTML = "";
     renderAmRoster();
     renderAmAssign();
   } catch (error) { markSync(false); toast(`AI Master 加载失败：${error.message}`, true); }
@@ -2057,44 +2006,11 @@ $("#amAssignBody").addEventListener("change", async (event) => {
   } catch (error) { toast(`归属更新失败：${error.message}`, true); loadAiMaster(); }
 });
 
-/* 归属会同时影响组件页与 AI Master 汇总，改完顺手刷新在场的那几个 */
+/* 归属会同时影响组件页，改完顺手刷新在场的那几个 */
 function reloadAfterOwnershipChange() {
   if (document.querySelector("#tab-components.is-active")) loadComponents();
 }
 
-$("#amWindow").addEventListener("change", loadAiMaster);
-$("#amOpsCards").addEventListener("click", async (event) => {
-  const stone = event.target.closest("[data-am-detail]");
-  if (!stone) return;
-  const masterId = stone.dataset.amDetail;
-  if (!masterId) { toast("未分配组件请在下方「组件归属」中处理"); return; }
-  $("#amOpsDetail").innerHTML = '<div class="muted">加载仓库明细…</div>';
-  try {
-    const data = await api(`/api/v1/ai-masters/${masterId}/repos`);
-    const rows = (data.items || []).map((r) => `
-      <tr>
-        <td><b class="mono">${esc(r.repo_key)}</b></td>
-        <td>${esc(r.component_name ?? "—")}</td>
-        <td>${esc(r.se ?? "—")}</td>
-        <td>${r.used_aaw ? '<span class="badge badge--finalized_match">使用</span>' : '<span class="badge badge--not_queued">未使用</span>'}</td>
-        <td class="mono">${r.workflows_30d}</td>
-        <td class="mono">${fmtInt(r.effective_lines)}</td>
-        <td class="mono">${fmtRate(r.attribution_rate_80)}</td>
-        <td>${
-          tierFor(r.attribution_rate_80) === "none" ? '<span class="badge badge--finalized_match">达标</span>'
-          : tierFor(r.attribution_rate_80) === "three" ? '<span class="badge badge--retry_pending">3问</span>'
-          : tierFor(r.attribution_rate_80) === "five" ? '<span class="badge badge--failed">5问</span>'
-          : '<span class="badge badge--not_queued">无数据</span>'
-        }</td>
-      </tr>`).join("");
-    $("#amOpsDetail").innerHTML = `
-      <h2 style="font-size:14px;">${esc(data.name)} · 仓库明细</h2>
-      <table>
-        <thead><tr><th>仓库</th><th>组件</th><th>SE</th><th>使用 AAW</th><th>${$("#amWindow").value === "0" ? "累计工作流" : `近 ${$("#amWindow").value} 天工作流`}</th><th>生成代码量</th><th>采纳率·80%</th><th>档位</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" class="muted">无仓库</td></tr>'}</tbody>
-      </table>`;
-  } catch (error) { $("#amOpsDetail").innerHTML = `<div class="muted">加载失败：${esc(error.message)}</div>`; }
-});
 
 /* ------------------------- Attribution management ------------------------- */
 let recPage = 1;
