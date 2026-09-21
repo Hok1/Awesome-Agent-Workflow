@@ -453,8 +453,6 @@
     .an-cond:hover .an-cond-pop, .an-cond:focus-within .an-cond-pop { opacity: 1; visibility: visible; }
     /* 屏蔽待审：等待管理员处理的中转态，用时间色（橙）区别于问题本身 */
     .badge--waiting-review { background: rgba(255,122,26,.14); color: #A34D00; }
-    .an-cond-icon--wait { border-color: rgba(255,122,26,.55); color: #A34D00; }
-    .an-cond-icon--wait:hover, .an-cond-icon--wait:focus-visible { border-color: #E07812; color: #A34D00; }
 
     .an-th-help {
       display: inline-flex; align-items: center; justify-content: center;
@@ -3261,7 +3259,7 @@ async function loadAnomalyEvents() {
     }
     const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
     $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
-      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}${item.archive_request ? (() => { const request = item.archive_request; return `<span class="an-cond"><span class="an-cond-icon an-cond-icon--wait" tabindex="0">?</span><span class="an-cond-pop"><b>屏蔽申请待审</b>：${esc(request.reason)}<br>申请人：${esc(request.requested_by)} · ${fmtShort(request.created_at)}</span></span>`; })() : ""}</div></td>
+      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}</div></td>
       <td>${esc(item.user_email || "—")}</td>
       <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
       <td>${anDuration(item.first_detected_at)}</td>
