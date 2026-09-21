@@ -3164,6 +3164,13 @@ const anCategorySelect = buildSearchSelect("anCategory", [
   { id: "version", name: "版本使用" },
 ], { placeholder: "全部", searchLabel: "类型" });
 
+// 点组件外部收起（与门户一致）；浮层在 .multi 里，stopPropagation 只挡触发按钮
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".multi")) {
+    document.querySelectorAll(".multi").forEach((m) => m._close && m._close());
+  }
+});
+
 // 悬浮气泡跟随 ？ 图标：fixed 定位挂在图标正下方（左对齐图标），右侧越界时左移。
 function positionAnomalyPops() {
   document.querySelectorAll(".an-cond").forEach((cond) => {
