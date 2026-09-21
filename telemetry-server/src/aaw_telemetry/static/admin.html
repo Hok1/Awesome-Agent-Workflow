@@ -322,10 +322,6 @@
     .console mark { background: rgba(75, 63, 228, .6); color: #fff; border-radius: 3px; padding: 0 1px; }
 
     /* ── 异常：沿用管理台卡片和表格，只补充异常领域的少量语义 ── */
-    .an-mode { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 16px; background: rgba(75,63,228,.06); border: 1px solid var(--edge); border-radius: 12px; }
-    .an-mode .btn { border: 0; background: transparent; }
-    .an-mode .btn.is-active { color: #fff; background: var(--iris); box-shadow: var(--sh-iris); }
-    .an-view[hidden] { display: none; }
     .an-summary { display: grid; grid-template-columns: 1.2fr repeat(4,1fr); gap: 12px; margin-bottom: 18px; }
     .an-summary .stone:first-child { color: #fff; background: #20212A; border-color: #20212A; }
     .an-summary .stone:first-child small { color: #C7C9D2; }
@@ -608,7 +604,8 @@
   <nav class="portal-nav" aria-label="管理台导航">
     <div class="side-nav__group">
       <span class="side-nav__label">使用与质量</span>
-      <button data-tab="anomalies" class="is-active">异常</button>
+      <button data-tab="anomalies" class="is-active">异常总览</button>
+      <button data-tab="anomaly-admin">异常管理</button>
       <button data-tab="components">组件</button>
       <button data-tab="workflows">工作流</button>
       <button data-tab="attribution">归因</button>
@@ -971,59 +968,61 @@
     </div>
   </section>
 
-  <!-- ============================== 异常 ============================== -->
+  <!-- ============================== 异常总览 ============================== -->
   <section class="tab is-active" id="tab-anomalies">
     <div class="page-head">
       <div class="page-head__title">
         <span class="page-head__eyebrow">使用与质量</span>
-        异常
+        异常总览
         <small>只呈现需要关注的问题；查看清晰的异常详情，并直接定位到对应业务内容</small>
       </div>
       <div class="an-scope-label">查看范围 <div class="multi" id="anMaster" data-placeholder="选择 AI Master"></div></div>
       <button class="btn" id="anRefresh">刷新</button>
     </div>
 
-    <div class="an-mode" role="tablist" aria-label="异常功能">
-      <button class="btn is-active" data-an-view="overview">问题总览</button>
-      <button class="btn" data-an-view="rules">规则管理</button>
-      <button class="btn" data-an-view="reviews">屏蔽审核</button>
+    <div class="an-summary">
+      <div class="stone"><small>存在异常</small><strong id="anSumOpen">0</strong></div>
+      <div class="stone stone--tangerine"><small>组件统计</small><strong id="anSumComponent">0</strong></div>
+      <div class="stone stone--magenta"><small>工作流</small><strong id="anSumWorkflow">0</strong></div>
+      <div class="stone stone--sky"><small>归因处理</small><strong id="anSumAttribution">0</strong></div>
+      <div class="stone stone--iris"><small>版本使用</small><strong id="anSumVersion">0</strong></div>
+    </div>
+    <div class="card">
+      <div class="toolbar">
+        <div class="an-scope-label">异常类型 <div class="multi" id="anCategory" data-placeholder="全部"></div></div>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table class="an-event-table"><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
+      </div>
+      <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
+    </div>
+  </section>
+
+  <!-- ============================== 异常管理（管理员） ============================== -->
+  <section class="tab" id="tab-anomaly-admin">
+    <div class="page-head">
+      <div class="page-head__title">
+        <span class="page-head__eyebrow">使用与质量</span>
+        异常管理
+        <small>管理员配置检测规则、处理屏蔽申请；进入时需要系统管理员密码</small>
+      </div>
+      <button class="btn" id="anAdminRefresh">刷新</button>
     </div>
 
-    <div class="an-view" id="an-view-overview">
-      <div class="an-summary">
-        <div class="stone"><small>存在异常</small><strong id="anSumOpen">0</strong></div>
-        <div class="stone stone--tangerine"><small>组件统计</small><strong id="anSumComponent">0</strong></div>
-        <div class="stone stone--magenta"><small>工作流</small><strong id="anSumWorkflow">0</strong></div>
-        <div class="stone stone--sky"><small>归因处理</small><strong id="anSumAttribution">0</strong></div>
-        <div class="stone stone--iris"><small>版本使用</small><strong id="anSumVersion">0</strong></div>
-      </div>
-      <div class="card">
-        <div class="toolbar">
-          <div class="an-scope-label">异常类型 <div class="multi" id="anCategory" data-placeholder="全部"></div></div>
-        </div>
-        <div class="table-wrap" style="overflow-x:auto;">
-          <table class="an-event-table"><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
-        </div>
-        <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
+    <div class="card">
+      <h2>规则管理 <span class="count">检测类型由系统统一提供，管理员只需配置并启停</span></h2>
+      <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span></div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
       </div>
     </div>
 
-    <div class="an-view" id="an-view-rules" hidden>
-      <div class="card">
-        <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span><span class="muted">检测类型由系统统一提供，管理员只需配置并启停。</span></div>
-        <div class="table-wrap" style="overflow-x:auto;">
-          <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
-        </div>
+    <div class="card">
+      <h2>屏蔽审核</h2>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table><thead><tr><th>申请</th><th>数据对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
       </div>
-    </div>
-
-    <div class="an-view" id="an-view-reviews" hidden>
-      <div class="card">
-        <div class="table-wrap" style="overflow-x:auto;">
-          <table><thead><tr><th>申请</th><th>数据对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
-        </div>
-        <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>AI Master 提交的异常数据屏蔽申请会出现在这里。</div>
-      </div>
+      <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>AI Master 提交的异常数据屏蔽申请会出现在这里。</div>
     </div>
   </section>
 
@@ -1313,6 +1312,7 @@ document.querySelector(".portal-nav").addEventListener("click", (event) => {
   if (button.dataset.tab === "versions") loadVersions();
   if (button.dataset.tab === "registry") loadRegistry();
   if (button.dataset.tab === "anomalies") loadAnomalyModule();
+  if (button.dataset.tab === "anomaly-admin") loadAnomalyAdminModule();
   if (button.dataset.tab === "logs") loadLogs();
 });
 
@@ -2875,7 +2875,6 @@ let anRules = [];
 let anEvents = new Map();
 let anEditingRule = null;
 let anPreviewFingerprint = "";
-let anCurrentView = "overview";
 
 const AN_CATEGORY_LABELS = { component: "组件统计", workflow: "工作流", attribution: "归因处理", version: "版本使用" };
 const AN_SCOPE_LABELS = { platform: "全平台", component: "指定组件", repository: "指定仓库" };
@@ -2944,9 +2943,12 @@ async function loadAnomalyModule() {
     if (data.items.length && !anMasterSelect.value) anMasterSelect.value = data.items[0].id;
     anMastersLoaded = true;
   }
-  if (anCurrentView === "overview") await loadAnomalyEvents();
-  if (anCurrentView === "rules") await loadAnomalyRules();
-  if (anCurrentView === "reviews") await loadAnomalyReviews();
+  await loadAnomalyEvents();
+}
+
+async function loadAnomalyAdminModule() {
+  if (!await ensureAnomalyAdmin()) return;
+  await Promise.all([loadAnomalyRules(), loadAnomalyReviews()]);
 }
 
 /* 可搜索单选下拉：与门户采纳看板同款交互（触发按钮 + 搜索浮层），替代原生 select。
@@ -3433,17 +3435,7 @@ async function reviewAnomalyArchive(id, approved) {
   } catch (error) { toast(`审核失败：${error.message}`, true); }
 }
 
-document.querySelector(".an-mode").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-an-view]");
-  if (!button) return;
-  if (button.dataset.anView !== "overview" && !await ensureAnomalyAdmin()) return;
-  anCurrentView = button.dataset.anView;
-  document.querySelectorAll("[data-an-view]").forEach((item) => item.classList.toggle("is-active", item === button));
-  document.querySelectorAll(".an-view").forEach((view) => { view.hidden = view.id !== `an-view-${anCurrentView}`; });
-  if (anCurrentView === "overview") loadAnomalyEvents();
-  if (anCurrentView === "rules") loadAnomalyRules();
-  if (anCurrentView === "reviews") loadAnomalyReviews();
-});
+$("#anAdminRefresh").addEventListener("click", loadAnomalyAdminModule);
 
 anMasterSelect.addEventListener("change", loadAnomalyEvents);
 anCategorySelect.addEventListener("change", loadAnomalyEvents);
