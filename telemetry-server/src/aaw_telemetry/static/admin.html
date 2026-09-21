@@ -119,13 +119,9 @@
     section.tab.is-active { display: block; animation: rise .3s ease; }
     @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-    /* ── 页头：每个 tab 一个（分组眉标 + 页面名 + 一句话）；右侧控件整体贴右 ── */
+    /* ── 页头：每个 tab 一个（页面名 + 一句话）；右侧控件整体贴右 ── */
     .page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     .page-head__title { font-family: var(--disp); font-size: 20px; font-weight: 700; line-height: 1.25; }
-    .page-head__eyebrow {
-      display: block; margin-bottom: 3px; font-family: var(--body); font-size: 12px;
-      font-weight: 600; color: var(--iris); letter-spacing: .1em;
-    }
     .page-head__title small {
       display: block; margin-top: 4px; font-family: var(--body); font-size: 13.5px;
       font-weight: 500; color: var(--ink-soft); letter-spacing: 0;
@@ -645,7 +641,7 @@
   <section class="tab" id="tab-components">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">使用与质量</span>
+
         组件
         <small>按组件统计使用与采纳；SE、AI Master 归属在此核对</small>
       </div>
@@ -688,7 +684,7 @@
   <section class="tab" id="tab-aimaster">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">归属与配置</span>
+
         AI Master
         <small>一个仓库一位 AI Master；认领关系与名单在此维护</small>
       </div>
@@ -722,7 +718,7 @@
   <section class="tab" id="tab-workflows">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">使用与质量</span>
+
         工作流
         <small>全量工作流明细；可按工作流 / 产出 / 用户三级删除</small>
       </div>
@@ -776,7 +772,7 @@
   <section class="tab" id="tab-attribution">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">使用与质量</span>
+
         归因
         <small>队列健康、积压与归因明细；可重跑、可删除产出</small>
       </div>
@@ -901,7 +897,7 @@
   <section class="tab" id="tab-versions">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">使用与质量</span>
+
         版本
         <small>按每人最近一次上报的版本统计</small>
       </div>
@@ -949,7 +945,7 @@
   <section class="tab" id="tab-registry">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">归属与配置</span>
+
         注册表
         <small>组件与仓库的登记入口；SE 归属、统计开关在此设置</small>
       </div>
@@ -980,7 +976,7 @@
   <section class="tab is-active" id="tab-anomalies">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">使用与质量</span>
+
         异常总览
       </div>
       <div class="an-scope-label">查看范围 <div class="multi" id="anMaster" data-placeholder="选择 AI Master"></div></div>
@@ -1009,7 +1005,7 @@
   <section class="tab" id="tab-anomaly-admin">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">使用与质量</span>
+
         异常管理
       </div>
       <button class="btn" id="anAdminRefresh">刷新</button>
@@ -1056,7 +1052,7 @@
   <section class="tab" id="tab-logs">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">系统</span>
+
         日志
         <small>只读服务日志，按关键字与时间窗检索</small>
       </div>
