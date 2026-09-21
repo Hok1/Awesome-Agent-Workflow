@@ -3337,7 +3337,11 @@ function showAnomalyEvent(id) {
 async function requestAnomalyArchive(id) {
   const requestedBy = await askDialog({ title: "申请屏蔽", placeholder: "AI Master 姓名" });
   if (!requestedBy) return;
-  const reason = await askDialog({ title: "屏蔽理由", message: "说明为什么该数据不应继续纳入统计和展示。提交后由管理员审核。", placeholder: "必填" });
+  const reason = await askDialog({
+    title: "屏蔽理由",
+    message: "屏蔽只针对这条异常事件，对应业务数据的统计不会自动变化；如需一并处理，请在管理员通过后于对应业务页删除或屏蔽相关数据，否则统计仍会包含它。",
+    placeholder: "必填",
+  });
   if (!reason) return;
   try {
     await api(`/api/v1/anomalies/events/${id}/archive-requests`, { method: "POST", body: JSON.stringify({ requested_by: requestedBy, reason }) });
