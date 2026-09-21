@@ -677,6 +677,7 @@
           <tbody id="compBody"></tbody>
         </table>
       </div>
+      <div class="toolbar" id="compPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
     </div>
   </section>
 
@@ -699,18 +700,20 @@
         <thead><tr><th>姓名</th><th>组件数</th><th>操作</th></tr></thead>
         <tbody id="amRosterBody"></tbody>
       </table>
+      <div class="toolbar" id="amRosterPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
     </div>
     <div class="card">
       <h2>仓库归属 <span class="count">一个仓库一位 AI Master · 切换下拉即保存</span></h2>
       <div class="toolbar">
         <label>搜索 <input id="amAssignSearch" size="20" placeholder="仓库 / 组件 / SE / AI Master" autocomplete="off"></label>
       </div>
-      <div class="table-wrap" style="overflow-x:auto; max-height:56vh;">
+      <div class="table-wrap" style="overflow-x:auto;">
         <table>
           <thead><tr><th>仓库</th><th>组件</th><th>SE</th><th>归属 AI Master</th></tr></thead>
           <tbody id="amAssignBody"></tbody>
         </table>
       </div>
+      <div class="toolbar" id="amAssignPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
     </div>
   </section>
 
@@ -927,6 +930,7 @@
           <tbody id="verBody"></tbody>
         </table>
       </div>
+      <div class="toolbar" id="verPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
       <details class="trend-more" style="margin-top:16px;">
         <summary>非发布版本账号 <span class="count" id="verNonReleaseCount"></span></summary>
         <table style="margin-top:8px;">
@@ -998,6 +1002,7 @@
         <table class="an-event-table"><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
       </div>
       <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
+      <div class="toolbar" id="anEventPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
     </div>
   </section>
 
@@ -1022,18 +1027,20 @@
         <h2>规则管理 <span class="count">检测类型由系统统一提供，管理员只需配置并启停</span></h2>
         <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span></div>
         <div class="table-wrap" style="overflow-x:auto;">
-          <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
+          <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许申请屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
         </div>
+        <div class="toolbar" id="anRulePager" style="margin:12px 0 0; justify-content:flex-end;"></div>
       </div>
     </div>
 
     <div class="an-view" id="an-admin-view-reviews" hidden>
       <div class="card">
-        <h2>屏蔽审核</h2>
+        <h2>屏蔽审核 <span class="count">处理 AI Master 提交的屏蔽申请</span></h2>
         <div class="table-wrap" style="overflow-x:auto;">
-          <table><thead><tr><th>申请</th><th>数据对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
+          <table><thead><tr><th>申请</th><th>屏蔽对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
         </div>
-        <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>AI Master 提交的异常数据屏蔽申请会出现在这里。</div>
+        <div class="toolbar" id="anReviewPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+        <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>屏蔽申请通过后，对应数据将不再纳入统计。</div>
       </div>
     </div>
 
@@ -1043,6 +1050,7 @@
         <div class="table-wrap" style="overflow-x:auto;">
           <table><thead><tr><th>AI Master</th><th>存在异常</th><th>组件统计</th><th>工作流</th><th>归因处理</th><th>版本使用</th><th>最早持续</th><th>操作</th></tr></thead><tbody id="anMasterBody"></tbody></table>
         </div>
+        <div class="toolbar" id="anMasterBoardPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
         <div class="an-empty" id="anMasterEmpty" hidden><strong>当前没有任何异常</strong>所有 AI Master 名下都没有命中规则的异常。</div>
       </div>
     </div>
@@ -1351,6 +1359,49 @@ const utcDay = (offsetDays) => {
 
 const fmtInt = (n) => (n ?? 0).toLocaleString("en-US");
 const fmtRate = (rate) => (rate == null ? "—" : (rate * 100).toFixed(1) + "%");
+
+/* ------------------------------ 通用分页 ------------------------------
+   管理台所有列表统一走这里：状态、每页条数、翻页按钮渲染与点击。
+   用法：const pager = makePager("comp", 15, renderCompRows)，渲染函数
+   从 pager.slice(rows) 取当前页，pager.render(total) 写入页脚。 */
+const PAGER_SIZE = 15;
+function makePager(key, render) {
+  const state = { page: 1, size: PAGER_SIZE, total: 0 };
+  const mount = () => document.getElementById(`${key}Pager`);
+  const wire = () => {
+    const bar = mount();
+    if (!bar || bar.dataset.wired) return;
+    bar.dataset.wired = "1";
+    bar.addEventListener("click", (event) => {
+      const prev = event.target.closest("button[data-pager-prev]");
+      const next = event.target.closest("button[data-pager-next]");
+      if (prev && state.page > 1) { state.page -= 1; render(); }
+      if (next && state.page < pages()) { state.page += 1; render(); }
+    });
+  };
+  const pages = () => Math.max(1, Math.ceil(state.total / state.size));
+  return {
+    get page() { return state.page; },
+    reset() { state.page = 1; },
+    slice(rows) {
+      state.total = rows.length;
+      if (state.page > pages()) state.page = pages();
+      return rows.slice((state.page - 1) * state.size, state.page * state.size);
+    },
+    render(total) {
+      if (total !== undefined) state.total = total;
+      wire();
+      const bar = mount();
+      if (bar) {
+        bar.hidden = state.total <= state.size;
+        bar.innerHTML = `<button class="btn" data-pager-prev ${state.page <= 1 ? "disabled" : ""}>上一页</button>
+          <span class="mono">${state.page} / ${pages()}</span>
+          <button class="btn" data-pager-next ${state.page >= pages() ? "disabled" : ""}>下一页</button>
+          <span class="muted" style="font-size:12.5px;">共 ${state.total} 条</span>`;
+      }
+    },
+  };
+}
 
 /* ------------------------------- 交互 ------------------------------- */
 
@@ -1799,6 +1850,7 @@ let compData = null;
 let compMasters = [];
 // 归属按仓库登记（一个仓库一位 AI Master），组件级归属由它推导
 let compRepoAssignments = {};
+const compPager = makePager("comp", renderCompRows);
 
 function compMasterName(masterId) {
   const master = compMasters.find((m) => m.id === masterId);
@@ -1864,7 +1916,8 @@ function renderCompRows() {
     .sort((a, b) => (b.effective_lines ?? 0) - (a.effective_lines ?? 0));
   const days = $("#compWindow").value;
   $("#compMeta").textContent = `${days === "0" ? "时间不限" : `近 ${days} 天`} · 共 ${compData.length} 个组件 · 显示 ${rows.length}`;
-  $("#compBody").innerHTML = rows.map((c) => {
+  const pageRows = compPager.slice(rows);
+  $("#compBody").innerHTML = pageRows.map((c) => {
     const owners = componentOwners(c);
     const ownerLabel = owners.split
       ? `<span class="badge badge--none">多人分管（${owners.names.length}）</span>`
@@ -1885,12 +1938,14 @@ function renderCompRows() {
       <td>${repo ? `<button class="btn btn--small" data-comp-jump="${esc(repo)}">查工作流</button>` : '<span class="muted">—</span>'}</td>
     </tr>`;
   }).join("") || '<tr><td colspan="9" class="muted">没有匹配的组件</td></tr>';
+  compPager.render();
 }
 
 $("#btnCompRefresh").addEventListener("click", loadComponents);
 $("#compWindow").addEventListener("change", loadComponents);
-$("#compSearch").addEventListener("input", renderCompRows);
-$("#compMasterFilter").addEventListener("change", renderCompRows);
+
+$("#compSearch").addEventListener("input", () => { compPager.reset(); renderCompRows(); });
+$("#compMasterFilter").addEventListener("change", () => { compPager.reset(); renderCompRows(); });
 $("#compBody").addEventListener("click", (event) => {
   const jump = event.target.closest("button[data-comp-jump]");
   if (jump) jumpToWorkflows(jump.dataset.compJump);
@@ -1900,6 +1955,8 @@ $("#compBody").addEventListener("click", (event) => {
 let amRoster = [];
 let amAssignComps = [];
 let amAssignments = {};
+const amRosterPager = makePager("amRoster", renderAmRoster);
+const amAssignPager = makePager("amAssign", renderAmAssign);
 
 async function loadAiMaster() {
   try {
@@ -1918,7 +1975,8 @@ async function loadAiMaster() {
 }
 
 function renderAmRoster() {
-  $("#amRosterBody").innerHTML = amRoster.map((m) => `
+  const pageRows = amRosterPager.slice(amRoster);
+  $("#amRosterBody").innerHTML = pageRows.map((m) => `
     <tr data-am-id="${esc(m.id)}">
       <td><b>${esc(m.name)}</b></td>
       <td class="mono">${m.repo_count} 仓库</td>
@@ -1927,6 +1985,7 @@ function renderAmRoster() {
         <button class="btn btn--small btn--danger" data-am-delete="${esc(m.id)}">删除</button>
       </td>
     </tr>`).join("") || '<tr><td colspan="3" class="muted">暂无 AI Master</td></tr>';
+  amRosterPager.render();
 }
 
 // 归属表按仓库逐行：一个仓库一位 AI Master（责任单位）
@@ -1945,7 +2004,8 @@ function renderAmAssign() {
   const options = ['<option value="">未认领</option>']
     .concat(amRoster.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`))
     .join("");
-  const rows = amRepoRows()
+  const allRows = amRepoRows();
+  const rows = amAssignPager.slice(allRows)
     .filter((row) => {
       if (!term) return true;
       const owner = (amRoster.find((m) => m.id === amAssignments[row.repoKey]) || {}).name ?? "";
@@ -1963,7 +2023,8 @@ function renderAmAssign() {
       </tr>`);
   $("#amAssignBody").innerHTML =
     rows.join("") || '<tr><td colspan="4" class="muted">没有匹配的仓库</td></tr>';
-  for (const row of amRepoRows()) {
+  amAssignPager.render();
+  for (const row of allRows) {
     const select = document.querySelector(
       `select[data-assign-repo="${CSS.escape(row.repoKey)}"]`,
     );
@@ -1971,7 +2032,7 @@ function renderAmAssign() {
   }
 }
 
-$("#amAssignSearch").addEventListener("input", renderAmAssign);
+$("#amAssignSearch").addEventListener("input", () => { amAssignPager.reset(); renderAmAssign(); });
 
 $("#btnAmAdd").addEventListener("click", async () => {
   const name = ($("#amNewName").value || "").trim();
@@ -2468,6 +2529,7 @@ $("#btnRecPrev").addEventListener("click", () => { if (recPage > 1) { recPage -=
 $("#btnRecNext").addEventListener("click", () => { recPage += 1; loadRecords(); });
 
 /* ------------------------------ Version ops ------------------------------ */
+const verPager = makePager("ver", loadVersions);
 async function loadVersions() {
   const windowDays = $("#verWindow").value;
   try {
@@ -2483,7 +2545,8 @@ async function loadVersions() {
       <div class="stone stone--grass"><small>已用最新版</small><strong>${roster.on_latest}</strong></div>
       <div class="stone stone--tangerine"><small>仍在旧版本</small><strong>${roster.on_old}</strong></div>
       <div class="stone stone--warn"><small>非发布版本账号</small><strong>${roster.non_release_users}</strong></div>`;
-    $("#verBody").innerHTML = roster.items.map((row) => `
+    const verRows = verPager.slice(roster.items);
+    $("#verBody").innerHTML = verRows.map((row) => `
       <tr data-email="${esc(row.user_email)}">
         <td><b>${esc(row.user_name)}</b><div class="muted mono" style="font-size:12px;">${esc(row.user_email)}</div></td>
         <td class="mono">${esc(row.version)}</td>
@@ -2491,6 +2554,7 @@ async function loadVersions() {
         <td class="mono">${esc(fmtShort(row.last_report_at))}</td>
         <td><button class="btn btn--small" data-timeline="${esc(row.user_email)}">展开</button></td>
       </tr>`).join("") || '<tr><td colspan="5" class="muted">窗口内没有停留在旧版本的用户 🎉</td></tr>';
+    verPager.render();
     $("#verNonReleaseCount").textContent =
       roster.non_release.length ? `· ${roster.non_release.length} 个（冒烟/联调，不入名单）` : "· 无";
     $("#verNonRelease").innerHTML = roster.non_release.map((row) => `
@@ -2555,8 +2619,8 @@ $("#verBody").addEventListener("click", async (event) => {
   }
 });
 
-$("#btnVerRefresh").addEventListener("click", loadVersions);
-$("#verWindow").addEventListener("change", loadVersions);
+$("#btnVerRefresh").addEventListener("click", () => { verPager.reset(); loadVersions(); });
+$("#verWindow").addEventListener("change", () => { verPager.reset(); loadVersions(); });
 
 /* -------------------------------- Registry -------------------------------- */
 /* 主从布局：左侧组件列表（搜索过滤），右侧为选中组件的仓库明细；
@@ -2898,6 +2962,12 @@ let anEvents = new Map();
 let anEditingRule = null;
 let anPreviewFingerprint = "";
 let anAdminView = "rules";
+let anEventsCache = [];   // 分页渲染的原始列表（翻页时不再请求）
+let anReviewCache = [];   // 屏蔽审核列表同上
+const anEventPager = makePager("anEvent", renderAnomalyEventPage);
+const anRulePager = makePager("anRule", renderAnomalyRulePage);
+const anReviewPager = makePager("anReview", renderAnomalyReviewPage);
+const anMasterBoardPager = makePager("anMasterBoard", renderAnomalyMasterPage);
 
 const AN_CATEGORY_LABELS = { component: "组件统计", workflow: "工作流", attribution: "归因处理", version: "版本使用" };
 const AN_SCOPE_LABELS = { platform: "全平台", component: "指定组件", repository: "指定仓库" };
@@ -3171,6 +3241,8 @@ async function loadAnomalyEvents() {
   if (!master) {
     $("#anEventBody").innerHTML = "";
     $("#anEventEmpty").hidden = false;
+    anEventsCache = [];
+    anEventPager.render(0);
     return;
   }
   const isAdmin = master === "__admin__";
@@ -3188,14 +3260,8 @@ async function loadAnomalyEvents() {
     for (const key of ["Component", "Workflow", "Attribution", "Version"]) {
       $("#anSum" + key).textContent = summary.categories[key.toLowerCase()];
     }
-    const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
-    $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
-      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}</div></td>
-      <td>${esc(item.user_email || "—")}</td>
-      <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
-      <td>${anDuration(item.first_detected_at)}</td>
-      <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported && !item.archive_request ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}${item.archive_request ? `<span class="badge badge--waiting-review" title="屏蔽申请已提交，等待管理员在屏蔽审核中处理">屏蔽待审</span>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
-    </tr>`).join("");
+    anEventsCache = events.items;
+    renderAnomalyEventPage();
     $("#anEventEmpty").hidden = events.items.length > 0;
     positionAnomalyPops();
     markSync(true);
@@ -3203,6 +3269,20 @@ async function loadAnomalyEvents() {
     markSync(false);
     toast(`异常加载失败：${error.message}`, true);
   }
+}
+
+function renderAnomalyEventPage() {
+  const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
+  const pageRows = anEventPager.slice(anEventsCache);
+  $("#anEventBody").innerHTML = pageRows.map((item) => `<tr>
+      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}</div></td>
+      <td>${esc(item.user_email || "—")}</td>
+      <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
+      <td>${anDuration(item.first_detected_at)}</td>
+      <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported && !item.archive_request ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}${item.archive_request ? `<span class="badge badge--waiting-review" title="屏蔽申请已提交，等待管理员在屏蔽审核中处理">屏蔽待审</span>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
+    </tr>`).join("");
+  anEventPager.render();
+  positionAnomalyPops();
 }
 
 function openAnomalyDetail(title, asideHtml, mainHtml) {
@@ -3255,7 +3335,7 @@ function showAnomalyEvent(id) {
 }
 
 async function requestAnomalyArchive(id) {
-  const requestedBy = await askDialog({ title: "申请屏蔽异常数据", placeholder: "AI Master 姓名" });
+  const requestedBy = await askDialog({ title: "申请屏蔽", placeholder: "AI Master 姓名" });
   if (!requestedBy) return;
   const reason = await askDialog({ title: "屏蔽理由", message: "说明为什么该数据不应继续纳入统计和展示。提交后由管理员审核。", placeholder: "必填" });
   if (!reason) return;
@@ -3301,7 +3381,7 @@ function anomalyParamSummary(params) {
 }
 
 // 把检测器的一句话模板渲染成 HTML：{参数名} 替换为带底色突出的当前值，
-// 管理员一眼看出“这条规则在检测什么、哪些数字可以调”。
+// 高亮只覆盖数值（可调参数），单位不参与高亮。
 function anomalySentenceHtml(spec, params) {
   if (!spec?.sentence) return "";
   return spec.sentence.replace(/\{(\w+)\}/g, (_, key) => {
@@ -3310,7 +3390,8 @@ function anomalySentenceHtml(spec, params) {
     if (value === undefined || value === null) return "";
     const shown = Array.isArray(value) ? (value.length ? value.join("、") : "无")
       : (meta.scale ? Number(value) * meta.scale : value);
-    return `<span class="an-tune">${esc(String(shown))}${esc(meta.unit || "")}</span>`;
+    // 高亮只标数值本身：数值是可调参数，单位跟着语境走、不可编辑
+    return `<span class="an-tune">${esc(String(shown))}</span>${esc(meta.unit || "")}`;
   });
 }
 
@@ -3329,7 +3410,13 @@ async function loadAnomalyRules() {
     anRules = data.items.sort((a, b) => (order.get(a.detector_type) ?? 999) - (order.get(b.detector_type) ?? 999));
     const enabled = anRules.filter((item) => item.status === "enabled").length;
     $("#anRuleCount").textContent = `${anRules.length} 类检测 · ${enabled} 类已启用`;
-    $("#anRuleList").innerHTML = anRules.map((item) => {
+    renderAnomalyRulePage();
+  } catch (error) { toast(`规则加载失败：${error.message}`, true); }
+}
+
+function renderAnomalyRulePage() {
+  const pageRows = anRulePager.slice(anRules);
+  $("#anRuleList").innerHTML = pageRows.map((item) => {
       const spec = anCatalog.find((type) => type.code === item.detector_type);
       const isEnabled = item.status === "enabled";
       const sentence = anomalySentenceHtml(spec, item.params);
@@ -3342,7 +3429,7 @@ async function loadAnomalyRules() {
         <td><div class="an-actions"><button class="btn btn--small" data-an-rule-detail="${item.id}">详情</button><button class="btn btn--small" data-an-rule-edit="${item.id}">编辑</button><button class="btn btn--small" data-an-rule-toggle="${item.id}" data-status="${isEnabled ? "disabled" : "enabled"}">${isEnabled ? "停用" : "启用"}</button></div></td>
       </tr>`;
     }).join("");
-  } catch (error) { toast(`规则加载失败：${error.message}`, true); }
+  anRulePager.render();
 }
 
 function syncAnomalyScopeField() {
@@ -3446,9 +3533,17 @@ async function loadAnomalyReviews() {
   if (!await ensureAnomalyAdmin()) return;
   try {
     const data = await api("/api/v1/anomalies/archive-requests");
-    $("#anReviewBody").innerHTML = data.items.map((item) => `<tr><td>${esc(item.requested_by)}<div class="an-sub">${new Date(item.created_at).toLocaleString()}</div></td><td>${esc(item.target_type)}<div class="an-sub mono">${esc(item.target_id)}</div></td><td>${esc(item.reason)}<div class="an-sub">影响 ${item.impact_preview.affected_rows ?? "—"} 条数据</div></td><td><span class="badge">${esc(item.status)}</span>${item.review_note ? `<div class="an-sub">${esc(item.review_note)}</div>` : ""}</td><td>${item.status === "pending" ? `<div class="an-actions"><button class="btn btn--small btn--primary" data-an-review="${item.id}" data-approved="true">通过</button><button class="btn btn--small btn--danger" data-an-review="${item.id}" data-approved="false">拒绝</button></div>` : "—"}</td></tr>`).join("");
+    anReviewCache = data.items;
+    renderAnomalyReviewPage();
     $("#anReviewEmpty").hidden = data.items.length > 0;
   } catch (error) { toast(`审核列表加载失败：${error.message}`, true); }
+}
+
+function renderAnomalyReviewPage() {
+  const targetLabels = { workflow: "工作流", dev_run: "开发产出", attribution: "归因记录", event: "异常事件" };
+  const pageRows = anReviewPager.slice(anReviewCache);
+  $("#anReviewBody").innerHTML = pageRows.map((item) => `<tr><td>${esc(item.requested_by)}<div class="an-sub">${new Date(item.created_at).toLocaleString()}</div></td><td>${esc(targetLabels[item.target_type] ?? item.target_type)}<div class="an-sub mono">${esc(item.target_id)}</div></td><td>${esc(item.reason)}<div class="an-sub">影响 ${item.impact_preview.affected_rows ?? "—"} 条数据</div></td><td><span class="badge">${esc(item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : item.status)}</span>${item.review_note ? `<div class="an-sub">${esc(item.review_note)}</div>` : ""}</td><td>${item.status === "pending" ? `<div class="an-actions"><button class="btn btn--small btn--primary" data-an-review="${item.id}" data-approved="true">通过</button><button class="btn btn--small btn--danger" data-an-review="${item.id}" data-approved="false">拒绝</button></div>` : "—"}</td></tr>`).join("");
+  anReviewPager.render();
 }
 
 async function reviewAnomalyArchive(id, approved) {
@@ -3464,6 +3559,23 @@ $("#anAdminRefresh").addEventListener("click", loadAnomalyAdminModule);
 
 /* 「按 AI Master」：全量事件按归属聚合。
    事件与 AI Master 分别取自 anomalies/events?admin_view 与 ai-masters 列表。 */
+let anMasterMasters = [];
+const masterBoardLabel = (id) => {
+  if (id === "__none__") return "未归属";
+  const found = anMasterMasters.find((m) => m.id === id);
+  // 名字里可能带「· AI Master」后缀（历史演示数据），表头已说明身份，去掉
+  return found ? found.name.replace(/\s*·\s*AI Master\s*$/, "") : "未知";
+};
+const countsForMaster = (items) => {
+  const cats = { component: 0, workflow: 0, attribution: 0, version: 0 };
+  for (const item of items) cats[item.category] += 1;
+  return cats;
+};
+const oldestForMaster = (items) => items.reduce((min, item) => {
+  const at = new Date(item.first_detected_at).getTime();
+  return at < min ? at : min;
+}, Number.POSITIVE_INFINITY);
+
 async function loadAnomalyMasterBoard() {
   try {
     await loadAnomalyCatalog();  // 展开明细要用判定句模板
@@ -3471,47 +3583,40 @@ async function loadAnomalyMasterBoard() {
       api("/api/v1/anomalies/events?admin_view=true"),
       api("/api/v1/ai-masters"),
     ]);
+    anMasterMasters = masters.items;
     const byMaster = new Map();
     for (const item of events.items) {
       const key = item.ai_master_id ?? "__none__";
       if (!byMaster.has(key)) byMaster.set(key, []);
       byMaster.get(key).push(item);
     }
-    const masterName = (id) => {
-      const found = masters.items.find((m) => m.id === id);
-      // 名字里可能带「· AI Master」后缀（历史演示数据），表头已说明身份，去掉
-      return found ? found.name.replace(/\s*·\s*AI Master\s*$/, "") : null;
-    };
-    const labelFor = (id) => id === "__none__" ? "未归属" : (masterName(id) ?? "未知");
-    const counts = (items) => {
-      const cats = { component: 0, workflow: 0, attribution: 0, version: 0 };
-      for (const item of items) cats[item.category] += 1;
-      return cats;
-    };
-    const oldest = (items) => items.reduce((min, item) => {
-      const at = new Date(item.first_detected_at).getTime();
-      return at < min ? at : min;
-    }, Number.POSITIVE_INFINITY);
     // 堆积多的排前面；未归属行垫底
     const rows = [...byMaster.entries()].sort((a, b) => {
       if ((a[0] === "__none__") !== (b[0] === "__none__")) return a[0] === "__none__" ? 1 : -1;
       return b[1].length - a[1].length;
     });
-    const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
-    $("#anMasterBody").innerHTML = rows.map(([id, items]) => {
-      const cats = counts(items);
+    anMasterBoardRows = rows;
+    renderAnomalyMasterPage();
+    $("#anMasterEmpty").hidden = rows.length > 0;
+  } catch (error) { toast(`按 AI Master 加载失败：${error.message}`, true); }
+}
+
+let anMasterBoardRows = [];
+function renderAnomalyMasterPage() {
+  const pageRows = anMasterBoardPager.slice(anMasterBoardRows);
+  $("#anMasterBody").innerHTML = pageRows.map(([id, items]) => {
+      const cats = countsForMaster(items);
       return `<tr data-an-master-row="${esc(id)}">
-        <td><b>${esc(labelFor(id))}</b></td>
+        <td><b>${esc(masterBoardLabel(id))}</b></td>
         <td><span class="badge ${items.length ? "badge--failed" : ""}">${items.length}</span></td>
         <td class="mono">${cats.component}</td><td class="mono">${cats.workflow}</td>
         <td class="mono">${cats.attribution}</td><td class="mono">${cats.version}</td>
-        <td>${anDuration(new Date(oldest(items)).toISOString())}</td>
+        <td>${anDuration(new Date(oldestForMaster(items)).toISOString())}</td>
         <td><button class="btn btn--small" data-an-master-expand="${esc(id)}">展开明细</button></td>
       </tr>
       <tr class="an-master-detail" data-an-master-detail="${esc(id)}" hidden><td colspan="8"></td></tr>`;
     }).join("");
-    $("#anMasterEmpty").hidden = rows.length > 0;
-  } catch (error) { toast(`按 AI Master 加载失败：${error.message}`, true); }
+  anMasterBoardPager.render();
 }
 
 async function toggleAnomalyMasterDetail(id, cell) {
@@ -3561,8 +3666,8 @@ document.querySelector("#tab-anomaly-admin .an-mode").addEventListener("click", 
   if (anAdminView === "masters") loadAnomalyMasterBoard();
 });
 
-anMasterSelect.addEventListener("change", loadAnomalyEvents);
-anCategorySelect.addEventListener("change", loadAnomalyEvents);
+anMasterSelect.addEventListener("change", () => { anEventPager.reset(); loadAnomalyEvents(); });
+anCategorySelect.addEventListener("change", () => { anEventPager.reset(); loadAnomalyEvents(); });
 $("#anRefresh").addEventListener("click", loadAnomalyModule);
 $("#anEventBody").addEventListener("click", (event) => {
   const detail = event.target.closest("[data-an-detail]"); if (detail) showAnomalyEvent(detail.dataset.anDetail);
