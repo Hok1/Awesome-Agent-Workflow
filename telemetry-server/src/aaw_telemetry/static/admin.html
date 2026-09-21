@@ -451,6 +451,10 @@
       pointer-events: none;
     }
     .an-cond:hover .an-cond-pop, .an-cond:focus-within .an-cond-pop { opacity: 1; visibility: visible; }
+    /* 屏蔽待审：等待管理员处理的中转态，用时间色（橙）区别于问题本身 */
+    .badge--waiting-review { background: rgba(255,122,26,.14); color: #A34D00; }
+    .an-cond-icon--wait { border-color: rgba(255,122,26,.55); color: #A34D00; }
+    .an-cond-icon--wait:hover, .an-cond-icon--wait:focus-visible { border-color: #E07812; color: #A34D00; }
 
     .an-th-help {
       display: inline-flex; align-items: center; justify-content: center;
@@ -3257,11 +3261,11 @@ async function loadAnomalyEvents() {
     }
     const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
     $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
-      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}</div></td>
+      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}${item.archive_request ? (() => { const request = item.archive_request; return `<span class="an-cond"><span class="an-cond-icon an-cond-icon--wait" tabindex="0">?</span><span class="an-cond-pop"><b>屏蔽申请待审</b>：${esc(request.reason)}<br>申请人：${esc(request.requested_by)} · ${fmtShort(request.created_at)}</span></span>`; })() : ""}</div></td>
       <td>${esc(item.user_email || "—")}</td>
       <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
       <td>${anDuration(item.first_detected_at)}</td>
-      <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
+      <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported && !item.archive_request ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}${item.archive_request ? `<span class="badge badge--waiting-review" title="屏蔽申请已提交，等待管理员在屏蔽审核中处理">屏蔽待审</span>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
     </tr>`).join("");
     $("#anEventEmpty").hidden = events.items.length > 0;
     positionAnomalyPops();
@@ -3308,10 +3312,16 @@ function showAnomalyEvent(id) {
   const factsHtml = facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
   const spec = anCatalog.find((entry) => entry.code === item.detector_type);
   const sentence = anomalySentenceHtml(spec, item.rule?.params);
+  const archiveRequest = item.archive_request
+    ? `<div class="an-aside-section">屏蔽申请</div><div class="an-aside-kv"><div class="an-fact"><dt>状态</dt><dd><span class="badge badge--waiting-review">屏蔽待审</span></dd></div><div class="an-fact"><dt>屏蔽理由</dt><dd>${esc(item.archive_request.reason)}</dd></div><div class="an-fact"><dt>申请人</dt><dd>${esc(item.archive_request.requested_by)} · ${fmtShort(item.archive_request.created_at)}</dd></div></div>`
+    : "";
+  const nextHint = item.archive_request
+    ? "屏蔽申请已提交，等待管理员在「屏蔽审核」中处理；审核通过后该异常数据将不再纳入统计。"
+    : (href ? "定位到具体业务内容核实情况，必要时申请屏蔽或反馈问题。" : "核实数据后可申请屏蔽或提交问题反馈。");
   openAnomalyDetail(
     item.title,
-    `<p class="an-aside-name">${esc(spec?.name || item.rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || item.summary)}</p>${sentence ? `<p class="an-sentence">${sentence}</p>` : ""}<div class="an-aside-section">发生了什么</div><div class="an-aside-kv">${factsHtml}</div>`,
-    `<div class="an-detail-section">下一步</div><p class="an-next-hint">${href ? "定位到具体业务内容核实情况，必要时申请屏蔽或反馈问题。" : "核实数据后可申请屏蔽或提交问题反馈。"}</p>${href ? `<div class="toolbar" style="margin:14px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`,
+    `<p class="an-aside-name">${esc(spec?.name || item.rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || item.summary)}</p>${sentence ? `<p class="an-sentence">${sentence}</p>` : ""}<div class="an-aside-section">发生了什么</div><div class="an-aside-kv">${factsHtml}</div>${archiveRequest}`,
+    `<div class="an-detail-section">下一步</div><p class="an-next-hint">${nextHint}</p>${href ? `<div class="toolbar" style="margin:14px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`,
   );
 }
 

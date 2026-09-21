@@ -1591,11 +1591,27 @@ class AnomalyService:
             "disposition": event.disposition,
             "closed_reason": event.closed_reason,
             "archive_supported": bool(rule and rule.allow_archive),
+            "archive_request": self._pending_archive_request(event),
             "first_detected_at": event.first_detected_at,
             "last_detected_at": event.last_detected_at,
             "recovered_at": event.recovered_at,
             "hit_count": event.hit_count,
         }
+
+    def _pending_archive_request(self, event: AnomalyEvent) -> dict[str, Any] | None:
+        """屏蔽待审期间，行内状态与申请信息要一起给出；只有事件停在待审态才查。"""
+        if event.disposition != "archive_pending":
+            return None
+        request = self.session.scalars(
+            select(AnomalyArchiveRequest)
+            .where(
+                AnomalyArchiveRequest.event_id == event.id,
+                AnomalyArchiveRequest.status == "pending",
+            )
+            .order_by(AnomalyArchiveRequest.created_at.desc())
+            .limit(1)
+        ).first()
+        return self._archive_payload(request) if request else None
 
     @staticmethod
     def _archive_payload(request: AnomalyArchiveRequest) -> dict[str, Any]:
