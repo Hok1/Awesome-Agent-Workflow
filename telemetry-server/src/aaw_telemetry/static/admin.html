@@ -322,6 +322,10 @@
     .console mark { background: rgba(75, 63, 228, .6); color: #fff; border-radius: 3px; padding: 0 1px; }
 
     /* ── 异常：沿用管理台卡片和表格，只补充异常领域的少量语义 ── */
+    .an-mode { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 16px; background: rgba(75,63,228,.06); border: 1px solid var(--edge); border-radius: 12px; }
+    .an-mode .btn { border: 0; background: transparent; }
+    .an-mode .btn.is-active { color: #fff; background: var(--iris); box-shadow: var(--sh-iris); }
+    .an-view[hidden] { display: none; }
     .an-summary { display: grid; grid-template-columns: 1.2fr repeat(4,1fr); gap: 12px; margin-bottom: 18px; }
     .an-summary .stone:first-child { color: #fff; background: #20212A; border-color: #20212A; }
     .an-summary .stone:first-child small { color: #C7C9D2; }
@@ -1009,20 +1013,40 @@
       <button class="btn" id="anAdminRefresh">刷新</button>
     </div>
 
-    <div class="card">
-      <h2>规则管理 <span class="count">检测类型由系统统一提供，管理员只需配置并启停</span></h2>
-      <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span></div>
-      <div class="table-wrap" style="overflow-x:auto;">
-        <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
+    <div class="an-mode" role="tablist" aria-label="异常管理功能">
+      <button class="btn is-active" data-an-admin-view="rules">规则管理</button>
+      <button class="btn" data-an-admin-view="reviews">屏蔽审核</button>
+      <button class="btn" data-an-admin-view="masters">按 AI Master</button>
+    </div>
+
+    <div class="an-view" id="an-admin-view-rules">
+      <div class="card">
+        <h2>规则管理 <span class="count">检测类型由系统统一提供，管理员只需配置并启停</span></h2>
+        <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span></div>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <h2>屏蔽审核</h2>
-      <div class="table-wrap" style="overflow-x:auto;">
-        <table><thead><tr><th>申请</th><th>数据对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
+    <div class="an-view" id="an-admin-view-reviews" hidden>
+      <div class="card">
+        <h2>屏蔽审核</h2>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table><thead><tr><th>申请</th><th>数据对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
+        </div>
+        <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>AI Master 提交的异常数据屏蔽申请会出现在这里。</div>
       </div>
-      <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>AI Master 提交的异常数据屏蔽申请会出现在这里。</div>
+    </div>
+
+    <div class="an-view" id="an-admin-view-masters" hidden>
+      <div class="card">
+        <h2>按 AI Master <span class="count">谁名下堆积着未处理的异常，一览即知</span></h2>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table><thead><tr><th>AI Master</th><th>存在异常</th><th>组件统计</th><th>工作流</th><th>归因处理</th><th>版本使用</th><th>最早持续</th><th>操作</th></tr></thead><tbody id="anMasterBody"></tbody></table>
+        </div>
+        <div class="an-empty" id="anMasterEmpty" hidden><strong>当前没有任何异常</strong>所有 AI Master 名下都没有命中规则的异常。</div>
+      </div>
     </div>
   </section>
 
@@ -2875,6 +2899,7 @@ let anRules = [];
 let anEvents = new Map();
 let anEditingRule = null;
 let anPreviewFingerprint = "";
+let anAdminView = "rules";
 
 const AN_CATEGORY_LABELS = { component: "组件统计", workflow: "工作流", attribution: "归因处理", version: "版本使用" };
 const AN_SCOPE_LABELS = { platform: "全平台", component: "指定组件", repository: "指定仓库" };
@@ -2948,7 +2973,9 @@ async function loadAnomalyModule() {
 
 async function loadAnomalyAdminModule() {
   if (!await ensureAnomalyAdmin()) return;
-  await Promise.all([loadAnomalyRules(), loadAnomalyReviews()]);
+  if (anAdminView === "rules") await loadAnomalyRules();
+  if (anAdminView === "reviews") await loadAnomalyReviews();
+  if (anAdminView === "masters") await loadAnomalyMasterBoard();
 }
 
 /* 可搜索单选下拉：与门户采纳看板同款交互（触发按钮 + 搜索浮层），替代原生 select。
@@ -3436,6 +3463,104 @@ async function reviewAnomalyArchive(id, approved) {
 }
 
 $("#anAdminRefresh").addEventListener("click", loadAnomalyAdminModule);
+
+/* 「按 AI Master」：全量事件按归属聚合，谁名下堆积着未处理的问题一目了然。
+   事件与 AI Master 分别取自 anomalies/events?admin_view 与 ai-masters 列表。 */
+async function loadAnomalyMasterBoard() {
+  try {
+    await loadAnomalyCatalog();  // 展开明细要用判定句模板
+    const [events, masters] = await Promise.all([
+      api("/api/v1/anomalies/events?admin_view=true"),
+      api("/api/v1/ai-masters"),
+    ]);
+    const byMaster = new Map();
+    for (const item of events.items) {
+      const key = item.ai_master_id ?? "__none__";
+      if (!byMaster.has(key)) byMaster.set(key, []);
+      byMaster.get(key).push(item);
+    }
+    const masterName = (id) => {
+      const found = masters.items.find((m) => m.id === id);
+      return found ? found.name : null;
+    };
+    const labelFor = (id) => id === "__none__" ? "未归属（系统级 / 未认领仓库）" : (masterName(id) ?? "未知 AI Master");
+    const counts = (items) => {
+      const cats = { component: 0, workflow: 0, attribution: 0, version: 0 };
+      for (const item of items) cats[item.category] += 1;
+      return cats;
+    };
+    const oldest = (items) => items.reduce((min, item) => {
+      const at = new Date(item.first_detected_at).getTime();
+      return at < min ? at : min;
+    }, Number.POSITIVE_INFINITY);
+    // 堆积多的排前面；未归属行垫底
+    const rows = [...byMaster.entries()].sort((a, b) => {
+      if ((a[0] === "__none__") !== (b[0] === "__none__")) return a[0] === "__none__" ? 1 : -1;
+      return b[1].length - a[1].length;
+    });
+    const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
+    $("#anMasterBody").innerHTML = rows.map(([id, items]) => {
+      const cats = counts(items);
+      return `<tr data-an-master-row="${esc(id)}">
+        <td><b>${esc(labelFor(id))}</b></td>
+        <td><span class="badge ${items.length ? "badge--failed" : ""}">${items.length}</span></td>
+        <td class="mono">${cats.component}</td><td class="mono">${cats.workflow}</td>
+        <td class="mono">${cats.attribution}</td><td class="mono">${cats.version}</td>
+        <td>${anDuration(new Date(oldest(items)).toISOString())}</td>
+        <td><button class="btn btn--small" data-an-master-expand="${esc(id)}">展开明细</button></td>
+      </tr>
+      <tr class="an-master-detail" data-an-master-detail="${esc(id)}" hidden><td colspan="8"></td></tr>`;
+    }).join("");
+    $("#anMasterEmpty").hidden = rows.length > 0;
+  } catch (error) { toast(`按 AI Master 加载失败：${error.message}`, true); }
+}
+
+async function toggleAnomalyMasterDetail(id, cell) {
+  const filled = cell.dataset.filled === "1";
+  if (!filled) {
+    const events = await api("/api/v1/anomalies/events?admin_view=true");
+    const items = events.items.filter((item) => (item.ai_master_id ?? "__none__") === id);
+    const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
+    cell.innerHTML = `<div class="table-wrap" style="overflow-x:auto;"><table class="an-event-table"><thead><tr><th>问题</th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody>${
+      items.map((item) => `<tr>
+        <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span></div></td>
+        <td>${esc(item.user_email || "—")}</td>
+        <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
+        <td>${anDuration(item.first_detected_at)}</td>
+        <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button></div></td>
+      </tr>`).join("")
+    }</tbody></table></div>`;
+    cell.dataset.filled = "1";
+    // 明细行的详情按钮走 anEvents 缓存；缓存里没有就补一份
+    for (const item of items) if (!anEvents.has(item.id)) anEvents.set(item.id, item);
+  }
+  const row = cell.closest("tr");
+  row.hidden = !row.hidden;
+  const button = document.querySelector(`[data-an-master-expand="${CSS.escape(id)}"]`);
+  if (button) button.textContent = row.hidden ? "展开明细" : "收起";
+}
+
+$("#anMasterBody").addEventListener("click", async (event) => {
+  const expand = event.target.closest("[data-an-master-expand]");
+  if (expand) {
+    const cell = document.querySelector(`tr[data-an-master-detail="${CSS.escape(expand.dataset.anMasterExpand)}"] > td`);
+    if (cell) await toggleAnomalyMasterDetail(expand.dataset.anMasterExpand, cell);
+    return;
+  }
+  const detail = event.target.closest("[data-an-detail]");
+  if (detail) showAnomalyEvent(detail.dataset.anDetail);
+});
+
+document.querySelector("#tab-anomaly-admin .an-mode").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-an-admin-view]");
+  if (!button) return;
+  anAdminView = button.dataset.anAdminView;
+  document.querySelectorAll("[data-an-admin-view]").forEach((item) => item.classList.toggle("is-active", item === button));
+  document.querySelectorAll("#tab-anomaly-admin .an-view").forEach((view) => { view.hidden = view.id !== `an-admin-view-${anAdminView}`; });
+  if (anAdminView === "rules") loadAnomalyRules();
+  if (anAdminView === "reviews") loadAnomalyReviews();
+  if (anAdminView === "masters") loadAnomalyMasterBoard();
+});
 
 anMasterSelect.addEventListener("change", loadAnomalyEvents);
 anCategorySelect.addEventListener("change", loadAnomalyEvents);
