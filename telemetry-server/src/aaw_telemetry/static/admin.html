@@ -359,6 +359,7 @@
     .an-sentence { margin: 0 0 18px; color: var(--ink); font-size: 13.5px; line-height: 2; }
     .an-sentence-mini { margin-top: 4px; line-height: 1.9; color: var(--ink-soft); }
     .an-sentence-mini .an-tune { display: inline-block; padding: 0 5px; border-radius: 5px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .an-event-table th { white-space: nowrap; }
     .an-th-help {
       display: inline-flex; align-items: center; justify-content: center;
       width: 15px; height: 15px; margin-left: 4px; vertical-align: 1px;
@@ -916,7 +917,7 @@
           </label>
         </div>
         <div class="table-wrap" style="overflow-x:auto;">
-          <table><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
+          <table class="an-event-table"><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
         </div>
         <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
       </div>
