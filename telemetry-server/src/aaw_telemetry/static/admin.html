@@ -442,6 +442,11 @@
     .an-wide-main { padding: 20px 26px 24px; }
     .an-wide-aside .an-aside-name { margin: 0 0 6px; font: 700 16px var(--disp); }
     .an-wide-aside .an-aside-desc { margin: 0 0 16px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
+    /* 判定一句话：可调参数带底色突出，点开编辑时同一句话在表单里逐项对应 */
+    .an-sentence { margin: 0 0 18px; color: var(--ink); font-size: 13.5px; line-height: 2; }
+    .an-sentence .an-tune { display: inline-block; padding: 1px 7px; border-radius: 6px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .an-sentence-note { margin: -12px 0 18px; color: var(--ink-mute); font-size: 11.5px; }
+    .an-next-hint { margin: 0 0 4px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.7; }
     .an-aside-section { margin: 14px 0 6px; font: 700 12px var(--disp); color: var(--ink-mute); letter-spacing: .04em; }
     .an-aside-kv { display: grid; gap: 9px; }
     .an-aside-kv .an-fact { padding: 9px 11px; }
@@ -3780,16 +3785,14 @@ function showAnomalyEvent(id) {
   const addFact = (label, value) => { if (value !== null && value !== undefined && value !== "") facts.push([label, value]); };
   addFact("影响对象", item.user_email || item.repository || item.component_id || "系统级");
   if (item.user_email && item.repository) addFact("所在仓库", item.repository);
-  addFact("异常值", item.actual_value || "—");
-  addFact("规则阈值", item.threshold_value || "—");
-  addFact("首次发现", fmtShort(item.first_detected_at));
-  addFact("最近命中", `${fmtShort(item.last_detected_at)} · 累计 ${item.hit_count} 次`);
+  addFact("当前数值", item.actual_value || "—");
+  addFact("判定阈值", item.threshold_value || "—");
   const evidenceLabels = {
     last_reported_at: "最后一次上报", current_version: "当前版本",
-    workflow_id: "工作流 ID", status: "当前状态", last_activity_at: "最后活动",
-    step_name: "异常步骤", step_status: "步骤状态", completed_at: "完成时间",
-    dev_run_id: "开发记录 ID", retry_count: "重试次数", quality_flags: "质量标记",
-    updated_at: "状态更新时间", recent_count: "近 24 小时上报", baseline_daily: "历史日均上报",
+    status: "当前状态", last_activity_at: "最后活动",
+    step_name: "异常步骤", step_status: "步骤状态",
+    retry_count: "重试次数", quality_flags: "质量标记",
+    recent_count: "近 24 小时上报", baseline_daily: "历史日均上报",
     count: "窗口内记录数",
   };
   for (const [key, label] of Object.entries(evidenceLabels)) {
@@ -3801,10 +3804,11 @@ function showAnomalyEvent(id) {
   const targetLabels = { workflows: "查看工作流详情", attribution: "查看归因处理详情", versions: "查看版本使用详情", components: "查看组件详情", registry: "查看注册表详情" };
   const factsHtml = facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
   const spec = anCatalog.find((entry) => entry.code === item.detector_type);
+  const sentence = anomalySentenceHtml(spec, item.rule?.params);
   openAnomalyDetail(
     item.title,
-    `<p class="an-aside-name">${esc(item.rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || item.summary)}</p><div class="an-aside-section">发生了什么</div><div class="an-aside-kv">${factsHtml}</div>`,
-    `<dl class="kv"><dt>命中规则</dt><dd>${esc(item.rule.name)} · 版本 ${item.rule_version}</dd><dt>发生周期</dt><dd>第 ${item.occurrence} 次发生</dd><dt>当前处置</dt><dd>${item.disposition === "open" ? "开放中" : "处理中"}</dd></dl>${href ? `<div class="toolbar" style="margin:18px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`,
+    `<p class="an-aside-name">${esc(spec?.name || item.rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || item.summary)}</p>${sentence ? `<p class="an-sentence">${sentence}</p>` : ""}<div class="an-aside-section">发生了什么</div><div class="an-aside-kv">${factsHtml}</div>`,
+    `<div class="an-detail-section">下一步</div><p class="an-next-hint">${href ? "定位到具体业务内容核实情况，必要时申请屏蔽或反馈问题。" : "核实数据后可申请屏蔽或提交问题反馈。"}</p>${href ? `<div class="toolbar" style="margin:14px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`,
   );
 }
 
@@ -3854,6 +3858,20 @@ function anomalyParamSummary(params) {
   return shown.join(" · ") + (entries.length > 2 ? ` · 另 ${entries.length - 2} 项` : "");
 }
 
+// 把检测器的一句话模板渲染成 HTML：{参数名} 替换为带底色突出的当前值，
+// 管理员一眼看出“这条规则在检测什么、哪些数字可以调”。
+function anomalySentenceHtml(spec, params) {
+  if (!spec?.sentence) return "";
+  return spec.sentence.replace(/\{(\w+)\}/g, (_, key) => {
+    const meta = AN_PARAM_META[key] || {};
+    const value = params?.[key] ?? spec.defaults?.[key];
+    if (value === undefined || value === null) return "";
+    const shown = Array.isArray(value) ? (value.length ? value.join("、") : "无")
+      : (meta.scale ? Number(value) * meta.scale : value);
+    return `<span class="an-tune">${esc(String(shown))}${esc(meta.unit || "")}</span>`;
+  });
+}
+
 function anomalyScopeText(rule) {
   return rule.scope_type === "platform"
     ? AN_SCOPE_LABELS.platform
@@ -3872,9 +3890,10 @@ async function loadAnomalyRules() {
     $("#anRuleList").innerHTML = anRules.map((item) => {
       const spec = anCatalog.find((type) => type.code === item.detector_type);
       const isEnabled = item.status === "enabled";
+      const sentence = anomalySentenceHtml(spec, item.params);
       return `<tr>
-        <td><div class="an-problem">${esc(spec?.name || item.name)}</div><div class="an-sub">${esc(AN_CATEGORY_LABELS[item.category] || item.category)} · 最近命中 ${item.last_match_count ?? "尚未检测"}</div></td>
-        <td><div style="max-width:360px;">${esc(anomalyParamSummary(item.params))}</div></td>
+        <td><div class="an-problem">${esc(spec?.name || item.name)}</div><div class="an-sub">${esc(AN_CATEGORY_LABELS[item.category] || item.category)}${item.last_match_count ? ` · 当前命中 ${item.last_match_count}` : ""}</div></td>
+        <td><div class="an-sentence" style="margin:0; max-width:420px;">${sentence || esc(anomalyParamSummary(item.params))}</div></td>
         <td>${esc(anomalyScopeText(item))}</td>
         <td>${item.allow_archive ? '<span class="badge badge--finalized_match">允许</span>' : '<span class="muted">不允许</span>'}</td>
         <td><span class="an-rule-status ${isEnabled ? "is-enabled" : ""}">${isEnabled ? "检测中" : "已停用"}</span></td>
@@ -3906,14 +3925,9 @@ function renderAnomalyRuleAside(rule, spec) {
     ["当前状态", rule.status === "enabled" ? "正在检测" : "已停用"],
     ["生效范围", anomalyScopeText(rule)],
     ["允许申请屏蔽", rule.allow_archive ? "允许" : "不允许"],
-    ["最近一次检测", rule.last_evaluated_at ? fmtShort(rule.last_evaluated_at) : "尚未检测"],
   ];
-  const paramsHtml = Object.entries(rule.params || {}).map(([key, value]) => {
-    const meta = AN_PARAM_META[key] || { label: key };
-    const text = anomalyParamText(key, value);
-    return `<div class="an-fact"><dt>${esc(meta.label)}</dt><dd>${esc(text.split("：").slice(1).join("：") || text)}</dd></div>`;
-  }).join("");
-  $("#anRuleAside").innerHTML = `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "配置这类异常的判断条件和处理权限。")}</p><div class="an-aside-section">当前判定条件</div><div class="an-aside-kv">${paramsHtml || '<p class="muted">暂无参数</p>'}</div><div class="an-aside-section">当前配置</div><div class="an-aside-kv">${facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</div>`;
+  const sentence = anomalySentenceHtml(spec, rule.params);
+  $("#anRuleAside").innerHTML = `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "配置这类异常的判断条件和处理权限。")}</p>${sentence ? `<p class="an-sentence">${sentence}</p><p class="an-sentence-note">带底色的数值是可调整的判定参数，在右侧表单中修改。</p>` : ""}<div class="an-aside-section">当前配置</div><div class="an-aside-kv">${facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</div>`;
 }
 
 function resetAnomalyRuleForm(rule) {
@@ -3968,10 +3982,11 @@ async function showAnomalyRule(id) {
       ["允许申请屏蔽", rule.allow_archive ? "允许" : "不允许"],
       ["最近一次检测", rule.last_evaluated_at ? fmtShort(rule.last_evaluated_at) : "尚未检测"],
     ].map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+    const sentence = anomalySentenceHtml(spec, rule.params);
     openAnomalyDetail(
       spec?.name || rule.name,
-      `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "该规则用于发现需要关注的异常情况。")}</p><div class="an-aside-section">当前配置</div><div class="an-aside-kv">${configFacts}</div>`,
-      `<div class="an-detail-section">判定条件</div><div class="an-facts">${params}</div><div class="an-detail-section">变更记录</div>${auditsHtml}`,
+      `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "该规则用于发现需要关注的异常情况。")}</p>${sentence ? `<p class="an-sentence">${sentence}</p><p class="an-sentence-note">带底色的数值是可调整的判定参数。</p>` : ""}<div class="an-aside-section">当前配置</div><div class="an-aside-kv">${configFacts}</div>`,
+      `<div class="an-detail-section">可调整的判定参数</div><div class="an-facts">${params}</div><div class="an-detail-section">变更记录</div>${auditsHtml}`,
     );
   } catch (error) { toast(`详情加载失败：${error.message}`, true); }
 }

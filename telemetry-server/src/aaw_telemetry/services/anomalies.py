@@ -45,6 +45,9 @@ class DetectorSpec:
     description: str
     defaults: dict[str, Any]
     enabled: bool = True
+    # 面向管理员的一句话判定说明；{参数名} 会被替换为带底色的可调值，
+    # 让“这条规则在检测什么、哪个数字可以调”一眼可读。
+    sentence: str = ""
 
 
 DETECTOR_SPECS: dict[str, DetectorSpec] = {
@@ -56,6 +59,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "数据上报中断",
             "近期活跃仓库长时间没有遥测上报",
             {"max_idle_hours": 72, "active_window_days": 14},
+            sentence="近 {active_window_days} 内活跃过的仓库，已连续 {max_idle_hours} 没有任何上报",
         ),
         DetectorSpec(
             "core_stats_shift",
@@ -63,6 +67,10 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "核心统计突变",
             "最近上报量明显偏离自身历史基线",
             {"baseline_days": 28, "deviation_ratio": 0.5, "min_sample": 10},
+            sentence=(
+                "最近每日上报量偏离过去 {baseline_days} 的基线达 {deviation_ratio}，"
+                "且历史样本不少于 {min_sample}"
+            ),
         ),
         DetectorSpec(
             "unassigned_data",
@@ -72,11 +80,20 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             {"window_hours": 24, "min_count": 3},
         ),
         DetectorSpec(
+            "unassigned_data",
+            "component",
+            "数据无法归属",
+            "上报仓库不能匹配组件登记关系",
+            {"window_hours": 24, "min_count": 3},
+            sentence="近 {window_hours} 内同一仓库累计有 {min_count} 上报无法匹配到已登记组件",
+        ),
+        DetectorSpec(
             "workflow_stalled",
             "workflow",
             "工作流停滞",
             "进行中的工作流长时间没有活动",
             {"max_idle_hours": 24},
+            sentence="进行中的工作流已连续 {max_idle_hours} 没有任何步骤、状态或确认更新",
         ),
         DetectorSpec(
             "workflow_failed",
@@ -84,6 +101,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "步骤执行失败",
             "工作流步骤失败或阻塞且未及时恢复",
             {"grace_minutes": 30, "statuses": ["failed", "blocked"]},
+            sentence="步骤进入 {statuses} 状态后 {grace_minutes} 仍未恢复",
         ),
         DetectorSpec(
             "workflow_inconsistent",
@@ -91,6 +109,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "状态前后不一致",
             "工作流、步骤与完成时间相互矛盾",
             {"grace_minutes": 10},
+            sentence="工作流、步骤与完成时间相互矛盾的状态持续超过 {grace_minutes}",
         ),
         DetectorSpec(
             "manual_gate_timeout",
@@ -98,6 +117,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "人工门禁超时",
             "人工确认步骤等待时间过长",
             {"max_wait_hours": 24, "step_types": ["user-confirm"]},
+            sentence="{step_types} 类人工确认步骤等待超过 {max_wait_hours}",
         ),
         DetectorSpec(
             "patch_missing",
@@ -105,6 +125,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "补丁缺失",
             "开发产出结束后没有收到可归因补丁",
             {"wait_hours": 24},
+            sentence="开发产出结束后 {wait_hours} 内仍未收到可归因补丁",
         ),
         DetectorSpec(
             "attribution_stuck",
@@ -112,6 +133,10 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "归因任务卡住",
             "归因任务在中间状态停留过久",
             {"pending_hours": 2, "running_minutes": 30, "retry_hours": 1},
+            sentence=(
+                "归因任务排队超过 {pending_hours}、执行超过 {running_minutes}，"
+                "或等待重试超过 {retry_hours}"
+            ),
         ),
         DetectorSpec(
             "attribution_failed",
@@ -119,6 +144,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "归因执行失败",
             "归因任务重试后仍然失败",
             {"min_retry_count": 3},
+            sentence="归因任务失败重试达到 {min_retry_count} 仍未成功",
         ),
         DetectorSpec(
             "attribution_quality",
@@ -133,6 +159,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
                     "admin_retry_expired",
                 ]
             },
+            sentence="归因结果带有除 {ignored_flags} 之外的质量标记",
         ),
         DetectorSpec(
             "old_version_active",
@@ -140,6 +167,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "旧版本持续活跃",
             "人员持续使用落后于当前正式版本的版本",
             {"active_days": 7, "lag_positions": 1},
+            sentence="近 {active_days} 仍在使用、且落后当前正式版本 {lag_positions} 的旧版本",
         ),
         DetectorSpec(
             "non_release_version",
@@ -147,6 +175,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "使用非发布版本",
             "正式使用者持续上报未登记版本",
             {"window_hours": 24, "allowlist": []},
+            sentence="持续 {window_hours} 上报非发布版本，且不在允许清单（{allowlist}）内",
         ),
         DetectorSpec(
             "version_rollback",
@@ -154,6 +183,7 @@ DETECTOR_SPECS: dict[str, DetectorSpec] = {
             "版本发生回退",
             "人员从较新正式版本持续回退到旧版本",
             {"window_hours": 24, "confirm_count": 2},
+            sentence="观察 {window_hours} 内出现 {confirm_count} 从新版本回退到旧版本",
         ),
     )
 }
@@ -915,6 +945,7 @@ class AnomalyService:
                     "category": spec.category,
                     "name": spec.name,
                     "description": spec.description,
+                    "sentence": spec.sentence,
                     "defaults": spec.defaults,
                     "enabled": spec.enabled,
                 }
