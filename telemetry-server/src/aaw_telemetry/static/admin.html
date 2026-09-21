@@ -906,7 +906,7 @@
           </label>
         </div>
         <div class="table-wrap" style="overflow-x:auto;">
-          <table><thead><tr><th>谁</th><th>哪个仓库</th><th>什么问题</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
+          <table><thead><tr><th>问题</th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
         </div>
         <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
       </div>
@@ -2932,9 +2932,9 @@ async function loadAnomalyEvents() {
     }
     const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
     $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
+      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div><div class="an-sub">${esc(item.summary)}</div></td>
       <td>${esc(item.user_email || "—")}</td>
       <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
-      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div><div class="an-sub">${esc(item.summary)}</div></td>
       <td>${anDuration(item.first_detected_at)}</td>
       <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
     </tr>`).join("");
