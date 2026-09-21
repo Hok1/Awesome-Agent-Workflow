@@ -361,7 +361,8 @@ def test_version_roster_who_is_on_old_versions(client):
     # dave: only reported long ago — outside the window, must not appear
     _version(client, email="dave@x.com", name="Dave", version="0.1.0", days_ago=60, index=8)
 
-    roster = client.get("/api/v1/admin/versions/roster").json()
+    # 窗口默认不限；显式传 30 天验证窗口排除逻辑
+    roster = client.get("/api/v1/admin/versions/roster?window_days=30").json()
     # No release dir configured → baseline falls back to the highest semantic
     # version visible in the data.
     assert roster["latest_version"] == "2.3.2"

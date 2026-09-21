@@ -31,7 +31,7 @@ def any_like(column, raw: str | None):
 @dataclass
 class Filters:
     workflow_kind: str
-    from_date: date
+    from_date: date | None
     to_date: date
     repositories: list[str]
     user_names: list[str]
@@ -41,7 +41,9 @@ class Filters:
 
     @property
     def start(self) -> datetime:
-        return datetime.combine(self.from_date, time.min, tzinfo=UTC)
+        # from_date 为 None 表示不限起点：用 datetime.min 下界等价于不加过滤
+        base = self.from_date if self.from_date is not None else date.min
+        return datetime.combine(base, time.min, tzinfo=UTC)
 
     @property
     def end_exclusive(self) -> datetime:
@@ -60,10 +62,11 @@ def make_filters(
 ) -> Filters:
     today = datetime.now(UTC).date()
     end = to_date or today
-    start = from_date or end - timedelta(days=29)
-    if start > end:
+    # from 不传 = 不限起点（全量口径）；to 不传 = 到今天为止
+    start = from_date
+    if start is not None and start > end:
         raise ApiError(400, "INVALID_FILTER", "from must not be later than to")
-    if (end - start).days > 3660:
+    if start is not None and (end - start).days > 3660:
         raise ApiError(400, "INVALID_FILTER", "date range is too large")
     return Filters(
         workflow_kind,
@@ -491,7 +494,20 @@ class QueryService:
                         buckets[key]["mr_commit_lines_complete"] = False
                     else:
                         buckets[key]["mr_commit_lines"] += attribution.mr_commit_lines
-        cursor = _bucket_date(filters.from_date, granularity)
+        # trends 要按日/周铺桶，必须有一个具体起点：不限（from=None）时
+        # 用窗口内最早的工作流活动日；没有任何数据则只铺终点一个空点。
+        start_date = filters.from_date
+        if start_date is None:
+            first_activity = self.session.scalar(
+                select(func.min(WorkflowRun.last_activity_at)).where(
+                    WorkflowRun.workflow_kind == filters.workflow_kind,
+                    WorkflowRun.last_activity_at < filters.end_exclusive,
+                )
+            )
+            start_date = (
+                _aware(first_activity).date() if first_activity else filters.to_date
+            )
+        cursor = _bucket_date(start_date, granularity)
         end = _bucket_date(filters.to_date, granularity)
         increment = timedelta(days=1 if granularity == "day" else 7)
         points = []

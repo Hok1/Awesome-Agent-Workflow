@@ -28,7 +28,7 @@ from ..services.log_viewer import LOG_FILES, MAX_LINES, describe_files, read_tai
 from ..services.owner_overview import OwnerOverviewService
 from ..services.people import PeopleService
 from ..services.registry import RegistryService
-from ..services.version_ops import DEFAULT_WINDOW_DAYS, VersionOpsService
+from ..services.version_ops import VersionOpsService
 from ..services.workflow_admin import WorkflowAdminService
 
 logger = logging.getLogger("aaw_telemetry.admin")
@@ -173,7 +173,7 @@ def build_admin_router(
     @router.get("/people", summary="责任人下的人员使用情况（到人）")
     def people(
         repository: Annotated[list[str] | None, Query()] = None,
-        window_days: Annotated[int, Query(ge=1, le=365)] = 30,
+        window_days: Annotated[int, Query(ge=0, le=365)] = 0,
         session: Session = Depends(session_dependency),
     ):
         """按人聚合产出/采纳/版本；带 repository 时只看这批仓库上的人（责任人 scope）。"""
@@ -589,14 +589,14 @@ def build_admin_router(
 
     @router.get("/versions/roster", summary="旧版本使用名单")
     def versions_roster(
-        window_days: Annotated[int, Query(ge=1, le=365)] = DEFAULT_WINDOW_DAYS,
+        window_days: Annotated[int, Query(ge=0, le=365)] = 0,
         session: Session = Depends(session_dependency),
     ):
         return VersionOpsService(session, settings).roster(window_days)
 
     @router.get("/versions/distribution", summary="版本分布")
     def versions_distribution(
-        window_days: Annotated[int, Query(ge=1, le=365)] = DEFAULT_WINDOW_DAYS,
+        window_days: Annotated[int, Query(ge=0, le=365)] = 0,
         session: Session = Depends(session_dependency),
     ):
         return VersionOpsService(session, settings).distribution(window_days)

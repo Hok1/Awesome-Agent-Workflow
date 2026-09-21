@@ -92,17 +92,18 @@ class PeopleService:
         self, window: Filters, window_days: int
     ) -> tuple[dict[str, set[str]], dict[str, dict]]:
         """窗口内上报过的人 → 其仓库集合与最近一次上报信息。"""
-        cutoff = datetime.now(UTC) - timedelta(days=window_days)
         statement = select(
             TelemetryMessage.user_email,
             TelemetryMessage.user_name,
             TelemetryMessage.repository,
             TelemetryMessage.aaw_version,
             TelemetryMessage.client_updated_at,
-        ).where(
-            TelemetryMessage.workflow_kind == window.workflow_kind,
-            TelemetryMessage.client_updated_at >= cutoff,
-        )
+        ).where(TelemetryMessage.workflow_kind == window.workflow_kind)
+        if window_days > 0:  # 0 = 不限，取全部历史
+            cutoff = datetime.now(UTC) - timedelta(days=window_days)
+            statement = statement.where(
+                TelemetryMessage.client_updated_at >= cutoff
+            )
         if window.repositories:
             statement = statement.where(
                 TelemetryMessage.repository.in_(window.repositories)

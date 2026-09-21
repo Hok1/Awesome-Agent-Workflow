@@ -89,7 +89,6 @@ class VersionOpsService:
         return release_version, ladder
 
     def _window_rows(self, window_days: int, repositories: list[str] | None = None):
-        cutoff = datetime.now(UTC) - timedelta(days=window_days)
         statement = (
             select(
                 TelemetryMessage.user_email,
@@ -97,12 +96,12 @@ class VersionOpsService:
                 TelemetryMessage.aaw_version,
                 TelemetryMessage.client_updated_at,
             )
-            .where(
-                TelemetryMessage.workflow_kind == "aaw",
-                TelemetryMessage.client_updated_at >= cutoff,
-            )
+            .where(TelemetryMessage.workflow_kind == "aaw")
             .order_by(TelemetryMessage.client_updated_at.asc())
         )
+        if window_days > 0:  # 0 = 不限，取全部历史
+            cutoff = datetime.now(UTC) - timedelta(days=window_days)
+            statement = statement.where(TelemetryMessage.client_updated_at >= cutoff)
         if repositories:
             statement = statement.where(
                 TelemetryMessage.repository.in_(list(repositories))
@@ -227,19 +226,18 @@ class VersionOpsService:
 
     def distribution(self, window_days: int = DEFAULT_WINDOW_DAYS) -> dict:
         latest, _ = self._release_baseline()
-        cutoff = datetime.now(UTC) - timedelta(days=window_days)
-        rows = self.session.execute(
+        statement = (
             select(
                 TelemetryMessage.aaw_version,
                 func.count(func.distinct(TelemetryMessage.user_email)),
                 func.count(),
             )
-            .where(
-                TelemetryMessage.workflow_kind == "aaw",
-                TelemetryMessage.client_updated_at >= cutoff,
-            )
-            .group_by(TelemetryMessage.aaw_version)
-        ).all()
+            .where(TelemetryMessage.workflow_kind == "aaw")
+        )
+        if window_days > 0:  # 0 = 不限，取全部历史
+            cutoff = datetime.now(UTC) - timedelta(days=window_days)
+            statement = statement.where(TelemetryMessage.client_updated_at >= cutoff)
+        rows = self.session.execute(statement.group_by(TelemetryMessage.aaw_version)).all()
         items = [
             {
                 "version": version,
