@@ -426,7 +426,6 @@
     .an-rule-status.is-enabled::before { background: #23A66F; box-shadow: 0 0 0 3px rgba(35,166,111,.12); }
     .an-rule-intro { margin: -2px 0 16px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: 10px; background: #FAFAFD; }
     .an-rule-intro strong { display: block; margin-bottom: 4px; font-size: 15px; }
-    .an-rule-params { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; grid-column: 1 / -1; }
     .an-field-note { color: var(--ink-mute); font-size: 11.5px; line-height: 1.4; }
     .an-unit-input { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; }
     .an-unit-input span { color: var(--ink-mute); font-size: 12px; }
@@ -435,8 +434,21 @@
     .an-empty { padding: 38px 16px; text-align: center; color: var(--ink-mute); }
     .an-empty[hidden] { display: none; }
     .an-empty strong { display: block; margin-bottom: 4px; color: var(--ink); }
+    /* 大弹窗：左侧固定「这是什么 / 判定条件」解释区，右侧编辑表单；详情复用同一骨架 */
+    .an-wide-modal { width: min(1040px, 96vw) !important; max-height: 90vh; display: flex; flex-direction: column; padding: 0 !important; overflow: hidden; }
+    .an-wide-modal > h2 { margin: 0; padding: 20px 26px 16px; font-family: var(--disp); font-size: 17px; border-bottom: 1px solid var(--edge); }
+    .an-wide-body { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; min-height: 0; flex: 1; overflow: auto; }
+    .an-wide-aside { padding: 20px 22px 24px; border-right: 1px solid var(--edge); background: #FAFAFD; }
+    .an-wide-main { padding: 20px 26px 24px; }
+    .an-wide-aside .an-aside-name { margin: 0 0 6px; font: 700 16px var(--disp); }
+    .an-wide-aside .an-aside-desc { margin: 0 0 16px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
+    .an-aside-section { margin: 14px 0 6px; font: 700 12px var(--disp); color: var(--ink-mute); letter-spacing: .04em; }
+    .an-aside-kv { display: grid; gap: 9px; }
+    .an-aside-kv .an-fact { padding: 9px 11px; }
+    .an-wide-modal .toolbar { margin: 0; padding: 14px 26px; border-top: 1px solid var(--edge); justify-content: flex-end; background: var(--paper-2); }
+    .an-wide-modal .an-form { gap: 14px 16px; }
+    .an-rule-params { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; grid-column: 1 / -1; }
     .an-detail-modal { width: min(720px, 94vw); max-height: 88vh; overflow: auto; }
-    .an-detail-lead { margin: 0 0 16px; padding: 12px 14px; color: var(--ink-soft); background: rgba(75,63,228,.05); border-left: 3px solid var(--iris); border-radius: 0 10px 10px 0; }
     .an-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 16px; }
     .an-fact { min-width: 0; padding: 11px 12px; border: 1px solid var(--edge); border-radius: 10px; }
     .an-fact dt { margin-bottom: 4px; color: var(--ink-mute); font-size: 12px; font-weight: 600; }
@@ -450,6 +462,7 @@
     .an-field select, .an-field input { width: 100%; }
     .an-audit { padding: 10px 0; border-bottom: 1px solid var(--edge); }
     @media (max-width: 900px) { .an-summary { grid-template-columns: 1fr 1fr; } .an-summary .stone:first-child { grid-column: 1/-1; } }
+    @media (max-width: 900px) { .an-wide-body { grid-template-columns: 1fr; } .an-wide-aside { border-right: 0; border-bottom: 1px solid var(--edge); } }
     @media (max-width: 620px) { .an-form, .an-facts, .an-rule-params { grid-template-columns: 1fr; } .an-field.wide { grid-column: auto; } }
 
     /* ── Patch viewer（补丁文件查看器弹窗）── */
@@ -1190,30 +1203,34 @@
 </div>
 
 <div class="modal-mask" id="anRuleMask" hidden>
-  <div class="modal an-detail-modal" role="dialog" aria-modal="true" aria-labelledby="anRuleTitle">
+  <div class="modal an-wide-modal" role="dialog" aria-modal="true" aria-labelledby="anRuleTitle">
     <h2 id="anRuleTitle">编辑检测规则</h2>
-    <div class="an-rule-intro" id="anRuleSummary"></div>
-    <input id="anRuleName" type="hidden"><input id="anRuleDetector" type="hidden">
-    <div class="an-form">
-      <div class="an-field"><label>规则状态</label><select id="anRuleStatus"><option value="enabled">启用检测</option><option value="disabled">暂停检测</option></select><span class="an-field-note">停用后不再产生新异常，现有开放异常会自动结束。</span></div>
-      <div class="an-field"><label>允许 AI Master 申请屏蔽</label><select id="anRuleAllowArchive"><option value="true">允许</option><option value="false">不允许</option></select><span class="an-field-note">关闭后，这类异常不显示“申请屏蔽”。</span></div>
-      <div class="an-field"><label>生效范围</label><select id="anRuleScope"><option value="platform">全平台</option><option value="component">指定组件</option><option value="repository">指定仓库</option></select></div>
-      <div class="an-field" id="anRuleScopeValueField"><label id="anRuleScopeValueLabel">范围名称</label><input id="anRuleScopeValue" placeholder="填写组件或仓库名称"></div>
-      <div class="an-rule-params" id="anRuleParams"></div>
-      <div class="an-field wide"><label>变更原因</label><input id="anRuleReason" placeholder="例如：近期误报较多，将等待时间由 24 小时调整为 48 小时"></div>
+    <div class="an-wide-body">
+      <aside class="an-wide-aside" id="anRuleAside"></aside>
+      <div class="an-wide-main">
+        <input id="anRuleName" type="hidden"><input id="anRuleDetector" type="hidden">
+        <div class="an-form">
+          <div class="an-field"><label>规则状态</label><select id="anRuleStatus"><option value="enabled">启用检测</option><option value="disabled">暂停检测</option></select><span class="an-field-note">停用后不再产生新异常，现有开放异常会自动结束。</span></div>
+          <div class="an-field"><label>允许 AI Master 申请屏蔽</label><select id="anRuleAllowArchive"><option value="true">允许</option><option value="false">不允许</option></select><span class="an-field-note">关闭后，这类异常不显示“申请屏蔽”。</span></div>
+          <div class="an-field"><label>生效范围</label><select id="anRuleScope"><option value="platform">全平台</option><option value="component">指定组件</option><option value="repository">指定仓库</option></select></div>
+          <div class="an-field" id="anRuleScopeValueField"><label id="anRuleScopeValueLabel">范围名称</label><input id="anRuleScopeValue" placeholder="填写组件或仓库名称"></div>
+          <div class="an-rule-params" id="anRuleParams"></div>
+          <div class="an-field wide"><label>变更原因</label><input id="anRuleReason" placeholder="例如：近期误报较多，将等待时间由 24 小时调整为 48 小时"></div>
+        </div>
+        <div class="an-preview" id="anRulePreview" hidden></div>
+      </div>
     </div>
-    <div class="an-preview" id="anRulePreview" hidden></div>
-    <div class="toolbar" style="margin:16px 0 0; justify-content:flex-end;">
+    <div class="toolbar">
       <button class="btn" id="anRuleCancel">取消</button><button class="btn" id="anRulePreviewBtn">试算影响</button><button class="btn btn--primary" id="anRuleSave">保存规则</button>
     </div>
   </div>
 </div>
 
 <div class="modal-mask" id="anDetailMask" hidden>
-  <div class="modal an-detail-modal" role="dialog" aria-modal="true" aria-labelledby="anDetailTitle">
+  <div class="modal an-wide-modal" role="dialog" aria-modal="true" aria-labelledby="anDetailTitle">
     <h2 id="anDetailTitle">异常详情</h2>
-    <div id="anDetailContent"></div>
-    <div class="toolbar" style="margin:16px 0 0; justify-content:flex-end;"><button class="btn btn--primary" id="anDetailClose">关闭</button></div>
+    <div class="an-wide-body"><div class="an-wide-aside" id="anDetailAside"></div><div class="an-wide-main" id="anDetailContent"></div></div>
+    <div class="toolbar"><button class="btn btn--primary" id="anDetailClose">关闭</button></div>
   </div>
 </div>
 
@@ -3747,9 +3764,10 @@ async function loadAnomalyEvents() {
   }
 }
 
-function openAnomalyDetail(title, html) {
+function openAnomalyDetail(title, asideHtml, mainHtml) {
   $("#anDetailTitle").textContent = title;
-  $("#anDetailContent").innerHTML = html;
+  $("#anDetailAside").innerHTML = asideHtml;
+  $("#anDetailContent").innerHTML = mainHtml;
   $("#anDetailMask").hidden = false;
 }
 
@@ -3782,7 +3800,12 @@ function showAnomalyEvent(id) {
   }
   const targetLabels = { workflows: "查看工作流详情", attribution: "查看归因处理详情", versions: "查看版本使用详情", components: "查看组件详情", registry: "查看注册表详情" };
   const factsHtml = facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
-  openAnomalyDetail(item.title, `<p class="an-detail-lead">${esc(item.summary)}</p><div class="an-facts">${factsHtml}</div><div class="an-detail-section">判断依据</div><dl class="kv"><dt>命中规则</dt><dd>${esc(item.rule.name)} · 版本 ${item.rule_version}</dd><dt>发生周期</dt><dd>第 ${item.occurrence} 次发生</dd></dl>${href ? `<div class="toolbar" style="margin:18px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`);
+  const spec = anCatalog.find((entry) => entry.code === item.detector_type);
+  openAnomalyDetail(
+    item.title,
+    `<p class="an-aside-name">${esc(item.rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || item.summary)}</p><div class="an-aside-section">发生了什么</div><div class="an-aside-kv">${factsHtml}</div>`,
+    `<dl class="kv"><dt>命中规则</dt><dd>${esc(item.rule.name)} · 版本 ${item.rule_version}</dd><dt>发生周期</dt><dd>第 ${item.occurrence} 次发生</dd><dt>当前处置</dt><dd>${item.disposition === "open" ? "开放中" : "处理中"}</dd></dl>${href ? `<div class="toolbar" style="margin:18px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`,
+  );
 }
 
 async function requestAnomalyArchive(id) {
@@ -3878,13 +3901,28 @@ function renderAnomalyParamInputs(params) {
   }).join("");
 }
 
+function renderAnomalyRuleAside(rule, spec) {
+  const facts = [
+    ["当前状态", rule.status === "enabled" ? "正在检测" : "已停用"],
+    ["生效范围", anomalyScopeText(rule)],
+    ["允许申请屏蔽", rule.allow_archive ? "允许" : "不允许"],
+    ["最近一次检测", rule.last_evaluated_at ? fmtShort(rule.last_evaluated_at) : "尚未检测"],
+  ];
+  const paramsHtml = Object.entries(rule.params || {}).map(([key, value]) => {
+    const meta = AN_PARAM_META[key] || { label: key };
+    const text = anomalyParamText(key, value);
+    return `<div class="an-fact"><dt>${esc(meta.label)}</dt><dd>${esc(text.split("：").slice(1).join("：") || text)}</dd></div>`;
+  }).join("");
+  $("#anRuleAside").innerHTML = `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "配置这类异常的判断条件和处理权限。")}</p><div class="an-aside-section">当前判定条件</div><div class="an-aside-kv">${paramsHtml || '<p class="muted">暂无参数</p>'}</div><div class="an-aside-section">当前配置</div><div class="an-aside-kv">${facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</div>`;
+}
+
 function resetAnomalyRuleForm(rule) {
   if (!rule) return;
   anEditingRule = rule;
   anPreviewFingerprint = "";
   const spec = anCatalog.find((item) => item.code === rule.detector_type);
   $("#anRuleTitle").textContent = `编辑：${spec?.name || rule.name}`;
-  $("#anRuleSummary").innerHTML = `<strong>${esc(spec?.name || rule.name)}</strong><span class="muted">${esc(spec?.description || "配置这类异常的判断条件和处理权限。")}</span>`;
+  renderAnomalyRuleAside(rule, spec);
   $("#anRuleName").value = rule.name;
   $("#anRuleDetector").value = rule.detector_type;
   $("#anRuleStatus").value = rule.status === "enabled" ? "enabled" : "disabled";
@@ -3923,7 +3961,18 @@ async function showAnomalyRule(id) {
     const spec = anCatalog.find((item) => item.code === rule.detector_type);
     const actionLabels = { created: "创建规则", updated: "修改配置", enabled: "启用规则", disabled: "停用规则", deleted: "删除规则" };
     const params = Object.entries(rule.params || {}).map(([key, value]) => `<div class="an-fact"><dt>${esc((AN_PARAM_META[key] || {}).label || key)}</dt><dd>${esc(anomalyParamText(key, value).split("：").slice(1).join("："))}</dd></div>`).join("");
-    openAnomalyDetail(spec?.name || rule.name, `<p class="an-detail-lead">${esc(spec?.description || "该规则用于发现需要关注的异常情况。")}</p><div class="an-facts"><div class="an-fact"><dt>当前状态</dt><dd>${rule.status === "enabled" ? "正在检测" : "已停用"}</dd></div><div class="an-fact"><dt>生效范围</dt><dd>${esc(anomalyScopeText(rule))}</dd></div><div class="an-fact"><dt>允许申请屏蔽</dt><dd>${rule.allow_archive ? "允许" : "不允许"}</dd></div><div class="an-fact"><dt>最近一次检测</dt><dd>${rule.last_evaluated_at ? esc(fmtShort(rule.last_evaluated_at)) : "尚未检测"}</dd></div></div><div class="an-detail-section">判定条件</div><div class="an-facts">${params}</div><div class="an-detail-section">变更记录</div>${rule.audits.map((row) => `<div class="an-audit"><strong>${esc(actionLabels[row.action] || "配置变更")} · 第 ${row.version} 版</strong><div class="an-sub">${new Date(row.created_at).toLocaleString()} · ${esc(row.operator)}${row.reason ? ` · ${esc(row.reason)}` : ""}</div></div>`).join("") || '<p class="muted">暂无记录</p>'}`);
+    const auditsHtml = rule.audits.map((row) => `<div class="an-audit"><strong>${esc(actionLabels[row.action] || "配置变更")} · 第 ${row.version} 版</strong><div class="an-sub">${new Date(row.created_at).toLocaleString()} · ${esc(row.operator)}${row.reason ? ` · ${esc(row.reason)}` : ""}</div></div>`).join("") || '<p class="muted">暂无记录</p>';
+    const configFacts = [
+      ["当前状态", rule.status === "enabled" ? "正在检测" : "已停用"],
+      ["生效范围", anomalyScopeText(rule)],
+      ["允许申请屏蔽", rule.allow_archive ? "允许" : "不允许"],
+      ["最近一次检测", rule.last_evaluated_at ? fmtShort(rule.last_evaluated_at) : "尚未检测"],
+    ].map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+    openAnomalyDetail(
+      spec?.name || rule.name,
+      `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "该规则用于发现需要关注的异常情况。")}</p><div class="an-aside-section">当前配置</div><div class="an-aside-kv">${configFacts}</div>`,
+      `<div class="an-detail-section">判定条件</div><div class="an-facts">${params}</div><div class="an-detail-section">变更记录</div>${auditsHtml}`,
+    );
   } catch (error) { toast(`详情加载失败：${error.message}`, true); }
 }
 
