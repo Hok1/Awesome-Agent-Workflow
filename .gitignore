@@ -1,1 +1,47 @@
+# macOS
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.venv/
+
+# Node
+node_modules/
+
+# AAW workflow runtime
+.aaw/
+.aaw-update.lock
+.aaw-update-*/
+.aaw-stage-*/
+.aaw-txn-*/
+.aaw-handoff-*
+
+# IDE / Editor
+*.code-workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Environment
+.env
+
+# Local Skill Eval runtime
+.skill-eval-data/
+skill-eval/.coverage
+
+# Telemetry local runtime & agent workspace
+.zcode/
+logs/
+telemetry-server/data/
+telemetry-server/logs/

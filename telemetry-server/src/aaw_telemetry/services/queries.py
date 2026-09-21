@@ -1,0 +1,1062 @@
+from __future__ import annotations
+
+import math
+import uuid
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
+
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.orm import Session, selectinload
+
+from ..config import UNASSIGNED_COMPONENT_ID, UNASSIGNED_COMPONENT_NAME, ProjectRegistry
+from ..errors import ApiError
+from ..models import DevRun, TelemetryMessage, WorkflowRun
+
+
+def any_like(column, raw: str | None):
+    """包含匹配，支持逗号分隔多值：`a,b` → LIKE %a% OR LIKE %b%。
+
+    运营后台里一个责任方（SE / AI Master）通常覆盖多个仓库，按责任方下钻时需要
+    "命中任一仓库"。返回 None 表示该条件不参与过滤（空串或只有分隔符）。
+    """
+    terms = [term.strip() for term in (raw or "").replace("，", ",").split(",")]
+    terms = [term for term in terms if term]
+    if not terms:
+        return None
+    return or_(*(column.like(f"%{term}%") for term in terms))
+
+
+@dataclass
+class Filters:
+    workflow_kind: str
+    from_date: date | None
+    to_date: date
+    repositories: list[str]
+    user_names: list[str]
+    versions: list[str]
+    srs: list[str]
+    ars: list[str]
+
+    @property
+    def start(self) -> datetime:
+        # from_date 为 None 表示不限起点：用 datetime.min 下界等价于不加过滤
+        base = self.from_date if self.from_date is not None else date.min
+        return datetime.combine(base, time.min, tzinfo=UTC)
+
+    @property
+    def end_exclusive(self) -> datetime:
+        return datetime.combine(self.to_date + timedelta(days=1), time.min, tzinfo=UTC)
+
+
+def make_filters(
+    from_date: date | None,
+    to_date: date | None,
+    repositories: list[str],
+    users: list[str],
+    versions: list[str],
+    srs: list[str],
+    ars: list[str],
+    workflow_kind: str = "aaw",
+) -> Filters:
+    today = datetime.now(UTC).date()
+    end = to_date or today
+    # from 不传 = 不限起点（全量口径）；to 不传 = 到今天为止
+    start = from_date
+    if start is not None and start > end:
+        raise ApiError(400, "INVALID_FILTER", "from must not be later than to")
+    if start is not None and (end - start).days > 3660:
+        raise ApiError(400, "INVALID_FILTER", "date range is too large")
+    return Filters(
+        workflow_kind,
+        start,
+        end,
+        repositories,
+        [item.strip() for item in users],
+        versions,
+        srs,
+        ars,
+    )
+
+
+def apply_workflow_filters(
+    statement, filters: Filters, *, include_dates: bool = True, include_deleted: bool = False
+):
+    if include_dates:
+        # 时间窗口径：按最近更新（last_activity_at）而非启动时间——
+        # 长周期工作流只要窗口内仍有更新就纳入统计，避免"老工作流"被漏计
+        statement = statement.where(
+            WorkflowRun.last_activity_at >= filters.start,
+            WorkflowRun.last_activity_at < filters.end_exclusive,
+        )
+    if not include_deleted:
+        # 管理员删除的工作流全口径出清（设计说明书 §5）
+        statement = statement.where(WorkflowRun.deleted.is_(False))
+    statement = statement.where(WorkflowRun.workflow_kind == filters.workflow_kind)
+    for column, values in (
+        (WorkflowRun.project_key, filters.repositories),
+        (WorkflowRun.sr, filters.srs),
+    ):
+        if values:
+            statement = statement.where(column.in_(values))
+    for column, values in (
+        (TelemetryMessage.user_name, filters.user_names),
+        (TelemetryMessage.aaw_version, filters.versions),
+        (TelemetryMessage.ar, filters.ars),
+    ):
+        if values:
+            statement = statement.where(
+                exists().where(
+                    TelemetryMessage.workflow_run_id == WorkflowRun.id,
+                    column.in_(values),
+                )
+            )
+    return statement
+
+
+def apply_snapshot_filters(statement, filters: Filters):
+    return apply_workflow_filters(statement, filters, include_dates=False)
+
+
+def _aware(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _milliseconds(value: datetime | None) -> int | None:
+    return int(_aware(value).timestamp() * 1000) if value is not None else None
+
+
+def _percentile(values: list[int], fraction: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = max(0, math.ceil(fraction * len(ordered)) - 1)
+    return ordered[rank]
+
+
+def _bucket_date(value: date, granularity: str) -> date:
+    return value if granularity == "day" else value - timedelta(days=value.weekday())
+
+
+def _merge_intent_fields(
+    effective: int,
+    attributed_80: int,
+    attributed_90: int,
+    active_devs: list[DevRun],
+    transitive_devs: list[DevRun] | None = None,
+) -> dict[str, Any]:
+    """Before-deletion caliber (设计说明书 §5 页脚对照)：deleted data leaves every
+    published caliber; this one adds deleted dev runs and their attribution
+    results back, so the dashboard can show "删除前口径" for audit. When nothing
+    has been deleted it equals the full caliber. Field names keep the legacy
+    merge_intent spelling for client compatibility.
+
+    两组删除来源：active_devs 中 admin_excluded 的产出（单独删除）；
+    transitive_devs 为已删除工作流名下的产出（连带删除，未单独打标）。
+    """
+    individually_deleted = [row for row in active_devs if row.admin_excluded]
+    deleted = [*individually_deleted, *(transitive_devs or [])]
+    deleted_lines = sum(
+        int(row.code_statistics["total_effective_lines"])
+        for row in deleted
+        if row.code_statistics
+    )
+    before_lines = effective + deleted_lines
+    still_active = [row for row in active_devs if not row.admin_excluded]
+    # 删除前的分子：被删除产出上的归因 + 活跃产出上被单独删除的归因结果
+    before_80 = attributed_80 + sum(
+        row.attribution.attributed_lines_80
+        for row in deleted
+        if row.attribution is not None
+    ) + sum(
+        row.attribution.attributed_lines_80
+        for row in still_active
+        if row.attribution is not None and row.attribution.deleted
+    )
+    before_90 = attributed_90 + sum(
+        row.attribution.attributed_lines_90
+        for row in deleted
+        if row.attribution is not None
+    ) + sum(
+        row.attribution.attributed_lines_90
+        for row in still_active
+        if row.attribution is not None and row.attribution.deleted
+    )
+    return {
+        "excluded_lines": deleted_lines,
+        "dev_effective_lines_merge_intent": before_lines,
+        "attribution_rate_80_merge_intent": (
+            before_80 / before_lines if before_lines else None
+        ),
+        "attribution_rate_90_merge_intent": (
+            before_90 / before_lines if before_lines else None
+        ),
+        "experimental_share": deleted_lines / before_lines if before_lines else None,
+    }
+
+
+def _governance_counts(
+    active_devs: list[DevRun], transitive_devs: list[DevRun] | None = None
+) -> dict[str, int]:
+    """统计口径之外的数据规模（页脚"已删除 N 项 / M 行"）。"""
+    individually_deleted = [row for row in active_devs if row.admin_excluded]
+    deleted = [*individually_deleted, *(transitive_devs or [])]
+    still_active = [row for row in active_devs if not row.admin_excluded]
+    return {
+        "deleted_dev_runs": len(deleted),
+        "deleted_attributions": (
+            sum(row.attribution is not None for row in deleted)
+            + sum(
+                1
+                for row in still_active
+                if row.attribution is not None and row.attribution.deleted
+            )
+        ),
+        "deleted_lines": sum(
+            int(row.code_statistics["total_effective_lines"])
+            for row in deleted
+            if row.code_statistics
+        ),
+    }
+
+
+def _testing_adoption_fields(filters: Filters, attributions: list[Any]) -> dict[str, Any]:
+    if filters.workflow_kind != "testing":
+        return {}
+    if any(row.attributed_lines_60 is None for row in attributions):
+        attributed_lines_60 = None
+    else:
+        attributed_lines_60 = sum(row.attributed_lines_60 for row in attributions)
+    if any(row.mr_commit_lines is None for row in attributions):
+        mr_commit_lines = None
+    else:
+        mr_commit_lines = sum(row.mr_commit_lines for row in attributions)
+    return {
+        "attributed_lines_60": attributed_lines_60,
+        "mr_commit_lines": mr_commit_lines,
+        "mr_adoption_rate_60": (
+            attributed_lines_60 / mr_commit_lines
+            if attributed_lines_60 is not None and mr_commit_lines
+            else None
+        ),
+        "mr_adoption_rate_80": (
+            sum(row.attributed_lines_80 for row in attributions) / mr_commit_lines
+            if mr_commit_lines
+            else None
+        ),
+        "mr_adoption_rate_90": (
+            sum(row.attributed_lines_90 for row in attributions) / mr_commit_lines
+            if mr_commit_lines
+            else None
+        ),
+    }
+
+
+class QueryService:
+    def __init__(self, session: Session, projects: ProjectRegistry):
+        self.session = session
+        self.projects = projects
+
+    def _workflows(
+        self, filters: Filters, *, include_deleted: bool = False
+    ) -> list[WorkflowRun]:
+        return list(
+            self.session.scalars(
+                apply_workflow_filters(
+                    select(WorkflowRun), filters, include_deleted=include_deleted
+                )
+            ).all()
+        )
+
+    def _messages(self, workflow_ids: list[uuid.UUID], filters: Filters) -> list[TelemetryMessage]:
+        if not workflow_ids:
+            return []
+        statement = select(TelemetryMessage).where(
+            TelemetryMessage.workflow_run_id.in_(workflow_ids),
+            TelemetryMessage.workflow_kind == filters.workflow_kind,
+        )
+        for column, values in (
+            (TelemetryMessage.repository, filters.repositories),
+            (TelemetryMessage.user_name, filters.user_names),
+            (TelemetryMessage.aaw_version, filters.versions),
+            (TelemetryMessage.sr, filters.srs),
+            (TelemetryMessage.ar, filters.ars),
+        ):
+            if values:
+                statement = statement.where(column.in_(values))
+        return list(self.session.scalars(statement).all())
+
+    def _devs(
+        self,
+        message_ids: list[uuid.UUID],
+        *,
+        include_upload: bool = False,
+        include_deleted: bool = False,
+    ) -> list[DevRun]:
+        if not message_ids:
+            return []
+        options = [selectinload(DevRun.attribution)]
+        if include_upload:
+            options.append(selectinload(DevRun.object_upload))
+        statement = select(DevRun).where(DevRun.id.in_(message_ids))
+        if not include_deleted:
+            # 删除的开发产出全口径出清（列名沿用 admin_excluded，语义为删除）
+            statement = statement.where(DevRun.admin_excluded.is_(False))
+        statement = statement.options(*options)
+        return list(self.session.scalars(statement).all())
+
+    def _included_in_statistics(self, repository: str) -> bool:
+        return self.projects.component_of(repository) is not None
+
+    def _statistics_devs(
+        self, messages: list[TelemetryMessage], devs: list[DevRun]
+    ) -> list[DevRun]:
+        included_ids = {
+            row.id for row in messages if self._included_in_statistics(row.repository)
+        }
+        return [row for row in devs if row.id in included_ids]
+
+    def filter_options(self, workflow_kind: str) -> dict[str, Any]:
+        base_filter = TelemetryMessage.workflow_kind == workflow_kind
+        repositories = list(
+            self.session.scalars(
+                select(TelemetryMessage.repository)
+                .where(base_filter)
+                .distinct()
+                .order_by(TelemetryMessage.repository)
+            ).all()
+        )
+        user_names = list(
+            self.session.scalars(
+                select(TelemetryMessage.user_name)
+                .where(base_filter, TelemetryMessage.user_name != "")
+                .distinct()
+                .order_by(TelemetryMessage.user_name)
+            ).all()
+        )
+        versions = list(
+            self.session.scalars(
+                select(TelemetryMessage.aaw_version)
+                .where(base_filter)
+                .distinct()
+                .order_by(TelemetryMessage.aaw_version)
+            ).all()
+        )
+        repository_items = [self._repository_display(key) for key in repositories]
+        user_items = [{"user_name": user_name} for user_name in user_names]
+        return {
+            "repositories": repository_items,
+            "users": user_items,
+            # Keep both current and legacy field names, with username-only values.
+            "projects": repository_items,
+            "git_users": [{"git_user_name": row["user_name"]} for row in user_items],
+            "aaw_versions": versions,
+            "result_statuses": ["finalized_match", "finalized_no_match"],
+        }
+
+    def overview(self, filters: Filters) -> dict[str, Any]:
+        workflows_all = self._workflows(filters, include_deleted=True)
+        workflows = [row for row in workflows_all if not row.deleted]
+        deleted_workflows = [row for row in workflows_all if row.deleted]
+        messages = self._messages([row.id for row in workflows], filters)
+        devs_all = self._devs([row.id for row in messages], include_deleted=True)
+        devs = [row for row in devs_all if not row.admin_excluded]
+        statistics_devs = self._statistics_devs(messages, devs)
+        statistics_devs_all = self._statistics_devs(messages, devs_all)
+        # 工作流级删除连带其下全部产出：单独加载用于页脚对照（设计说明书 §5）
+        transitive_messages = (
+            self._messages([row.id for row in deleted_workflows], filters)
+            if deleted_workflows
+            else []
+        )
+        transitive_devs = (
+            self._devs([row.id for row in transitive_messages], include_deleted=True)
+            if transitive_messages
+            else []
+        )
+        statistics_transitive = self._statistics_devs(transitive_messages, transitive_devs)
+        # 已删除的归因结果不再计入分子（产出退回"未归因"）
+        attributions = [
+            row.attribution
+            for row in statistics_devs
+            if row.attribution is not None and not row.attribution.deleted
+        ]
+        effective_lines = sum(
+            int(row.code_statistics["total_effective_lines"])
+            for row in statistics_devs
+            if row.code_statistics
+        )
+        attributed_80 = sum(row.attributed_lines_80 for row in attributions)
+        attributed_90 = sum(row.attributed_lines_90 for row in attributions)
+        now = datetime.now(UTC)
+        threshold = now - timedelta(hours=24)
+        snapshot = list(
+            self.session.scalars(
+                apply_snapshot_filters(select(WorkflowRun), filters).where(
+                    WorkflowRun.status == "in_progress"
+                )
+            ).all()
+        )
+        completed = sum(row.status == "completed" for row in workflows)
+        governance = _governance_counts(statistics_devs_all, statistics_transitive)
+        governance["deleted_workflows"] = len(deleted_workflows)
+        return {
+            "period": {
+                "workflow_runs": len(workflows),
+                "workflow_runs_by_entry": {
+                    "ar": sum(row.entry == "ar" for row in workflows),
+                    "sr": sum(row.entry == "sr" for row in workflows),
+                    "dev": sum(row.entry == "dev" for row in workflows),
+                },
+                "completed_workflows": completed,
+                "workflow_completion_rate": completed / len(workflows) if workflows else None,
+                "active_users": len({row.user_email for row in messages}),
+                "active_repositories": len({row.repository for row in messages}),
+                "active_projects": len({row.repository for row in messages}),
+                "steps": len(messages),
+                "dev_runs": len(devs),
+                "completed_dev_runs": sum(row.status == "completed" for row in devs),
+                "pending_attribution_dev_runs": sum(
+                    row.attribution is None for row in devs
+                ),
+                "dev_effective_lines": effective_lines,
+                "attributed_lines_80": attributed_80,
+                "attributed_lines_90": attributed_90,
+                "attribution_rate_80": attributed_80 / effective_lines if effective_lines else None,
+                "attribution_rate_90": attributed_90 / effective_lines if effective_lines else None,
+                **_merge_intent_fields(
+                    effective_lines, attributed_80, attributed_90,
+                    statistics_devs_all, statistics_transitive,
+                ),
+                **_testing_adoption_fields(filters, attributions),
+                # 治理留痕：页脚对照（删除前口径）与已删除规模，防粉饰（设计说明书 §5）
+                "governance": governance,
+            },
+            "snapshot": {
+                "active_workflows": sum(
+                    _aware(row.last_activity_at) >= threshold for row in snapshot
+                ),
+                "stalled_workflows": sum(
+                    _aware(row.last_activity_at) < threshold for row in snapshot
+                ),
+                "activity_threshold_hours": 24,
+            },
+        }
+
+    def trends(self, filters: Filters, granularity: str) -> dict[str, Any]:
+        workflows = self._workflows(filters)
+        messages = self._messages([row.id for row in workflows], filters)
+        devs = self._devs([row.id for row in messages])
+        statistics_dev_ids = {row.id for row in self._statistics_devs(messages, devs)}
+        workflow_by_id = {row.id: row for row in workflows}
+        buckets: dict[date, dict[str, int]] = defaultdict(
+            lambda: {
+                "workflow_runs": 0,
+                "completed_workflows": 0,
+                "dev_effective_lines": 0,
+                "attributed_lines_60": 0,
+                "attributed_lines_60_complete": True,
+                "attributed_lines_80": 0,
+                "attributed_lines_90": 0,
+                "mr_commit_lines": 0,
+                "mr_commit_lines_complete": True,
+            }
+        )
+        for workflow in workflows:
+            # 分桶与时间窗口径一致（最近更新时间），保证趋势之和等于总数
+            key = _bucket_date(_aware(workflow.last_activity_at).date(), granularity)
+            buckets[key]["workflow_runs"] += 1
+            buckets[key]["completed_workflows"] += workflow.status == "completed"
+        for dev in devs:
+            if dev.id not in statistics_dev_ids:
+                continue
+            key = _bucket_date(
+                _aware(workflow_by_id[dev.workflow_run_id].last_activity_at).date(), granularity
+            )
+            if dev.code_statistics:
+                buckets[key]["dev_effective_lines"] += dev.code_statistics["total_effective_lines"]
+            # 已删除的归因结果不进趋势分子（产出退回"未归因"）
+            attribution = dev.attribution
+            if attribution is not None and attribution.deleted:
+                attribution = None
+            if attribution:
+                if attribution.attributed_lines_60 is None:
+                    buckets[key]["attributed_lines_60_complete"] = False
+                else:
+                    buckets[key]["attributed_lines_60"] += (
+                        attribution.attributed_lines_60
+                    )
+                buckets[key]["attributed_lines_80"] += attribution.attributed_lines_80
+                buckets[key]["attributed_lines_90"] += attribution.attributed_lines_90
+                if filters.workflow_kind == "testing":
+                    if attribution.mr_commit_lines is None:
+                        buckets[key]["mr_commit_lines_complete"] = False
+                    else:
+                        buckets[key]["mr_commit_lines"] += attribution.mr_commit_lines
+        # trends 要按日/周铺桶，必须有一个具体起点：不限（from=None）时
+        # 用窗口内最早的工作流活动日；没有任何数据则只铺终点一个空点。
+        start_date = filters.from_date
+        if start_date is None:
+            first_activity = self.session.scalar(
+                select(func.min(WorkflowRun.last_activity_at)).where(
+                    WorkflowRun.workflow_kind == filters.workflow_kind,
+                    WorkflowRun.last_activity_at < filters.end_exclusive,
+                )
+            )
+            start_date = (
+                _aware(first_activity).date() if first_activity else filters.to_date
+            )
+        cursor = _bucket_date(start_date, granularity)
+        end = _bucket_date(filters.to_date, granularity)
+        increment = timedelta(days=1 if granularity == "day" else 7)
+        points = []
+        while cursor <= end:
+            bucket = buckets[cursor]
+            point = {
+                "date": cursor.isoformat(),
+                **{
+                    key: value
+                    for key, value in bucket.items()
+                    if not key.startswith("mr_commit_lines")
+                    and not key.startswith("attributed_lines_60")
+                },
+            }
+            if filters.workflow_kind == "testing":
+                attributed_lines_60 = (
+                    bucket["attributed_lines_60"]
+                    if bucket["attributed_lines_60_complete"]
+                    else None
+                )
+                mr_commit_lines = (
+                    bucket["mr_commit_lines"]
+                    if bucket["mr_commit_lines_complete"]
+                    else None
+                )
+                point.update(
+                    {
+                        "attributed_lines_60": attributed_lines_60,
+                        "mr_commit_lines": mr_commit_lines,
+                        "mr_adoption_rate_60": (
+                            attributed_lines_60 / mr_commit_lines
+                            if attributed_lines_60 is not None and mr_commit_lines
+                            else None
+                        ),
+                        "mr_adoption_rate_80": (
+                            bucket["attributed_lines_80"] / mr_commit_lines
+                            if mr_commit_lines
+                            else None
+                        ),
+                        "mr_adoption_rate_90": (
+                            bucket["attributed_lines_90"] / mr_commit_lines
+                            if mr_commit_lines
+                            else None
+                        ),
+                    }
+                )
+            points.append(point)
+            cursor += increment
+        return {"granularity": granularity, "points": points}
+
+    def projects_summary(
+        self,
+        filters: Filters,
+        page: int,
+        page_size: int,
+        top_size: int = 0,
+        *,
+        statistics_only: bool = False,
+    ) -> dict[str, Any]:
+        all_rows = self._summary_rows(filters, "repository")
+        statistics_rows = [row for row in all_rows if row["included_in_statistics"]]
+        rows = all_rows
+        if statistics_only:
+            rows = statistics_rows
+        result = self._paginate(rows, page, page_size)
+        if top_size:
+            result["top_items"] = statistics_rows[:top_size]
+            result["statistics_total"] = len(statistics_rows)
+        return result
+
+    def users_summary(self, filters: Filters, page: int, page_size: int) -> dict[str, Any]:
+        return self._paginate(self._summary_rows(filters, "user"), page, page_size)
+
+    def components_summary(self, filters: Filters) -> dict[str, Any]:
+        workflows = self._workflows(filters)
+        messages = self._messages([row.id for row in workflows], filters)
+        dev_by_id = {
+            row.id: row
+            for row in self._devs([row.id for row in messages], include_deleted=True)
+        }
+        per_repo: dict[str, list[DevRun]] = defaultdict(list)
+        for message in messages:
+            devs = per_repo[message.repository]
+            if message.id in dev_by_id:
+                devs.append(dev_by_id[message.id])
+
+        # `used_aaw` spans the whole history, so it deliberately ignores every filter
+        # except the workflow kind that separates the aaw and testing dashboards.
+        used_repos = set(
+            self.session.scalars(
+                select(TelemetryMessage.repository)
+                .where(TelemetryMessage.workflow_kind == filters.workflow_kind)
+                .distinct()
+            ).all()
+        )
+
+        def aggregate(repo_keys: tuple[str, ...] | list[str]) -> dict[str, Any]:
+            devs_all = [dev for repo_key in repo_keys for dev in per_repo.get(repo_key, [])]
+            devs = [row for row in devs_all if not row.admin_excluded]
+            effective = sum(
+                row.code_statistics["total_effective_lines"] for row in devs if row.code_statistics
+            )
+            attributions = [
+                row.attribution
+                for row in devs
+                if row.attribution is not None and not row.attribution.deleted
+            ]
+            attributed_80 = sum(row.attributed_lines_80 for row in attributions)
+            attributed_90 = sum(row.attributed_lines_90 for row in attributions)
+            return {
+                "used_aaw": any(repo_key in used_repos for repo_key in repo_keys),
+                "effective_lines": effective,
+                "attribution_rate_80": attributed_80 / effective if effective else None,
+                **_merge_intent_fields(effective, attributed_80, attributed_90, devs_all),
+                "repos": list(repo_keys),
+                **_testing_adoption_fields(filters, attributions),
+            }
+
+        covered: set[str] = set()
+        items = []
+        for view in self.projects.components():
+            covered.update(view.repo_keys)
+            items.append(
+                {
+                    "component_id": view.component_id,
+                    "name": view.name,
+                    "se": view.se,
+                    **aggregate(view.repo_keys),
+                }
+            )
+
+        orphan_keys = sorted((set(per_repo) | used_repos) - covered)
+        if orphan_keys:
+            items.append(
+                {
+                    "component_id": UNASSIGNED_COMPONENT_ID,
+                    "name": UNASSIGNED_COMPONENT_NAME,
+                    "se": None,
+                    **aggregate(orphan_keys),
+                }
+            )
+        return {
+            "items": items,
+            "total_components": len(items),
+            "used_components": sum(row["used_aaw"] for row in items),
+            "unassigned_component_id": UNASSIGNED_COMPONENT_ID,
+        }
+
+    def _summary_rows(self, filters: Filters, group: str) -> list[dict[str, Any]]:
+        workflows = self._workflows(filters)
+        messages = self._messages([row.id for row in workflows], filters)
+        dev_by_id = {
+            row.id: row
+            for row in self._devs([row.id for row in messages], include_deleted=True)
+        }
+        groups: dict[str, list[TelemetryMessage]] = defaultdict(list)
+        for message in messages:
+            key = message.repository if group == "repository" else message.user_email
+            groups[key].append(message)
+        rows = []
+        for key, group_messages in groups.items():
+            group_devs_all = [
+                dev_by_id[row.id] for row in group_messages if row.id in dev_by_id
+            ]
+            devs = [row for row in group_devs_all if not row.admin_excluded]
+            if group == "repository":
+                included_in_statistics = self._included_in_statistics(key)
+                statistics_devs = devs if included_in_statistics else []
+                statistics_devs_all = group_devs_all if included_in_statistics else []
+                metric_devs = devs
+            else:
+                included_in_statistics = None
+                statistics_devs = self._statistics_devs(group_messages, devs)
+                statistics_devs_all = self._statistics_devs(group_messages, group_devs_all)
+                metric_devs = statistics_devs
+            effective = sum(
+                row.code_statistics["total_effective_lines"]
+                for row in metric_devs
+                if row.code_statistics
+            )
+            attrs = [
+                row.attribution
+                for row in metric_devs
+                if row.attribution is not None and not row.attribution.deleted
+            ]
+            statistics_attrs = [
+                row.attribution
+                for row in statistics_devs
+                if row.attribution is not None and not row.attribution.deleted
+            ]
+            attributed_80 = sum(row.attributed_lines_80 for row in attrs)
+            attributed_90 = sum(row.attributed_lines_90 for row in attrs)
+            rates_included = group != "repository" or bool(included_in_statistics)
+            base = {
+                "workflow_runs": len({row.workflow_run_id for row in group_messages}),
+                "steps": len(group_messages),
+                "dev_runs": len(devs),
+                "completed_dev_runs": sum(row.status == "completed" for row in devs),
+                "pending_attribution_dev_runs": sum(row.attribution is None for row in devs),
+                "dev_effective_lines": effective,
+                "attributed_lines_80": attributed_80,
+                "attributed_lines_90": attributed_90,
+                "attribution_rate_80": (
+                    attributed_80 / effective if rates_included and effective else None
+                ),
+                "attribution_rate_90": (
+                    attributed_90 / effective if rates_included and effective else None
+                ),
+                **_merge_intent_fields(
+                    effective, attributed_80, attributed_90, statistics_devs_all
+                ),
+                **_testing_adoption_fields(filters, statistics_attrs),
+            }
+            if group == "repository":
+                base["included_in_statistics"] = bool(included_in_statistics)
+                base.update(self._repository_display(key))
+                base["active_users"] = len({row.user_email for row in group_messages})
+            else:
+                latest = max(group_messages, key=lambda row: _aware(row.client_updated_at))
+                base.update(
+                    {
+                        "user_email": key,
+                        "user_name": latest.user_name,
+                        "git_user_email": key,
+                        "git_user_name": latest.user_name,
+                    }
+                )
+            rows.append(base)
+        tie = "project_key" if group == "repository" else "user_email"
+        return sorted(rows, key=lambda row: (-row["dev_effective_lines"], row[tie]))
+
+    def steps_summary(self, filters: Filters, page: int, page_size: int) -> dict[str, Any]:
+        workflows = self._workflows(filters)
+        messages = self._messages([row.id for row in workflows], filters)
+        grouped: dict[str, list[TelemetryMessage]] = defaultdict(list)
+        for message in messages:
+            grouped[message.step_type].append(message)
+        results = []
+        for key, steps in sorted(grouped.items()):
+            reached = len({row.workflow_run_id for row in steps})
+            completed = len({row.workflow_run_id for row in steps if row.status == "done"})
+            durations = [
+                int((_aware(row.step_completed_at) - _aware(row.step_started_at)).total_seconds())
+                for row in steps
+                if row.step_completed_at is not None
+            ]
+            results.append(
+                {
+                    "key": key,
+                    "reached_workflows": reached,
+                    "completed_workflows": completed,
+                    "failed_steps": sum(row.status == "failed" for row in steps),
+                    "blocked_steps": sum(row.status == "blocked" for row in steps),
+                    "failed_attempts": sum(row.status == "failed" for row in steps),
+                    "blocked_attempts": sum(row.status == "blocked" for row in steps),
+                    "completion_rate": completed / reached if reached else None,
+                    "duration_seconds": {
+                        "p50": _percentile(durations, 0.5),
+                        "p90": _percentile(durations, 0.9),
+                        "p95": _percentile(durations, 0.95),
+                    },
+                }
+            )
+        return self._paginate(results, page, page_size)
+
+    def workflows(
+        self, filters: Filters, state: str | None, page: int, page_size: int
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        threshold = now - timedelta(hours=24)
+        statement = apply_workflow_filters(select(WorkflowRun), filters)
+        if state == "in_progress":
+            statement = statement.where(WorkflowRun.status == "in_progress")
+        elif state == "completed":
+            statement = statement.where(WorkflowRun.status == "completed")
+        elif state == "active":
+            statement = statement.where(
+                WorkflowRun.status == "in_progress",
+                WorkflowRun.last_activity_at >= threshold,
+            )
+        elif state == "stalled":
+            statement = statement.where(
+                WorkflowRun.status == "in_progress",
+                WorkflowRun.last_activity_at < threshold,
+            )
+
+        total = int(
+            self.session.scalar(select(func.count()).select_from(statement.subquery())) or 0
+        )
+        start = (page - 1) * page_size
+        workflows = list(
+            self.session.scalars(
+                statement.order_by(
+                    WorkflowRun.last_activity_at.desc(), WorkflowRun.id.asc()
+                )
+                .offset(start)
+                .limit(page_size)
+            ).all()
+        )
+        workflow_ids = [row.id for row in workflows]
+        messages = (
+            list(
+                self.session.scalars(
+                    select(TelemetryMessage)
+                    .where(TelemetryMessage.workflow_run_id.in_(workflow_ids))
+                    .order_by(
+                        TelemetryMessage.workflow_run_id.asc(),
+                        TelemetryMessage.step_completed_at.asc(),
+                        TelemetryMessage.id.asc(),
+                    )
+                ).all()
+            )
+            if workflow_ids
+            else []
+        )
+        messages_by_workflow: dict[uuid.UUID, list[TelemetryMessage]] = defaultdict(list)
+        for message in messages:
+            messages_by_workflow[message.workflow_run_id].append(message)
+        devs = self._devs([row.id for row in messages])
+        devs_by_workflow: dict[uuid.UUID, list[DevRun]] = defaultdict(list)
+        for dev in devs:
+            devs_by_workflow[dev.workflow_run_id].append(dev)
+        items = [
+            self._workflow_item(
+                workflow,
+                threshold,
+                messages=messages_by_workflow[workflow.id],
+                devs=devs_by_workflow[workflow.id],
+            )
+            for workflow in workflows
+        ]
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
+
+    def _workflow_item(
+        self,
+        workflow: WorkflowRun,
+        threshold: datetime,
+        *,
+        messages: list[TelemetryMessage] | None = None,
+        devs: list[DevRun] | None = None,
+    ) -> dict[str, Any]:
+        if messages is None:
+            messages = list(
+                self.session.scalars(
+                    select(TelemetryMessage)
+                    .where(TelemetryMessage.workflow_run_id == workflow.id)
+                    .order_by(TelemetryMessage.step_completed_at.asc())
+                ).all()
+            )
+        if devs is None:
+            devs = self._devs([row.id for row in messages])
+        latest_users: dict[str, TelemetryMessage] = {}
+        for row in messages:
+            latest_users[row.user_email] = row
+        latest_message = messages[-1] if messages else None
+        return {
+            "workflow_id": str(workflow.id),
+            "workflow_run_id": str(workflow.id),
+            "repository": workflow.project_key,
+            "project_key": workflow.project_key,
+            "participants": [
+                {"user_email": email, "user_name": row.user_name}
+                for email, row in sorted(latest_users.items())
+            ],
+            "sr": workflow.sr,
+            "ar": latest_message.ar if latest_message else None,
+            "workflow_type": workflow.entry if workflow.entry in {"ar", "sr", "dev"} else "unknown",
+            "git_user_email": latest_message.user_email if latest_message else None,
+            "git_user_name": latest_message.user_name if latest_message else None,
+            "aaw_version": workflow.aaw_version,
+            "status": workflow.status,
+            "activity_state": self._activity_state(workflow, threshold),
+            "started_at": _milliseconds(workflow.started_at),
+            "completed_at": _milliseconds(workflow.completed_at),
+            "last_activity_at": _milliseconds(workflow.last_activity_at),
+            "furthest_step_type": messages[-1].step_type if messages else None,
+            "dev_effective_lines": sum(
+                row.code_statistics["total_effective_lines"] for row in devs if row.code_statistics
+            ),
+            "attributed_lines_80": sum(
+                row.attribution.attributed_lines_80 for row in devs if row.attribution
+            ),
+            "attributed_lines_90": sum(
+                row.attribution.attributed_lines_90 for row in devs if row.attribution
+            ),
+        }
+
+    @staticmethod
+    def _activity_state(workflow: WorkflowRun, threshold: datetime) -> str:
+        if workflow.status == "completed":
+            return "completed"
+        return "stalled" if _aware(workflow.last_activity_at) < threshold else "active"
+
+    def workflow_detail(self, workflow_id: uuid.UUID) -> dict[str, Any]:
+        workflow = self.session.get(WorkflowRun, workflow_id)
+        if workflow is None:
+            raise ApiError(404, "WORKFLOW_NOT_FOUND", "workflow does not exist")
+        messages = list(
+            self.session.scalars(
+                select(TelemetryMessage)
+                .where(TelemetryMessage.workflow_run_id == workflow_id)
+                .order_by(TelemetryMessage.step_started_at.asc(), TelemetryMessage.id.asc())
+            ).all()
+        )
+        # 已删除的产出仍要标注出来（运营后台详情互通），但不计入行数与归因汇总
+        devs_all = self._devs(
+            [row.id for row in messages], include_upload=True, include_deleted=True
+        )
+        devs = [row for row in devs_all if not row.admin_excluded]
+        dev_by_id = {row.id: row for row in devs_all}
+        steps = []
+        for message in messages:
+            dev = dev_by_id.get(message.id)
+            step = self._message_item(
+                message, None if dev is not None and dev.admin_excluded else dev
+            )
+            if dev is not None and dev.admin_excluded:
+                step["dev_deleted"] = True
+            steps.append(step)
+        threshold = datetime.now(UTC) - timedelta(hours=24)
+        return {
+            "workflow": self._workflow_item(
+                workflow,
+                threshold,
+                messages=messages,
+                devs=devs,
+            ),
+            "steps": steps,
+        }
+
+    def _message_item(self, message: TelemetryMessage, dev: DevRun | None) -> dict[str, Any]:
+        upload = dev.object_upload if dev else None
+        if upload is not None:
+            file_status = "confirmed" if upload.status == "archived" else upload.status
+        else:
+            file_status = "pending" if message.file_name else None
+        return {
+            "message_id": str(message.id),
+            "workflow_id": str(message.workflow_run_id),
+            "aaw_version": message.aaw_version,
+            "user_email": message.user_email,
+            "user_name": message.user_name,
+            "repository": message.repository,
+            "sr": message.sr,
+            "ar": message.ar,
+            "step_type": message.step_type,
+            "status": message.status,
+            "started_at": _milliseconds(message.step_started_at),
+            "completed_at": _milliseconds(message.step_completed_at),
+            "updated_at": _milliseconds(message.client_updated_at),
+            "file": (
+                {"file_name": message.file_name, "sha256": message.file_sha256}
+                if message.file_name
+                else None
+            ),
+            "file_status": file_status,
+            "attribution_status": (
+                dev.attribution.attribution_status
+                if dev and dev.attribution
+                else ("pending" if dev else None)
+            ),
+            "attribution": (
+                self._attribution_dict(dev.attribution) if dev and dev.attribution else None
+            ),
+        }
+
+    def code_attributions(
+        self,
+        filters: Filters,
+        matched_mr_iid: str | None,
+        result_status: str | None,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        workflows = self._workflows(filters)
+        messages = self._messages([row.id for row in workflows], filters)
+        by_id = {row.id: row for row in messages}
+        items = []
+        for dev in self._devs(list(by_id)):
+            attribution = dev.attribution
+            # 已删除的归因结果不再出现在归因记录列表
+            if attribution is None or attribution.deleted:
+                continue
+            if matched_mr_iid and attribution.matched_mr_iid != matched_mr_iid:
+                continue
+            if result_status and attribution.result_status != result_status:
+                continue
+            message = by_id[dev.id]
+            item = self._attribution_dict(attribution)
+            item.update(
+                {
+                    "message_id": str(message.id),
+                    "workflow_id": str(message.workflow_run_id),
+                    "repository": message.repository,
+                    "project_key": message.repository,
+                    "sr": message.sr,
+                    "ar": message.ar,
+                    "aaw_version": message.aaw_version,
+                    "user_email": message.user_email,
+                    "user_name": message.user_name,
+                    "git_user_email": message.user_email,
+                    "git_user_name": message.user_name,
+                    "step_type": message.step_type,
+                    "file_name": message.file_name,
+                    "attribution_rate_80": (
+                        attribution.attributed_lines_80 / attribution.dev_effective_lines
+                        if attribution.dev_effective_lines
+                        else None
+                    ),
+                    "attribution_rate_90": (
+                        attribution.attributed_lines_90 / attribution.dev_effective_lines
+                        if attribution.dev_effective_lines
+                        else None
+                    ),
+                    **_testing_adoption_fields(filters, [attribution]),
+                }
+            )
+            items.append(item)
+        items.sort(key=lambda item: (-item["attributed_lines_80"], item["message_id"]))
+        return self._paginate(items, page, page_size)
+
+    @staticmethod
+    def _attribution_dict(attribution) -> dict[str, Any]:
+        result = {}
+        for column in attribution.__table__.columns:
+            value = getattr(attribution, column.name)
+            result[column.name] = _milliseconds(value) if isinstance(value, datetime) else value
+        return result
+
+    def _repository_display(self, key: str) -> dict[str, Any]:
+        entry = self.projects.get(key)
+        return {
+            "project_key": key,
+            "canonical_url": entry.canonical_url if entry else None,
+            "target_branch": entry.target_branch if entry else None,
+            "enabled": entry.enabled if entry else None,
+        }
+
+    @staticmethod
+    def _paginate(items: list[dict[str, Any]], page: int, page_size: int) -> dict[str, Any]:
+        start = (page - 1) * page_size
+        return {
+            "items": items[start : start + page_size],
+            "page": page,
+            "page_size": page_size,
+            "total": len(items),
+        }

@@ -1,0 +1,11 @@
+name: sr-design
+execution: skill
+skill: [sr-design]
+input:
+  - path: ".sdd/software_architecture.md"
+    required: false
+  - path: ".sdd/{SR}/original-requirement.md"
+    required: true
+output:
+  - path: ".sdd/{SR}/SR-design.md"
+    required: true

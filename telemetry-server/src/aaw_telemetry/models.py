@@ -1,0 +1,658 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects import mysql
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .database import Base
+
+MILLISECOND_DATETIME = DateTime(timezone=True).with_variant(mysql.DATETIME(fsp=3), "mysql")
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_run"
+    __table_args__ = (
+        CheckConstraint("status IN ('in_progress', 'completed')", name="ck_workflow_status"),
+        Index("ix_workflow_project_started", "project_key", "started_at"),
+        Index("ix_workflow_kind_project_started", "workflow_kind", "project_key", "started_at"),
+        Index("ix_workflow_kind_started", "workflow_kind", "started_at"),
+        Index("ix_workflow_entry_started", "entry", "started_at"),
+        Index("ix_workflow_user_started", "git_user_email", "started_at"),
+        Index("ix_workflow_status_activity", "status", "last_activity_at"),
+        Index("ix_workflow_sr_ar", "sr", "ar"),
+        Index("ix_workflow_deleted", "deleted"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    workflow_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="aaw")
+    entry: Mapped[str | None] = mapped_column(String(8))
+    project_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    git_user_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    git_user_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sr: Mapped[str] = mapped_column(String(128), nullable=False)
+    ar: Mapped[str | None] = mapped_column(String(128))
+    aaw_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    last_activity_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    client_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    client_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    server_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    # Admin governance: 删除整条工作流（含其下全部 dev 产出与归因）。
+    # 删除是可恢复的标记，数据行保留；所有统计口径即时过滤。见 services/workflow_admin.py。
+    deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    deleted_reason_code: Mapped[str | None] = mapped_column(String(32))
+    deleted_reason: Mapped[str | None] = mapped_column(String(512))
+    deleted_by: Mapped[str | None] = mapped_column(String(128))
+    deleted_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+
+    step_executions: Mapped[list[StepExecution]] = relationship(back_populates="workflow")
+    dev_runs: Mapped[list[DevRun]] = relationship(back_populates="workflow")
+    messages: Mapped[list[TelemetryMessage]] = relationship(back_populates="workflow")
+
+
+class TelemetryMessage(Base):
+    """A single immutable Step status report from the CLI."""
+
+    __tablename__ = "telemetry_message"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('start', 'done', 'failed', 'blocked')", name="ck_message_status"
+        ),
+        Index("ix_message_user_updated", "user_email", "client_updated_at"),
+        Index("ix_message_kind_user_updated", "workflow_kind", "user_email", "client_updated_at"),
+        Index("ix_message_kind_repository", "workflow_kind", "repository"),
+        Index("ix_message_step_type", "step_type"),
+        Index("ix_message_ar", "ar"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    workflow_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="aaw")
+    entry: Mapped[str | None] = mapped_column(String(8))
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_run.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    aaw_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    user_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    repository: Mapped[str] = mapped_column(String(128), nullable=False)
+    sr: Mapped[str] = mapped_column(String(128), nullable=False)
+    ar: Mapped[str | None] = mapped_column(String(128))
+    step_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    workflow_started_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    workflow_completed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    step_started_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    step_completed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    client_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    file_sha256: Mapped[str | None] = mapped_column(String(64))
+    server_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    workflow: Mapped[WorkflowRun] = relationship(back_populates="messages")
+
+
+class StepExecution(Base):
+    __tablename__ = "step_execution"
+    __table_args__ = (
+        CheckConstraint("step_id >= 1", name="ck_step_id_positive"),
+        CheckConstraint("attempt >= 1", name="ck_step_attempt_positive"),
+        CheckConstraint(
+            "status IN ('ready', 'running', 'completed', 'failed', 'blocked', 'superseded')",
+            name="ck_step_status",
+        ),
+        CheckConstraint(
+            "execution_type IN ('skill', 'prompt', 'manual', 'noop')",
+            name="ck_step_execution_type",
+        ),
+        UniqueConstraint("workflow_run_id", "step_id", "attempt", name="uq_step_attempt"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_run.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    step_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    task_id: Mapped[str | None] = mapped_column(String(128))
+    skill_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    execution_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    ended_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    client_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    client_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    development: Mapped[dict | None] = mapped_column(JSON)
+    server_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    workflow: Mapped[WorkflowRun] = relationship(back_populates="step_executions")
+    dev_run: Mapped[DevRun | None] = relationship(back_populates="step_execution")
+
+
+class DevRun(Base):
+    __tablename__ = "dev_run"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'waiting_objects', 'completed', 'failed', 'superseded')",
+            name="ck_dev_status",
+        ),
+        Index("ix_dev_workflow_started", "workflow_run_id", "started_at"),
+        Index("ix_dev_status_completed", "status", "completed_at"),
+        Index("ix_dev_admin_excluded", "admin_excluded"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_run.id", ondelete="CASCADE"), nullable=False
+    )
+    step_execution_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("step_execution.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    branch: Mapped[str] = mapped_column(String(512), nullable=False)
+    head_sha_start: Mapped[str] = mapped_column(String(64), nullable=False)
+    head_sha_end: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    window_ends_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    code_statistics: Mapped[dict | None] = mapped_column(JSON)
+    patch_object_key: Mapped[str | None] = mapped_column(String(1024))
+    # Admin governance (删除单条开发产出): deleted dev runs leave every adoption
+    # denominator but stay listed and reversible. 列名沿用 0019 的 admin_excluded，
+    # 语义已升级为"删除"并全口径生效。See services/workflow_admin.py.
+    admin_excluded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    admin_excluded_reason: Mapped[str | None] = mapped_column(String(512))
+    admin_excluded_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    admin_excluded_by: Mapped[str | None] = mapped_column(String(128))
+    deleted_reason_code: Mapped[str | None] = mapped_column(String(32))
+    client_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    client_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    server_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    workflow: Mapped[WorkflowRun] = relationship(back_populates="dev_runs")
+    step_execution: Mapped[StepExecution] = relationship(back_populates="dev_run")
+    attribution: Mapped[CodeAttribution | None] = relationship(
+        back_populates="dev_run", cascade="all, delete-orphan", uselist=False
+    )
+    object_upload: Mapped[ObjectUpload | None] = relationship(
+        back_populates="dev_run", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class ObjectUpload(Base):
+    __tablename__ = "object_upload"
+    __table_args__ = (
+        CheckConstraint("object_type = 'step_diff'", name="ck_upload_object_type"),
+        CheckConstraint(
+            "status IN ('created', 'uploaded', 'confirmed', 'expired', 'archived')",
+            name="ck_upload_status",
+        ),
+        CheckConstraint("compressed_size_bytes > 0", name="ck_upload_size_positive"),
+        CheckConstraint("compression = 'none'", name="ck_upload_compression"),
+        Index("ix_upload_status_expires", "status", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("dev_run.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    compressed_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    compression: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    uploaded_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    confirmed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    archived_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    archive_key: Mapped[str | None] = mapped_column(String(1024))
+    server_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    dev_run: Mapped[DevRun] = relationship(back_populates="object_upload")
+
+
+class CodeAttribution(Base):
+    """Persisted attribution result — real ARMRCounter engine or mock fallback."""
+
+    __tablename__ = "code_attribution"
+    __table_args__ = (
+        CheckConstraint(
+            "result_status IN ('finalized_match', 'finalized_no_match')",
+            name="ck_attribution_result_status",
+        ),
+        CheckConstraint(
+            "attribution_status IN "
+            "('pending', 'running', 'finalized_match', 'finalized_no_match', "
+            "'failed', 'retry_pending')",
+            name="ck_attribution_status",
+        ),
+        CheckConstraint(
+            "attributed_lines_90 <= attributed_lines_80",
+            name="ck_attribution_threshold_order",
+        ),
+        CheckConstraint(
+            "attributed_lines_60 IS NULL OR attributed_lines_80 <= attributed_lines_60",
+            name="ck_attribution_60_threshold_order",
+        ),
+        CheckConstraint(
+            "attributed_lines_60 IS NULL OR attributed_lines_60 <= dev_effective_lines",
+            name="ck_attribution_60_not_over_total",
+        ),
+        CheckConstraint(
+            "attributed_lines_80 <= dev_effective_lines",
+            name="ck_attribution_not_over_total",
+        ),
+        Index("ix_attribution_status_matched", "result_status", "matched_at"),
+        Index("ix_attribution_attribution_status", "attribution_status"),
+        Index("ix_attribution_deleted", "deleted"),
+    )
+
+    dev_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("dev_run.id", ondelete="CASCADE"), primary_key=True
+    )
+    dev_effective_lines: Mapped[int] = mapped_column(Integer, nullable=False)
+    attributed_lines_60: Mapped[int | None] = mapped_column(Integer)
+    attributed_lines_80: Mapped[int] = mapped_column(Integer, nullable=False)
+    attributed_lines_90: Mapped[int] = mapped_column(Integer, nullable=False)
+    mr_commit_lines: Mapped[int | None] = mapped_column(Integer)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    attribution_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    quality_flags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    result_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    matched_mr_iid: Mapped[str | None] = mapped_column(String(64))
+    matched_mr_url: Mapped[str | None] = mapped_column(String(2048))
+    mr_diff_version: Mapped[str | None] = mapped_column(String(64))
+    mr_source_branch: Mapped[str | None] = mapped_column(String(512))
+    target_branch: Mapped[str | None] = mapped_column(String(512))
+    merge_commit_sha: Mapped[str | None] = mapped_column(String(64))
+    mr_merged_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    diff_rule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    matched_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    server_updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    # Admin governance: 删除单条归因结果，产出退回"未归因"（分母在、分子无）。
+    deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    deleted_reason_code: Mapped[str | None] = mapped_column(String(32))
+    deleted_reason: Mapped[str | None] = mapped_column(String(512))
+    deleted_by: Mapped[str | None] = mapped_column(String(128))
+    deleted_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+
+    dev_run: Mapped[DevRun] = relationship(back_populates="attribution")
+
+
+class Issue(Base):
+    """A manually recorded issue from the portal wish board."""
+
+    __tablename__ = "issue"
+    __table_args__ = (
+        CheckConstraint(
+            "assignee IN ('张轶勃', '徐哲威', '宋东方', '张立肖', '孙杨宇鑫')",
+            name="ck_issue_assignee",
+        ),
+        CheckConstraint("status IN ('todo', 'in_progress', 'resolved')", name="ck_issue_status"),
+        CheckConstraint("priority IN ('low', 'medium', 'high')", name="ck_issue_priority"),
+        Index("ix_issue_status_updated", "status", "updated_at"),
+        Index("ix_issue_assignee_updated", "assignee", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    description_doc: Mapped[dict | None] = mapped_column(JSON)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    reporter: Mapped[str] = mapped_column(String(100), nullable=False)
+    assignee: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="todo")
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    component: Mapped[str | None] = mapped_column(String(128))
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workflow_run.id", ondelete="SET NULL"), nullable=True
+    )
+    sr: Mapped[str | None] = mapped_column(String(128))
+    ar: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    resolved_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+
+    activities: Mapped[list[IssueActivity]] = relationship(
+        back_populates="issue", cascade="all, delete-orphan", order_by="IssueActivity.created_at"
+    )
+    images: Mapped[list[IssueImage]] = relationship(back_populates="issue")
+
+
+class IssueActivity(Base):
+    __tablename__ = "issue_activity"
+    __table_args__ = (Index("ix_issue_activity_issue_created", "issue_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    issue_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("issue.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    issue: Mapped[Issue] = relationship(back_populates="activities")
+
+
+class AiMaster(Base):
+    """An AI Master role: a named owner who oversees several components."""
+
+    __tablename__ = "ai_master"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_ai_master_name"),
+        Index("ix_ai_master_name", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class RepoAiMaster(Base):
+    """Assigns a repository to one AI Master（一线辅助责任人）。
+
+    责任单位是仓库而不是组件：AI Master 按仓覆盖，SE 按组件覆盖，两条线因此
+    交叉。一个仓库只能有一位 AI Master（repo_key 即主键）。
+    """
+
+    __tablename__ = "repo_ai_master"
+    __table_args__ = (Index("ix_repo_ai_master_master", "ai_master_id"),)
+
+    repo_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    ai_master_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ai_master.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    ai_master: Mapped[AiMaster] = relationship()
+
+
+class AnomalyRule(Base):
+    """Stable logical rule; edits increment version without changing identity."""
+
+    __tablename__ = "anomaly_rule"
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('component', 'workflow', 'attribution', 'version')",
+            name="ck_anomaly_rule_category",
+        ),
+        CheckConstraint(
+            "scope_type IN ('platform', 'component', 'repository')",
+            name="ck_anomaly_rule_scope",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'enabled', 'disabled', 'deleted')",
+            name="ck_anomaly_rule_status",
+        ),
+        Index("ix_anomaly_rule_status_type", "status", "detector_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    detector_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, default="platform")
+    scope_value: Mapped[str | None] = mapped_column(String(256))
+    params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    allow_archive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    change_reason: Mapped[str | None] = mapped_column(String(512))
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    last_match_count: Mapped[int | None] = mapped_column(Integer)
+
+
+class AnomalyRuleAudit(Base):
+    __tablename__ = "anomaly_rule_audit"
+    __table_args__ = (Index("ix_anomaly_rule_audit_rule_time", "rule_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_rule.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    before: Mapped[dict | None] = mapped_column(JSON)
+    after: Mapped[dict | None] = mapped_column(JSON)
+    reason: Mapped[str | None] = mapped_column(String(512))
+    operator: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class AnomalyEvent(Base):
+    """One continuous anomaly occurrence for a rule and business object."""
+
+    __tablename__ = "anomaly_event"
+    __table_args__ = (
+        CheckConstraint(
+            "detection_status IN ('active', 'recovered')",
+            name="ck_anomaly_event_detection",
+        ),
+        CheckConstraint(
+            "disposition IN ('open', 'archive_pending', 'archived', 'issue_created')",
+            name="ck_anomaly_event_disposition",
+        ),
+        UniqueConstraint("active_key", name="uq_anomaly_event_active_key"),
+        UniqueConstraint(
+            "rule_id",
+            "object_type",
+            "object_key",
+            "occurrence",
+            name="uq_anomaly_event_occurrence",
+        ),
+        Index("ix_anomaly_event_owner_open", "ai_master_id", "detection_status", "disposition"),
+        Index("ix_anomaly_event_rule_object", "rule_id", "object_type", "object_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_rule.id", ondelete="RESTRICT"), nullable=False
+    )
+    rule_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    rule_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    detector_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    occurrence: Mapped[int] = mapped_column(Integer, nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(64))
+    component_id: Mapped[str | None] = mapped_column(String(128))
+    repository: Mapped[str | None] = mapped_column(String(256))
+    user_email: Mapped[str | None] = mapped_column(String(320))
+    ai_master_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ai_master.id", ondelete="SET NULL")
+    )
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    actual_value: Mapped[str | None] = mapped_column(String(256))
+    threshold_value: Mapped[str | None] = mapped_column(String(256))
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detail_target: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detection_status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    disposition: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
+    closed_reason: Mapped[str | None] = mapped_column(String(64))
+    first_detected_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    last_detected_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    recovered_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class AnomalyArchiveRequest(Base):
+    __tablename__ = "anomaly_archive_request"
+    __table_args__ = (
+        CheckConstraint(
+            "target_type IN ('workflow', 'dev_run', 'attribution', 'event')",
+            name="ck_anomaly_archive_target",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'cancelled')",
+            name="ck_anomaly_archive_status",
+        ),
+        Index("ix_anomaly_archive_status_time", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_event.id", ondelete="CASCADE"), nullable=False
+    )
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    impact_preview: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    review_note: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+
+
+class AnomalyIssueLink(Base):
+    __tablename__ = "anomaly_issue_link"
+
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_event.id", ondelete="CASCADE"), primary_key=True
+    )
+    issue_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("issue.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class AnomalyAction(Base):
+    __tablename__ = "anomaly_action"
+    __table_args__ = (Index("ix_anomaly_action_event_time", "event_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_event.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class Component(Base):
+    """A registered component; the database source of truth for the registry.
+
+    Rows are seeded once from projects.yaml on first boot and then managed
+    through the admin API. The slug doubles as the id referenced by
+    dashboard component grouping.
+    """
+
+    __tablename__ = "component"
+    __table_args__ = (Index("ix_component_position", "position"),)
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    se: Mapped[str | None] = mapped_column(String(64))
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    repos: Mapped[list[ComponentRepo]] = relationship(
+        back_populates="component",
+        cascade="all, delete-orphan",
+        order_by="ComponentRepo.repo_key",
+    )
+
+
+class ComponentRepo(Base):
+    """A repository registered under a component.
+
+    repo_key must equal the repository name reported by the CLI (group prefix
+    stripped) for statistics to include the workflow.
+    """
+
+    __tablename__ = "component_repo"
+    __table_args__ = (
+        # MySQL 5.7 caps index keys at 3072 bytes (utf8mb4 x4), so the unique
+        # index covers a 700-char prefix of canonical_url; full-length
+        # uniqueness is additionally enforced by ComponentsDocument validation.
+        Index(
+            "uq_component_repo_canonical_url",
+            "canonical_url",
+            unique=True,
+            mysql_length={"canonical_url": 700},
+        ),
+        Index("ix_component_repo_component", "component_id"),
+    )
+
+    repo_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    component_id: Mapped[str] = mapped_column(
+        ForeignKey("component.id", ondelete="CASCADE"), nullable=False
+    )
+    canonical_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    target_branch: Mapped[str] = mapped_column(String(512), nullable=False, default="master")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+    component: Mapped[Component] = relationship(back_populates="repos")
+
+
+class IssueImage(Base):
+    """A normalized raster image temporarily uploaded or bound to one issue."""
+
+    __tablename__ = "issue_image"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('temporary', 'bound', 'pending_delete')",
+            name="ck_issue_image_status",
+        ),
+        CheckConstraint("size_bytes > 0", name="ck_issue_image_size_positive"),
+        CheckConstraint("width > 0 AND height > 0", name="ck_issue_image_dimensions_positive"),
+        Index("ix_issue_image_status_created", "status", "created_at"),
+        Index("ix_issue_image_delete_after", "delete_after"),
+        Index("ix_issue_image_issue", "issue_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    issue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("issue.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="temporary")
+    media_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    preview_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    full_object_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    preview_object_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    bound_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    delete_after: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+
+    issue: Mapped[Issue | None] = relationship(back_populates="images")

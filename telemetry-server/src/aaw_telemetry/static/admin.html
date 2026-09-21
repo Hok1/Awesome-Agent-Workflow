@@ -1,0 +1,3723 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>遥测运营后台 · AAW Telemetry Ops</title>
+  <link rel="stylesheet" href="/portal/vendor/fonts.css">
+  <style>
+    /* ═══════════════════════════════════════════════════════════
+       遥测运营后台 — Telemetry Ops
+       Same design language as the Adoption Studio portal:
+       warm paper, soft color blooms, iris voice, rounded cards.
+       ═══════════════════════════════════════════════════════════ */
+    :root {
+      --paper:   #FBFAF7;
+      --paper-2: #FFFFFF;
+      --edge:    #ECE7DE;
+      --edge-2:  #E0DACE;
+      --ink:      #16181D;
+      --ink-soft: #3F444E;
+      --ink-mute: #5D636D;
+      --iris:      #4B3FE4;
+      --iris-2:    #7C74FF;
+      --grass:     #12C46B;
+      --tangerine: #FF7A1A;
+      --magenta:   #FF3D8B;
+      --sky:       #2BB3FF;
+      --sh-iris:      0 18px 40px -20px rgba(75, 63, 228, .45);
+      --sh-grass:     0 18px 40px -20px rgba(18, 196, 107, .42);
+      --sh-tangerine: 0 18px 40px -20px rgba(255, 122, 26, .42);
+      --sh-magenta:   0 18px 40px -20px rgba(255, 61, 139, .40);
+      --sh-card:      0 22px 50px -30px rgba(30, 26, 60, .30),
+                      0 2px  10px -6px  rgba(30, 26, 60, .12);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --pad: clamp(16px, 2.4vw, 30px);
+      /* 三种字体都只有拉丁子集，中文本来会落到浏览器默认字体（等宽上下文里常是宋体），
+         11-13px 下笔画细、字面小。把中文无衬线接在各自字体之后：拉丁走原字体，中文走雅黑/苹方。 */
+      --cjk: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+      --disp: "Sora", var(--cjk);
+      --body: "Manrope", system-ui, -apple-system, var(--cjk);
+      --mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, var(--cjk), monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+      font-family: var(--body); font-size: 15.5px; line-height: 1.5; overflow-x: hidden;
+    }
+    .wash {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background:
+        radial-gradient(760px 520px at 88% -6%, rgba(75, 63, 228, .10), transparent 62%),
+        radial-gradient(680px 520px at -4% 8%, rgba(18, 196, 107, .09), transparent 60%),
+        radial-gradient(700px 620px at 60% 112%, rgba(255, 122, 26, .07), transparent 60%),
+        var(--paper);
+    }
+    body > *:not(.wash):not(.modal-mask):not(.patch-mask):not(.toast) { position: relative; z-index: 1; }
+
+    /* ── Shell：左侧导航 + 内容区 ── */
+    .shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); align-items: start; }
+    .side {
+      position: sticky; top: 0; z-index: 100; height: 100vh; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 18px;
+      padding: 20px 14px 18px; border-right: 1px solid var(--edge);
+      background: rgba(251, 250, 247, .9); backdrop-filter: blur(10px);
+      scrollbar-width: thin; scrollbar-color: var(--edge-2) transparent;
+    }
+    .mark { display: flex; align-items: center; gap: 12px; padding: 0 6px; }
+    .mark__glyph {
+      width: 40px; height: 40px; display: grid; place-items: center;
+      border-radius: 12px; color: #fff;
+      background: linear-gradient(135deg, var(--iris), var(--iris-2));
+      box-shadow: var(--sh-iris);
+    }
+    .mark__text strong { display: block; font-family: var(--disp); font-size: 18px; letter-spacing: .02em; }
+    .mark__text span { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink-mute); letter-spacing: .14em; }
+    /* 导航：分组即身份视角（概览 / 使用与质量 / 归属与配置 / 系统）。
+       分组标题保持弱化色——它只是分隔，层级交给字号和字重，不跟条目一起变黑。 */
+    .portal-nav { display: flex; flex-direction: column; gap: 14px; }
+    .side-nav__group { display: grid; gap: 2px; }
+    .side-nav__group + .side-nav__group { border-top: 1px solid var(--edge); padding-top: 14px; }
+    .side-nav__label {
+      padding: 0 11px 5px; font-family: var(--body); font-size: 12px;
+      font-weight: 600; letter-spacing: .06em; color: var(--ink-mute);
+    }
+    .portal-nav button, .portal-nav a {
+      width: 100%; display: flex; align-items: center; padding: 9px 11px; border: 0;
+      background: none; border-radius: 10px; color: var(--ink-soft);
+      font-family: var(--disp); font-size: 14px; font-weight: 600;
+      text-align: left; cursor: pointer; text-decoration: none;
+    }
+    .portal-nav button:hover, .portal-nav a:hover { background: rgba(75, 63, 228, .08); color: var(--iris); }
+    .portal-nav button.is-active { background: var(--iris); color: #fff; box-shadow: var(--sh-iris); }
+    .side-foot {
+      margin-top: auto; display: grid; gap: 10px;
+      padding-top: 14px; border-top: 1px solid var(--edge);
+    }
+    .side-foot .btn { justify-content: center; }
+    .bar__sync {
+      display: flex; align-items: center; gap: 8px; padding: 0 6px;
+      font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft);
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--grass);
+      box-shadow: 0 0 0 0 rgba(18, 196, 107, .5); animation: pulse 2.4s ease-out infinite;
+    }
+    .dot.bad { background: var(--magenta); box-shadow: none; animation: none; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(18, 196, 107, .5); }
+      70% { box-shadow: 0 0 0 7px rgba(18, 196, 107, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(18, 196, 107, 0); }
+    }
+
+    /* ── Stage ── */
+    /* width:100% 必须有：栅格项上的 auto 边距会让它退化成 fit-content，各页宽度会不一致。
+       宽屏下给到 1440：侧栏 252px 之后仍有富余，表格不必挤在 892px 里。 */
+    .stage { width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px var(--pad) 70px; }
+    section.tab { display: none; }
+    section.tab.is-active { display: block; animation: rise .3s ease; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    /* ── 页头：每个 tab 一个（页面名 + 一句话）；右侧控件整体贴右 ── */
+    .page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    .page-head__title { font-family: var(--disp); font-size: 20px; font-weight: 700; line-height: 1.25; }
+    .page-head__title small {
+      display: block; margin-top: 4px; font-family: var(--body); font-size: 13.5px;
+      font-weight: 500; color: var(--ink-soft); letter-spacing: 0;
+    }
+    /* 页头控件（筛选/按钮）统一推到行尾，与标题垂直居中，不再挤在标题旁边 */
+    .page-head > .btn, .page-head > .an-scope-label { margin-left: auto; }
+    .page-head > .btn + .an-scope-label, .page-head > .an-scope-label + .btn { margin-left: 16px; }
+    .page-head > .an-scope-label + .btn { margin-left: 0; }
+
+    .card {
+      background: var(--paper-2); border: 1px solid var(--edge);
+      border-radius: var(--radius); box-shadow: var(--sh-card);
+      padding: var(--pad); margin-bottom: 22px;
+    }
+    .card h2 {
+      margin: 0 0 14px; font-family: var(--disp); font-size: 16px; letter-spacing: .01em;
+      display: flex; align-items: center; gap: 10px;
+    }
+    /* 卡片标题后的说明弱于标题（标题 16px/700 + 深色，说明 13px/400 + 弱化色） */
+    .card h2 .count { font-family: var(--body); font-size: 13.5px; color: var(--ink-mute); font-weight: 500; }
+    .grid { display: grid; gap: 16px; }
+    .grid.halves { grid-template-columns: 1fr 1fr; }
+
+    /* stones — 语义只有三种声音：中性(统计/累计) / 良好(达成) / 需处理(>0 才报警) */
+    /* 160px 下限：常见宽度下 5 个石子在一条线上（上限调大会把「积压体检」拆成 4+1） */
+    .stones { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .stone {
+      position: relative; padding: 15px 12px 13px; border-radius: var(--radius-sm);
+      background: var(--paper-2); border: 1px solid var(--edge); overflow: hidden;
+    }
+    .stone::after {
+      content: ""; position: absolute; inset: -40% -20% auto; height: 120%;
+      background: var(--halo, transparent); pointer-events: none;
+    }
+    /* 标签必须单行：卡片被 5 等分后「退避重试」会折成「退避重/试」。中文走 body 栈（1em/字），
+       左右内边距 12px 保证放得下；窗口挤到极限时截断，不折行、不溢出到邻卡。 */
+    .stone small {
+      display: block; font-family: var(--body); font-size: 12.5px; font-weight: 600;
+      color: var(--ink-mute); letter-spacing: 0; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stone strong { display: block; margin-top: 8px; font: 700 27px/1 var(--mono); }
+    .stone--calm  { --halo: radial-gradient(circle, rgba(148,152,163,.12), transparent 70%); }
+    .stone--good  { --halo: radial-gradient(circle, rgba(18,196,107,.15), transparent 70%); }
+    .stone--good strong { color: #0A7C45; }
+    .stone--alert { --halo: radial-gradient(circle, rgba(255,61,139,.20), transparent 70%); border-color: rgba(255,61,139,.45); }
+    .stone--alert strong { color: var(--magenta); }
+    /* 无数据（如窗口内没有产出）不该和真实数字一个体量，否则一个大横杠很抢眼 */
+    .stone--empty strong { font-size: 20.5px; color: var(--ink-mute); }
+    .stone--warn       { --halo: radial-gradient(circle, rgba(148,152,163,.12), transparent 70%); }
+    .stone--iris       { --halo: radial-gradient(circle, rgba(75,63,228,.14), transparent 70%); }
+    .stone--tangerine  { --halo: radial-gradient(circle, rgba(255,122,26,.16), transparent 70%); }
+    .stone--magenta    { --halo: radial-gradient(circle, rgba(255,61,139,.16), transparent 70%); }
+    .stone--grass      { --halo: radial-gradient(circle, rgba(18,196,107,.16), transparent 70%); }
+    .stone--sky        { --halo: radial-gradient(circle, rgba(43,179,255,.16), transparent 70%); }
+    .stone[data-jump-to], .stone[data-jump] { cursor: pointer; }
+    .stone[data-jump-to]:hover, .stone[data-jump]:hover { border-color: var(--iris); }
+    .stone[data-jump-to]:focus-visible, .stone[data-jump]:focus-visible {
+      outline: 2px solid var(--iris-2); outline-offset: 2px;
+    }
+    .stone__hint {
+      display: block; margin-top: 6px; font-family: var(--body);
+      font-size: 12.5px; font-weight: 500; color: var(--ink-mute); letter-spacing: 0;
+    }
+
+    dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 7px 18px; margin: 0; font-size: 14.5px; }
+    dl.kv dt { color: var(--ink-mute); font-weight: 600; }
+    dl.kv dd { margin: 0; word-break: break-all; }
+
+    /* ── Controls ── */
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .toolbar label { font-size: 13.5px; font-weight: 600; color: var(--ink-soft); display: flex; gap: 6px; align-items: center; }
+    select, input[type="text"], input[type="number"], input[type="datetime-local"], input:not([type]) {
+      padding: 8px 11px; border: 1.5px solid var(--edge-2); border-radius: 9px;
+      background: var(--paper-2); color: var(--ink); font: 600 13.5px var(--body);
+    }
+    input[type="date"] {
+      padding: 6px 8px; border: 1.5px solid var(--edge-2); border-radius: 9px;
+      background: var(--paper-2); color: var(--ink); font: 600 13px var(--body);
+    }
+    select:focus, input:focus { outline: 2px solid var(--iris-2); outline-offset: 1px; border-color: var(--iris); }
+    .btn {
+      border: 1.5px solid var(--edge-2); background: var(--paper-2); color: var(--ink-soft);
+      font: 600 13.5px var(--disp); padding: 8px 14px; border-radius: 9px; cursor: pointer;
+      transition: all .15s ease; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { color: var(--iris); border-color: var(--iris); }
+    .btn--primary { color: #fff; background: linear-gradient(135deg, var(--iris), var(--iris-2)); border-color: transparent; }
+    .btn--primary:hover { filter: brightness(1.05); color: #fff; }
+    .btn--danger { color: var(--ink-soft); }
+    .btn--danger:hover { color: var(--magenta); border-color: var(--magenta); }
+    .btn--small { padding: 4px 10px; font-size: 12.5px; border-radius: 8px; }
+    .btn:disabled { opacity: .5; cursor: wait; }
+
+    /* ── Tables ── */
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 11px 13px; border-bottom: 1px solid var(--edge); text-align: left; vertical-align: top; word-break: break-all; }
+    th {
+      font-family: var(--body); font-size: 13px; font-weight: 600; letter-spacing: .02em;
+      color: var(--ink-soft); border-bottom: 1.5px solid var(--edge-2);
+    }
+    tr:last-child td { border-bottom: none; }
+    tbody tr { transition: background .2s ease; }
+    tbody tr:hover { background: rgba(75, 63, 228, .035); }
+    tr.row-fresh { animation: fresh 3.2s ease-out; }
+    #recBody td { word-break: break-word; }
+    @keyframes fresh {
+      0% { background: rgba(75, 63, 228, .16); }
+      100% { background: transparent; }
+    }
+    tr.row-excluded td { opacity: .55; }
+    tr.detail-row > td { background: rgba(75, 63, 228, .03); }
+    .mono { font-family: var(--mono); font-size: 13px; }
+    .muted { color: var(--ink-mute); }
+
+    .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 99px;
+      font: 700 12px var(--body); letter-spacing: .02em; white-space: nowrap;
+      background: rgba(148, 152, 163, .14); color: var(--ink-soft);
+    }
+    .badge--pending            { background: rgba(148,152,163,.14); color: var(--ink-soft); }
+    .badge--running            { background: rgba(255,122,26,.14); color: #A34D00; }
+    .badge--retry_pending      { background: rgba(255,122,26,.14); color: #A34D00; }
+    .badge--failed             { background: rgba(255,61,139,.13); color: #BE1356; }
+    .badge--finalized_match    { background: rgba(18,196,107,.13); color: #0A7C45; }
+    .badge--finalized_no_match { background: rgba(43,179,255,.13); color: #0E6BAE; }
+    .badge--not_queued         { background: rgba(148,152,163,.18); color: var(--ink-soft); }
+    /* 中性缺省态（未认领 / 未指定 / 未纳入）：不是异常，别用告警色 */
+    .badge--none               { background: rgba(148,152,163,.18); color: var(--ink-soft); font-weight: 600; }
+    .badge--excluded           { background: rgba(255,61,139,.16); color: #BE1356; }
+    .chip {
+      display: inline-block; padding: 1px 8px; border-radius: 99px; margin: 1px 2px 1px 0;
+      font: 700 12px var(--body); background: rgba(75,63,228,.09); color: var(--iris);
+    }
+    .chip--warn { background: rgba(255,61,139,.10); color: #BE1356; }
+    .chip--admin { background: rgba(255,122,26,.14); color: #A34D00; }
+    .fail-groups { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fail-groups .chip { cursor: pointer; padding: 4px 10px; font-size: 12px; }
+    .fail-groups .chip:hover { background: rgba(255,61,139,.12); color: #BE1356; }
+    .fail-groups:empty { display: none; }
+    /* 体检状态带：调度器关键数字一行排开，失败 chips 跟在后面，扫描按钮收尾 */
+    .health-band { align-items: center; gap: 18px; }
+    .health-band > span#healthSchedulerKv { display: inline-flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .health-band__item { font-size: 13.5px; color: var(--ink-mute); white-space: nowrap; }
+    .health-band__item b { color: var(--ink); font-weight: 700; }
+
+    /* ── Collapsible blocks ── */
+    details.more-filters, details.trend-more { display: block; }
+    details.more-filters { display: inline-block; }
+    details > summary {
+      cursor: pointer; list-style: none; user-select: none;
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1.5px dashed var(--edge-2); background: var(--paper-2); color: var(--ink-soft);
+      font: 600 13px var(--disp); padding: 6px 12px; border-radius: 9px;
+    }
+    details > summary:hover { color: var(--iris); border-color: var(--iris); }
+    details > summary::before { content: "▸"; font-size: 12px; }
+    details[open] > summary::before { content: "▾"; }
+    details[open] > summary { border-style: solid; color: var(--iris); }
+    .card.flash { animation: cardFlash 1.8s ease; }
+    @keyframes cardFlash {
+      0% { box-shadow: 0 0 0 3px rgba(75, 63, 228, .55), var(--sh-card); }
+      100% { box-shadow: var(--sh-card); }
+    }
+
+    /* ── Registry（主从布局：组件/仓库多时页面不再无限拉长）── */
+    .reg-split { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 12px; align-items: start; }
+    .reg-list, .reg-detail { margin-bottom: 0; }
+    .reg-list { padding: 8px; max-height: calc(100vh - 260px); overflow: auto; }
+    .reg-detail { padding: 16px; max-height: calc(100vh - 260px); overflow: auto; }
+    .reg-item { padding: 9px 11px; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
+    .reg-item:hover { background: rgba(75, 63, 228, .05); }
+    .reg-item.is-active { background: rgba(75, 63, 228, .08); border-color: rgba(75, 63, 228, .35); }
+    .reg-item b { display: block; font-family: var(--disp); font-size: 14px; }
+    .reg-item .mono { font-size: 12px; }
+    .reg-item .meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-size: 12.5px; font-weight: 500; color: var(--ink-mute); }
+    .reg-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+    .reg-repos { max-height: 48vh; overflow: auto; border: 1px solid var(--edge); border-radius: var(--radius-sm); }
+    .reg-repos table { margin: 0; }
+    .reg-repos th { position: sticky; top: 0; background: var(--paper-2); box-shadow: 0 1.5px 0 var(--edge-2); z-index: 1; }
+    @media (max-width: 900px) { .reg-split { grid-template-columns: 1fr; } .reg-list { max-height: 42vh; } }
+    form.inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--edge-2); }
+    form.inline[hidden] { display: none; }
+    form.inline .field { display: flex; flex-direction: column; gap: 4px; }
+    form.inline .field span { font: 700 12px var(--mono); color: var(--ink-mute); text-transform: uppercase; letter-spacing: .06em; }
+
+    /* ── Log console ── */
+    pre.console {
+      margin: 0; min-height: 320px; max-height: 62vh; overflow: auto; padding: 16px;
+      color: #D9DCEB; background: #191B26; border-radius: var(--radius-sm);
+      font: 13px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word;
+    }
+    .log-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .log-presets .btn--small { border-style: dashed; }
+    .console .line { display: block; }
+    .console .line--error { color: #FF7A9C; }
+    .console .line--warn  { color: #FFC46B; }
+    .console mark { background: rgba(75, 63, 228, .6); color: #fff; border-radius: 3px; padding: 0 1px; }
+
+    /* ── 异常：沿用运营后台卡片和表格，只补充异常领域的少量语义 ── */
+    .an-mode { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 16px; background: rgba(75,63,228,.06); border: 1px solid var(--edge); border-radius: 12px; }
+    .an-mode .btn { border: 0; background: transparent; }
+    .an-mode .btn.is-active { color: #fff; background: var(--iris); box-shadow: var(--sh-iris); }
+    .an-view[hidden] { display: none; }
+    .an-summary { display: grid; grid-template-columns: 1.2fr repeat(4,1fr); gap: 12px; margin-bottom: 18px; }
+    .an-summary .stone:first-child { color: #fff; background: #20212A; border-color: #20212A; }
+    .an-summary .stone:first-child small { color: #C7C9D2; }
+    .an-summary .stone:first-child strong { color: #FFE073; }
+    .an-problem { font-weight: 700; color: var(--ink); }
+    .an-sub { margin-top: 3px; color: var(--ink-mute); font-size: 12.5px; }
+    .an-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .an-issue-shortcut { width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; color: var(--ink-mute); background: transparent; border-color: transparent; }
+    .an-issue-shortcut:hover { color: var(--iris); background: rgba(75,63,228,.07); border-color: rgba(75,63,228,.18); }
+    .an-issue-shortcut svg { width: 15px; height: 15px; }
+    .an-rule-table th, .an-rule-table td { padding-top: 8px; padding-bottom: 8px; vertical-align: middle; }
+    .an-rule-table .an-problem { line-height: 1.25; }
+    .an-rule-table .an-sub { margin-top: 2px; line-height: 1.25; }
+    .an-rule-table .an-actions { flex-wrap: nowrap; justify-content: flex-end; }
+    .an-rule-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .an-rule-status::before { width: 7px; height: 7px; border-radius: 50%; background: #A4A7B4; content: ""; }
+    .an-rule-status.is-enabled::before { background: #23A66F; box-shadow: 0 0 0 3px rgba(35,166,111,.12); }
+    .an-rule-intro { margin: -2px 0 16px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: 10px; background: #FAFAFD; }
+    .an-rule-intro strong { display: block; margin-bottom: 4px; font-size: 15px; }
+    .an-field-note { color: var(--ink-mute); font-size: 11.5px; line-height: 1.4; }
+    .an-unit-input { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; }
+    .an-unit-input span { color: var(--ink-mute); font-size: 12px; }
+    .an-preview { margin-top: 12px; padding: 11px 13px; border-radius: 10px; background: rgba(75,63,228,.07); color: var(--ink-soft); }
+    .an-preview[hidden] { display: none; }
+    .an-empty { padding: 38px 16px; text-align: center; color: var(--ink-mute); }
+    .an-empty[hidden] { display: none; }
+    .an-empty strong { display: block; margin-bottom: 4px; color: var(--ink); }
+    /* 大弹窗：左侧固定「这是什么 / 判定条件」解释区，右侧编辑表单；详情复用同一骨架 */
+    .an-wide-modal { width: min(1040px, 96vw) !important; max-height: 90vh; display: flex; flex-direction: column; padding: 0 !important; overflow: hidden; }
+    .an-wide-modal > h2 { margin: 0; padding: 20px 26px 16px; font-family: var(--disp); font-size: 17px; border-bottom: 1px solid var(--edge); }
+    .an-wide-body { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; min-height: 0; flex: 1; overflow: auto; }
+    .an-wide-aside { padding: 20px 22px 24px; border-right: 1px solid var(--edge); background: #FAFAFD; }
+    .an-wide-main { padding: 20px 26px 24px; }
+    .an-wide-aside .an-aside-name { margin: 0 0 6px; font: 700 16px var(--disp); }
+    .an-wide-aside .an-aside-desc { margin: 0 0 16px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
+    /* 判定一句话：可调参数带底色突出，点开编辑时同一句话在表单里逐项对应 */
+    .an-sentence { margin: 0 0 18px; color: var(--ink); font-size: 13.5px; line-height: 2; }
+    .an-sentence-mini { margin-top: 4px; line-height: 1.9; color: var(--ink-soft); }
+    .an-sentence-mini .an-tune { display: inline-block; padding: 0 5px; border-radius: 5px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .an-event-table th { white-space: nowrap; }
+
+    .an-scope-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+    .an-scope-label > .multi { min-width: 150px; max-width: 220px; margin: 0; }
+    /* ── 可搜索下拉（与门户采纳看板同款）：触发按钮 + 带搜索框的浮层 ── */
+    .multi {
+      position: relative; min-width: 170px; max-width: 240px; min-height: 40px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      padding: 5px 10px; background: var(--paper-2);
+      border: 1.5px solid var(--edge-2); border-radius: var(--radius-sm);
+      cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .multi:hover { border-color: #cfc7b8; }
+    .multi.is-open, .multi:focus-visible {
+      border-color: var(--iris); box-shadow: 0 0 0 4px rgba(75, 63, 228, .12); outline: none;
+    }
+    .multi__trigger {
+      width: 100%; min-width: 0; min-height: 24px; display: flex; align-items: center; gap: 6px;
+      padding: 0; border: 0; background: transparent; color: inherit; font: inherit;
+      text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden;
+    }
+    .multi__trigger:focus-visible { outline: none; }
+    .multi__trigger .caret { margin-left: auto; flex: none; color: var(--ink-mute); font-size: 11px; }
+    .multi__ph { color: var(--ink-mute); font-size: 13.5px; }
+    .multi__val { display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+      padding: 2px 8px; font-size: 12.5px; font-weight: 600; color: var(--iris);
+      background: rgba(75, 63, 228, .09); border-radius: 8px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pop {
+      position: absolute; top: calc(100% + 8px); right: 0; left: auto;
+      width: max(280px, 100%); max-width: min(340px, calc(100vw - 24px));
+      overflow: hidden; background: var(--paper-2);
+      border: 1px solid var(--edge-2); border-radius: var(--radius-sm);
+      box-shadow: var(--sh-card); z-index: 1000;
+    }
+    .pop__search-wrap {
+      display: flex; align-items: center; gap: 8px; padding: 9px;
+      background: color-mix(in srgb, var(--paper-2) 94%, var(--iris) 6%);
+      border-bottom: 1px solid var(--edge);
+    }
+    .pop__search-icon {
+      width: 14px; height: 14px; flex: none; position: relative;
+      border: 1.7px solid var(--ink-mute); border-radius: 50%; opacity: .8;
+    }
+    .pop__search-icon::after {
+      content: ""; position: absolute; right: -4px; bottom: -2px; width: 6px; height: 1.7px;
+      border-radius: 2px; background: var(--ink-mute); transform: rotate(45deg);
+    }
+    .pop__search {
+      width: 100%; min-width: 0; height: 32px; padding: 0 9px;
+      border: 1px solid var(--edge-2); border-radius: 8px; outline: none;
+      color: var(--ink); background: var(--paper-2); font: 13px var(--body);
+    }
+    .pop__search::placeholder { color: var(--ink-mute); }
+    .pop__search:focus { border-color: var(--iris); box-shadow: 0 0 0 3px rgba(75, 63, 228, .1); }
+    .pop__list {
+      max-height: 340px; overflow-y: auto; overscroll-behavior: contain; padding: 6px;
+      scrollbar-width: thin; scrollbar-color: var(--edge-2) transparent;
+    }
+    .pop__list::-webkit-scrollbar { width: 7px; }
+    .pop__list::-webkit-scrollbar-thumb {
+      background: var(--edge-2); border: 2px solid transparent; border-radius: 8px; background-clip: padding-box;
+    }
+    .pop__opt {
+      width: 100%; border: 0; background: transparent; color: inherit; text-align: left;
+      display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 11px;
+      border-radius: 9px; cursor: pointer; font-size: 14px;
+    }
+    .pop__opt[hidden] { display: none; }
+    .pop__opt:hover { background: rgba(75, 63, 228, .07); }
+    .pop__opt[aria-selected="true"] { background: rgba(75, 63, 228, .09); color: var(--iris); font-weight: 600; }
+    .pop__opt .count { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-mute); }
+    .pop__empty { min-height: 80px; display: grid; place-items: center; padding: 18px; color: var(--ink-mute); font-size: 13px; }
+    .pop__empty[hidden] { display: none; }
+    .an-problem-line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+    .an-problem-line .an-problem { font-weight: 700; color: var(--ink); white-space: nowrap; }
+    .an-cond { position: static; display: inline-flex; align-items: center; }
+    .an-cond-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 15px; height: 15px; border: 1px solid var(--edge-2); border-radius: 50%;
+      font: 700 10.5px/1 var(--body); color: var(--ink-mute); cursor: help; user-select: none;
+    }
+    .an-cond-icon:hover, .an-cond-icon:focus-visible { border-color: var(--iris); color: var(--iris); outline: none; }
+    .an-cond-pop {
+      position: fixed; z-index: 2000;
+      background: var(--paper-2); border: 1px solid var(--edge-2); border-radius: 8px;
+      box-shadow: var(--sh-card); padding: 9px 13px; width: max-content; max-width: 460px;
+      font-size: 12.5px; line-height: 1.9; color: var(--ink-soft);
+      opacity: 0; visibility: hidden; transition: opacity .12s ease;
+      pointer-events: none;
+    }
+    .an-cond:hover .an-cond-pop, .an-cond:focus-within .an-cond-pop { opacity: 1; visibility: visible; }
+    /* 屏蔽待审：等待管理员处理的中转态，用时间色（橙）区别于问题本身 */
+    .badge--waiting-review { background: rgba(255,122,26,.14); color: #A34D00; }
+
+    .an-th-help {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 15px; height: 15px; margin-left: 4px; vertical-align: 1px;
+      border: 1px solid var(--edge-2); border-radius: 50%;
+      font: 700 10.5px/1 var(--body); color: var(--ink-mute);
+      cursor: help; user-select: none;
+    }
+    .an-th-help:hover, .an-th-help:focus-visible { border-color: var(--iris); color: var(--iris); outline: none; }
+    .an-sentence .an-tune { display: inline-block; padding: 1px 7px; border-radius: 6px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .an-sentence-note { margin: -12px 0 18px; color: var(--ink-mute); font-size: 11.5px; }
+    .an-next-hint { margin: 0 0 4px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.7; }
+    .an-aside-section { margin: 14px 0 6px; font: 700 12px var(--disp); color: var(--ink-mute); letter-spacing: .04em; }
+    .an-aside-kv { display: grid; gap: 9px; }
+    .an-aside-kv .an-fact { padding: 9px 11px; }
+    .an-wide-modal .toolbar { margin: 0; padding: 14px 26px; border-top: 1px solid var(--edge); justify-content: flex-end; background: var(--paper-2); }
+    .an-wide-modal .an-form { gap: 14px 16px; }
+    .an-rule-params { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; grid-column: 1 / -1; }
+    .an-detail-modal { width: min(720px, 94vw); max-height: 88vh; overflow: auto; }
+    .an-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 16px; }
+    .an-fact { min-width: 0; padding: 11px 12px; border: 1px solid var(--edge); border-radius: 10px; }
+    .an-fact dt { margin-bottom: 4px; color: var(--ink-mute); font-size: 12px; font-weight: 600; }
+    .an-fact dd { margin: 0; color: var(--ink); font-size: 13.5px; overflow-wrap: anywhere; }
+    .an-detail-section { margin: 16px 0 8px; font: 700 13.5px var(--disp); }
+    .an-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .an-field { display: grid; gap: 5px; }
+    .an-field.wide { grid-column: 1 / -1; }
+    .an-field label { color: var(--ink-mute); font-size: 12.5px; font-weight: 600; }
+    .an-field textarea { min-height: 110px; resize: vertical; padding: 9px 11px; border: 1.5px solid var(--edge-2); border-radius: 9px; font: 13px/1.5 var(--mono); }
+    .an-field select, .an-field input { width: 100%; }
+    .an-audit { padding: 10px 0; border-bottom: 1px solid var(--edge); }
+    @media (max-width: 900px) { .an-summary { grid-template-columns: 1fr 1fr; } .an-summary .stone:first-child { grid-column: 1/-1; } }
+    @media (max-width: 900px) { .an-wide-body { grid-template-columns: 1fr; } .an-wide-aside { border-right: 0; border-bottom: 1px solid var(--edge); } }
+    @media (max-width: 620px) { .an-form, .an-facts, .an-rule-params { grid-template-columns: 1fr; } .an-field.wide { grid-column: auto; } }
+
+    /* ── Patch viewer（补丁文件查看器弹窗）── */
+    .patch-mask {
+      position: fixed; inset: 0; z-index: 320; display: grid; place-items: center;
+      background: rgba(22, 24, 29, .45); backdrop-filter: blur(3px);
+    }
+    .patch-mask[hidden] { display: none; }
+    .patch-modal {
+      width: min(1100px, 94vw); height: min(760px, 88vh);
+      display: flex; flex-direction: column; overflow: hidden;
+      background: var(--paper-2); border: 1px solid var(--edge);
+      border-radius: var(--radius); box-shadow: var(--sh-card);
+    }
+    .patch-head {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 13px 18px; border-bottom: 1px solid var(--edge);
+    }
+    .patch-head h2 { margin: 0; font-family: var(--disp); font-size: 14px; word-break: break-all; }
+    .patch-meta { font: 500 12.5px var(--mono); color: var(--ink-mute); word-break: break-all; }
+    .patch-body { flex: 1; overflow: auto; background: #191B26; }
+    .patch-code { margin: 0; padding: 10px 0; font: 13px/1.55 var(--mono); color: #D9DCEB; }
+    .patch-line { display: flex; }
+    .patch-line .ln {
+      flex: 0 0 56px; text-align: right; padding-right: 12px;
+      color: #6B7186; user-select: none;
+    }
+    .patch-line .tx { flex: 1; padding-right: 16px; white-space: pre-wrap; word-break: break-all; }
+    .patch-code.nowrap .patch-line .tx { white-space: pre; word-break: normal; }
+    .patch-line.add .tx { color: #7CE8AC; background: rgba(18, 196, 107, .09); }
+    .patch-line.del .tx { color: #FF9BB6; background: rgba(255, 61, 139, .09); }
+    .patch-line.hunk .tx { color: #9FB4FF; }
+    .patch-line.meta .tx { color: #8A90A5; }
+    .patch-tabs { display: inline-flex; gap: 4px; }
+    .patch-tabs .btn.is-active {
+      color: #fff; background: linear-gradient(135deg, var(--iris), var(--iris-2));
+      border-color: transparent;
+    }
+    .patch-files { width: 100%; border-collapse: collapse; font: 13.5px var(--mono); }
+    .patch-files th {
+      text-align: left; padding: 8px 14px; border-bottom: 1.5px solid #2A2D3A;
+      font: 700 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase;
+      color: #8A90A5; position: sticky; top: 0; background: #191B26; z-index: 1;
+    }
+    .patch-files td { padding: 7px 14px; border-bottom: 1px solid #23252F; color: #D9DCEB; }
+    .patch-files tr:hover td { background: rgba(75, 63, 228, .10); }
+    .patch-files .num { text-align: right; white-space: nowrap; }
+    .patch-files .add-n { color: #7CE8AC; font-weight: 700; }
+    .patch-files .del-n { color: #FF9BB6; font-weight: 700; }
+    .patch-files .file-path { word-break: break-all; }
+    .patch-bar { display: inline-flex; width: 160px; height: 8px; border-radius: 4px; overflow: hidden; background: #23252F; vertical-align: middle; }
+    .patch-bar .a { background: #12C46B; }
+    .patch-bar .d { background: #FF3D8B; }
+    .patch-totals { padding: 9px 14px; font: 700 13px var(--mono); color: #D9DCEB; }
+    .patch-truncated { padding: 10px 14px; font: 500 12.5px var(--mono); color: #FFC46B; }
+
+    .toast {
+      position: fixed; right: 18px; bottom: 18px; max-width: 440px; padding: 13px 17px; z-index: 200;
+      background: linear-gradient(135deg, var(--iris), var(--iris-2)); color: #fff;
+      border-radius: var(--radius-sm); box-shadow: var(--sh-iris);
+      font: 600 13.5px var(--body); display: none; word-break: break-all;
+    }
+    .toast.bad { background: linear-gradient(135deg, #D6266F, var(--magenta)); box-shadow: var(--sh-magenta); }
+
+    /* ── In-page dialog（内嵌内核不支持 window.prompt/confirm，一律用自制弹窗）── */
+    .modal-mask {
+      position: fixed; inset: 0; z-index: 300; display: grid; place-items: center;
+      background: rgba(22, 24, 29, .38); backdrop-filter: blur(2px);
+    }
+    .modal-mask[hidden] { display: none; }
+    .modal {
+      width: min(460px, 92vw); background: var(--paper-2); border: 1px solid var(--edge);
+      border-radius: var(--radius); box-shadow: var(--sh-card); padding: 22px;
+    }
+    .modal h2 { margin: 0 0 6px; font-family: var(--disp); font-size: 15.5px; }
+    .modal p { margin: 0; font-size: 14px; color: var(--ink-soft); white-space: pre-line; }
+    .modal input { width: 100%; margin-top: 12px; }
+    a { color: var(--iris); }
+    /* 窄屏：侧栏收回顶部，分组横向排列 */
+    @media (max-width: 1000px) {
+      .shell { grid-template-columns: 1fr; }
+      .side {
+        position: static; height: auto; flex-direction: row; flex-wrap: wrap;
+        align-items: center; gap: 10px 18px;
+        border-right: 0; border-bottom: 1px solid var(--edge);
+      }
+      .portal-nav { flex-direction: row; flex-wrap: wrap; gap: 8px 16px; }
+      .side-nav__group { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
+      .side-nav__label { padding: 0 4px 0 0; }
+      .portal-nav button, .portal-nav a { width: auto; }
+      .side-foot { margin-top: 0; margin-left: auto; display: flex; align-items: center; gap: 12px; border-top: 0; padding-top: 0; }
+    }
+    @media (max-width: 900px) { .grid.halves { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="wash" aria-hidden="true"></div>
+
+<div class="shell">
+<aside class="side">
+  <div class="mark">
+    <span class="mark__glyph" aria-hidden="true">
+      <svg viewBox="0 0 28 28" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 24c5-3 8-7 8-12V6l-8-3-8 3v6c0 5 3 9 8 12Z"/>
+        <path d="M10 13.5 13 16.5 18.5 10.5"/>
+      </svg>
+    </span>
+    <div class="mark__text">
+      <strong>遥测运营后台</strong>
+      <span>TELEMETRY&nbsp;OPS</span>
+    </div>
+  </div>
+
+  <nav class="portal-nav" aria-label="运营后台导航">
+    <div class="side-nav__group">
+      <span class="side-nav__label">使用与质量</span>
+      <button data-tab="anomalies" class="is-active">异常总览</button>
+      <button data-tab="anomaly-admin">异常管理</button>
+      <button data-tab="components">组件</button>
+      <button data-tab="workflows">工作流</button>
+      <button data-tab="attribution">归因</button>
+      <button data-tab="versions">版本</button>
+    </div>
+    <div class="side-nav__group">
+      <span class="side-nav__label">归属与配置</span>
+      <button data-tab="aimaster">AI Master</button>
+      <button data-tab="registry">注册表</button>
+    </div>
+    <div class="side-nav__group">
+      <span class="side-nav__label">系统</span>
+      <button data-tab="logs">日志</button>
+    </div>
+  </nav>
+
+  <div class="side-foot">
+    <div class="bar__sync">
+      <span class="dot" id="syncDot" aria-hidden="true"></span>
+      <span id="lastSync">—</span>
+    </div>
+    <a class="btn btn--small" href="/portal/bright.html">← 返回看板</a>
+  </div>
+</aside>
+
+<main class="stage">
+
+  <!-- ============================== 组件使用情况 ============================== -->
+  <section class="tab" id="tab-components">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        组件
+        <small>按组件统计使用与采纳；SE、AI Master 归属在此核对</small>
+      </div>
+    </div>
+    <div class="card">
+      <h2>组件使用情况 <span class="count" id="compMeta">时间不限 · 全量组件</span></h2>
+      <div class="toolbar">
+        <label>搜索 <input id="compSearch" size="20" placeholder="组件名 / SE / AI Master" autocomplete="off"></label>
+        <label>归属
+          <select id="compMasterFilter">
+            <option value="">全部 AI Master</option>
+          </select>
+        </label>
+        <label>时间
+          <select id="compWindow">
+            <option value="0" selected>不限</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+            <option value="365">近 365 天</option>
+          </select>
+        </label>
+        <button class="btn" id="btnCompRefresh">刷新</button>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>组件</th><th>SE</th><th>AI Master</th><th>仓库</th><th>使用 AAW</th>
+              <th>生成代码量</th><th>采纳率·80%</th><th>采纳率·90%</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="compBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" id="compPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+    </div>
+  </section>
+
+  <!-- ============================== AI Master 运营 ============================== -->
+  <section class="tab" id="tab-aimaster">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        AI Master
+        <small>一个仓库一位 AI Master；认领关系与名单在此维护</small>
+      </div>
+    </div>
+    <div class="card">
+      <h2>AI Master 名单 <span class="count">删除后其组件回到「未分配」</span></h2>
+      <div class="toolbar">
+        <input id="amNewName" size="16" placeholder="新 AI Master 姓名" autocomplete="off">
+        <button class="btn btn--primary" id="btnAmAdd">新增</button>
+      </div>
+      <table>
+        <thead><tr><th>姓名</th><th>组件数</th><th>操作</th></tr></thead>
+        <tbody id="amRosterBody"></tbody>
+      </table>
+      <div class="toolbar" id="amRosterPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+    </div>
+    <div class="card">
+      <h2>仓库归属 <span class="count">一个仓库一位 AI Master · 切换下拉即保存</span></h2>
+      <div class="toolbar">
+        <label>搜索 <input id="amAssignSearch" size="20" placeholder="仓库 / 组件 / SE / AI Master" autocomplete="off"></label>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>仓库</th><th>组件</th><th>SE</th><th>归属 AI Master</th></tr></thead>
+          <tbody id="amAssignBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" id="amAssignPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+    </div>
+  </section>
+
+  <!-- ============================== 工作流管理 ============================== -->
+  <section class="tab" id="tab-workflows">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        工作流
+        <small>全量工作流明细；可按工作流 / 产出 / 用户三级删除</small>
+      </div>
+    </div>
+    <div class="card">
+      <h2>工作流 <span class="count" id="wfAdminTotal">加载中…</span></h2>
+      <div class="toolbar">
+        <label>用户 <input id="awUser" size="12" placeholder="姓名/邮箱" autocomplete="off"></label>
+        <label>仓库 <input id="awRepo" size="18" placeholder="仓库名，多值逗号分隔" autocomplete="off"></label>
+        <label>状态
+          <select id="awState">
+            <option value="all">全部</option>
+            <option value="active">活跃</option>
+            <option value="stalled">停滞</option>
+            <option value="in_progress">进行中</option>
+            <option value="completed">已完成</option>
+          </select>
+        </label>
+        <label>范围
+          <select id="awLifecycle">
+            <option value="active">未删除</option>
+            <option value="deleted">仅已删除（归档）</option>
+            <option value="all">全部</option>
+          </select>
+        </label>
+        <label>自 <input type="date" id="awFrom"></label>
+        <label>至 <input type="date" id="awTo"></label>
+        <button class="btn btn--primary" id="btnAwRefresh">查询</button>
+        <button class="btn" id="btnAwReset">重置</button>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>工作流 / 需求</th><th>类型</th><th>用户</th><th>仓库</th>
+              <th>产出 / 归因</th><th>最近活动</th><th>状态</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="awBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="margin:12px 0 0; justify-content:flex-end;">
+        <button class="btn" id="btnAwPrev">上一页</button>
+        <span class="mono" id="awPage">1</span>
+        <button class="btn" id="btnAwNext">下一页</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== 归因管理面 ============================== -->
+  <section class="tab" id="tab-attribution">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        归因
+        <small>队列健康、积压与归因明细；可重跑、可删除产出</small>
+      </div>
+    </div>
+
+    <!-- ① 体检：积压四分类 + 调度器状态带 + 趋势/算法折叠 -->
+    <div class="card">
+      <h2>积压体检 <span class="count">非终态记录四分类 · 点击色块可跳转筛选</span></h2>
+      <div class="stones" id="backlogStones"></div>
+      <div class="toolbar health-band" style="margin:16px 0 0;">
+        <span id="healthSchedulerKv"></span>
+        <span class="fail-groups" id="failGroups"></span>
+        <span class="mono muted" id="scanResultHealth" style="margin-left:auto;"></span>
+        <button class="btn btn--primary" id="btnScanHealth">立即扫描</button>
+      </div>
+      <details class="trend-more" style="margin-top:14px;">
+        <summary>处理趋势 <span class="count">近 14 天</span></summary>
+        <table style="margin-top:8px;">
+          <thead><tr><th>日期</th><th>匹配</th><th>未匹配</th><th>失败</th><th>置信度</th></tr></thead>
+          <tbody id="trendBody"></tbody>
+        </table>
+      </details>
+      <details class="trend-more" style="margin-top:8px;">
+        <summary>算法版本构成 <span class="count">暴露新旧算法结果并存</span></summary>
+        <table style="margin-top:8px;">
+          <thead><tr><th>算法版本</th><th>结果</th><th>数量</th></tr></thead>
+          <tbody id="algoBody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- ② 定位与处理：组合检索 + 记录列表 + 批量 -->
+    <div class="card" id="cardRecords">
+      <h2>归因记录 <span class="count" id="recTotal"></span></h2>
+      <div class="toolbar">
+        <label>仓库 <input id="fRepo" size="18" placeholder="仓库名，多值逗号分隔"></label>
+        <label>用户 <input id="fUser" size="12" placeholder="姓名/邮箱"></label>
+        <label>SR <input id="fSr" size="10" placeholder="SR号"></label>
+        <label>AR <input id="fAr" size="10" placeholder="AR号"></label>
+        <label>MR <input id="fMr" size="8" placeholder="MR号"></label>
+        <label>状态
+          <select id="fStatus">
+            <option value="">全部</option>
+            <option value="pending">待处理</option>
+            <option value="running">执行中</option>
+            <option value="retry_pending">退避重试</option>
+            <option value="failed">失败</option>
+            <option value="finalized_match">已匹配</option>
+            <option value="finalized_no_match">未匹配</option>
+            <option value="not_queued">未入队</option>
+          </select>
+        </label>
+        <button class="btn btn--primary" id="btnRecRefresh">查询</button>
+        <button class="btn" id="btnRecReset">重置</button>
+        <span id="kindChip" class="chip chip--admin" style="display:none;cursor:pointer;padding:5px 12px;" title="点击清除该筛选">仅看未入队 ✕</span>
+        <span id="pendingChip" class="chip chip--warn" style="display:none;cursor:pointer;padding:5px 12px;" title="点击清除该口径，回到全量记录">待归因口径 · 近 30 天无归因结果 ✕</span>
+        <details class="more-filters">
+          <summary>更多筛选</summary>
+          <div class="toolbar" style="margin:10px 0 0;">
+            <label>结果
+              <select id="fResult">
+                <option value="">全部</option>
+                <option value="finalized_match">匹配成功</option>
+                <option value="finalized_no_match">未匹配</option>
+              </select>
+            </label>
+            <label>标记 <input id="fFlag" size="12" placeholder="质量标记"></label>
+            <label>算法 <input id="fAlgo" size="10" placeholder="算法版本"></label>
+            <label>通道
+              <select id="fKind">
+                <option value="">全部</option>
+                <option value="aaw">主流程</option>
+                <option value="testing">测试流程</option>
+              </select>
+            </label>
+            <label>入口
+              <select id="fEntry">
+                <option value="">全部</option>
+                <option value="sr">SR</option>
+                <option value="ar">AR</option>
+                <option value="dev">dev</option>
+              </select>
+            </label>
+            <label>已删除
+              <select id="fExcluded">
+                <option value="hidden">隐藏已删除</option>
+                <option value="only">仅看已删除</option>
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>自 <input type="date" id="fFrom"></label>
+            <label>至 <input type="date" id="fTo"></label>
+          </div>
+        </details>
+      </div>
+      <div class="toolbar" style="border-top:1px dashed var(--edge-2); padding-top:12px;">
+        <span class="muted" style="font-size:13px;">批量（先预览后执行，单次 ≤ 200 条）：</span>
+        <button class="btn" id="btnBulkRetry">批量重跑</button>
+        <button class="btn" id="btnBulkForce">批量强制重跑</button>
+        <button class="btn btn--danger" id="btnBulkExclude">批量删除产出</button>
+        <button class="btn" id="btnBulkRestore">批量恢复</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="btnRecPrev">上一页</button>
+        <span class="mono" id="recPage">1</span>
+        <button class="btn" id="btnRecNext">下一页</button>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>状态</th><th>仓库 / 需求</th><th>用户</th><th>生成 → 归因(80%)</th>
+              <th>调度</th><th>更新时间</th><th>标记</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="recBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== 版本运营 ============================== -->
+  <section class="tab" id="tab-versions">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        版本
+        <small>按每人最近一次上报的版本统计</small>
+      </div>
+    </div>
+    <div class="card">
+      <h2>版本运营</h2>
+      <div class="toolbar">
+        <label>窗口
+          <select id="verWindow">
+            <option value="0" selected>不限</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+          </select>
+        </label>
+        <button class="btn btn--primary" id="btnVerRefresh">刷新</button>
+        <span class="mono muted" id="verBaseline"></span>
+      </div>
+      <div class="stones" id="verStones"></div>
+      <div class="table-wrap" style="margin-top:18px;">
+        <table>
+          <thead>
+            <tr>
+              <th>用户</th><th>当前版本</th><th>落后</th><th>最近上报</th><th>升级轨迹</th>
+            </tr>
+          </thead>
+          <tbody id="verBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" id="verPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+      <details class="trend-more" style="margin-top:16px;">
+        <summary>非发布版本账号 <span class="count" id="verNonReleaseCount"></span></summary>
+        <table style="margin-top:8px;">
+          <thead><tr><th>用户</th><th>邮箱</th><th>上报版本</th><th>最近上报</th></tr></thead>
+          <tbody id="verNonRelease"></tbody>
+        </table>
+      </details>
+      <details class="trend-more" style="margin-top:8px;">
+        <summary>版本分布 <span class="count">窗口内上报的版本构成</span></summary>
+        <div class="stones" id="verDistStones" style="margin-top:10px;"></div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================== 注册表 ============================== -->
+  <section class="tab" id="tab-registry">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        注册表
+        <small>组件与仓库的登记入口；SE 归属、统计开关在此设置</small>
+      </div>
+    </div>
+    <div class="card" style="padding:12px 16px; margin-bottom:12px;">
+      <div class="toolbar" style="margin-bottom:0;">
+        <input id="regSearch" style="width:280px" placeholder="搜索组件名 / ID / SE / 仓库…" autocomplete="off">
+        <span class="mono muted" id="regStats"></span>
+        <button class="btn" id="btnRegRefresh">刷新</button>
+        <details id="regAddBox" style="margin-left:auto;">
+          <summary>新增组件</summary>
+          <form class="inline" id="formComponent" style="border:none; padding-top:0;">
+            <div class="field"><span>ID (slug)</span><input name="component_id" required maxlength="128" placeholder="my-service"></div>
+            <div class="field"><span>名称</span><input name="name" required maxlength="128" placeholder="我的服务"></div>
+            <div class="field"><span>SE</span><input name="se" maxlength="64" placeholder="张三"></div>
+            <button type="submit" class="btn btn--primary">创建组件</button>
+          </form>
+        </details>
+      </div>
+    </div>
+    <div class="reg-split">
+      <div class="card reg-list" id="regList"></div>
+      <div class="card reg-detail" id="regDetail"></div>
+    </div>
+  </section>
+
+  <!-- ============================== 异常总览 ============================== -->
+  <section class="tab is-active" id="tab-anomalies">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        异常总览
+      </div>
+      <div class="an-scope-label">查看范围 <div class="multi" id="anMaster" data-placeholder="选择 AI Master"></div></div>
+      <button class="btn" id="anRefresh">刷新</button>
+    </div>
+
+    <div class="an-summary">
+      <div class="stone"><small>存在异常</small><strong id="anSumOpen">0</strong></div>
+      <div class="stone stone--tangerine"><small>组件统计</small><strong id="anSumComponent">0</strong></div>
+      <div class="stone stone--magenta"><small>工作流</small><strong id="anSumWorkflow">0</strong></div>
+      <div class="stone stone--sky"><small>归因处理</small><strong id="anSumAttribution">0</strong></div>
+      <div class="stone stone--iris"><small>版本使用</small><strong id="anSumVersion">0</strong></div>
+    </div>
+    <div class="card">
+      <div class="toolbar">
+        <div class="an-scope-label">异常类型 <div class="multi" id="anCategory" data-placeholder="全部"></div></div>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto;">
+        <table class="an-event-table"><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
+      </div>
+      <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
+      <div class="toolbar" id="anEventPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+    </div>
+  </section>
+
+  <!-- ============================== 异常管理（管理员） ============================== -->
+  <section class="tab" id="tab-anomaly-admin">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        异常管理
+      </div>
+      <button class="btn" id="anAdminRefresh">刷新</button>
+    </div>
+
+    <div class="an-mode" role="tablist" aria-label="异常管理功能">
+      <button class="btn is-active" data-an-admin-view="rules">规则管理</button>
+      <button class="btn" data-an-admin-view="reviews">屏蔽审核</button>
+      <button class="btn" data-an-admin-view="masters">按 AI Master</button>
+    </div>
+
+    <div class="an-view" id="an-admin-view-rules">
+      <div class="card">
+        <h2>规则管理 <span class="count">检测类型由系统统一提供，管理员只需配置并启停</span></h2>
+        <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span></div>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许申请屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
+        </div>
+        <div class="toolbar" id="anRulePager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+      </div>
+    </div>
+
+    <div class="an-view" id="an-admin-view-reviews" hidden>
+      <div class="card">
+        <h2>屏蔽审核 <span class="count">处理 AI Master 提交的屏蔽申请</span></h2>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table><thead><tr><th>申请</th><th>屏蔽对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
+        </div>
+        <div class="toolbar" id="anReviewPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+        <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>屏蔽申请通过后，对应数据将不再纳入统计。</div>
+      </div>
+    </div>
+
+    <div class="an-view" id="an-admin-view-masters" hidden>
+      <div class="card">
+        <h2>按 AI Master</h2>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table><thead><tr><th>AI Master</th><th>存在异常</th><th>组件统计</th><th>工作流</th><th>归因处理</th><th>版本使用</th><th>最早持续</th><th>操作</th></tr></thead><tbody id="anMasterBody"></tbody></table>
+        </div>
+        <div class="toolbar" id="anMasterBoardPager" style="margin:12px 0 0; justify-content:flex-end;"></div>
+        <div class="an-empty" id="anMasterEmpty" hidden><strong>当前没有任何异常</strong>所有 AI Master 名下都没有命中规则的异常。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== 日志 ============================== -->
+  <section class="tab" id="tab-logs">
+    <div class="page-head">
+      <div class="page-head__title">
+
+        日志
+        <small>只读服务日志，按关键字与时间窗检索</small>
+      </div>
+    </div>
+    <div class="card">
+      <h2>日志 <span class="count">只读文件末尾 2MB（时间窗在此范围内生效）· 筛选为「包含匹配」· 切条件即时生效</span></h2>
+      <div class="toolbar">
+        <label>文件
+          <select id="logFile">
+            <option value="server.log">server.log · 业务日志</option>
+            <option value="error.log">error.log · 错误输出</option>
+            <option value="access.log">access.log · HTTP 访问</option>
+          </select>
+        </label>
+        <label>级别
+          <select id="logLevel">
+            <option value="">全部</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+        </label>
+        <label>开始 <input type="datetime-local" id="logSince" style="width:186px"></label>
+        <label>结束 <input type="datetime-local" id="logUntil" style="width:186px"></label>
+        <label>时间窗
+          <select id="logRange">
+            <option value="">不限</option>
+            <option value="5m">最近 5 分钟</option>
+            <option value="30m">最近 30 分钟</option>
+            <option value="1h">最近 1 小时</option>
+            <option value="24h">最近 24 小时</option>
+            <option value="today">今天</option>
+          </select>
+        </label>
+      </div>
+      <div class="toolbar" style="margin-bottom:12px;">
+        <label>关键字 <input id="logQuery" size="20" placeholder="如 attribution / 仓库名 / request_id" autocomplete="off"></label>
+        <label>末尾
+          <select id="logLines">
+            <option value="200">200 行</option>
+            <option value="500">500 行</option>
+          </select>
+        </label>
+        <button class="btn btn--primary" id="btnLogRefresh">刷新</button>
+        <label><input type="checkbox" id="logAuto"> 自动刷新(5s)</label>
+      </div>
+      <div class="log-presets">
+        <span class="mono muted">快捷：</span>
+        <button class="btn btn--small" data-log-preset="server">全部业务日志</button>
+        <button class="btn btn--small" data-log-preset="error">只看错误</button>
+        <button class="btn btn--small" data-log-preset="attributionFail">归因·失败与重试</button>
+        <button class="btn btn--small" data-log-preset="attributionDone">归因·完成结果</button>
+        <button class="btn btn--small" data-log-preset="adminOps">归因·管理员操作</button>
+        <button class="btn btn--small" data-log-preset="registry">注册表变更</button>
+        <button class="btn btn--small" data-log-preset="telemetry">遥测上报</button>
+        <button class="btn btn--small" data-log-preset="objects">上传与补丁</button>
+        <button class="btn btn--small" data-log-preset="access">HTTP 访问</button>
+        <button class="btn btn--small" data-log-preset="service">服务启停</button>
+      </div>
+      <pre class="console" id="logOutput">加载中…</pre>
+      <p class="mono muted" id="logMeta" style="margin:8px 2px 0; font-size:12px;"></p>
+    </div>
+  </section>
+</main>
+</div>
+
+<!-- 页面内弹窗：确认 / 输入（兼容不支持原生 prompt/confirm 的内嵌内核） -->
+<div class="modal-mask" id="promptMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
+    <h2 id="promptTitle"></h2>
+    <p id="promptMessage"></p>
+    <input id="promptInput" autocomplete="off">
+    <div class="toolbar" style="margin:16px 0 0; justify-content:flex-end;">
+      <button class="btn" id="promptCancel">取消</button>
+      <button class="btn btn--primary" id="promptOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 补丁文件查看器：行号 + 增删着色 + 换行切换 + 下载 -->
+<div class="patch-mask" id="patchMask" hidden>
+  <div class="patch-modal" role="dialog" aria-modal="true" aria-labelledby="patchFileName">
+    <div class="patch-head">
+      <h2 id="patchFileName"></h2>
+      <span class="patch-meta" id="patchMeta"></span>
+      <span style="flex:1"></span>
+      <span class="patch-tabs">
+        <button class="btn btn--small is-active" id="patchTabSummary">文件概要</button>
+        <button class="btn btn--small" id="patchTabRaw">原文</button>
+      </span>
+      <button class="btn btn--small" id="patchWrapBtn">自动换行：开</button>
+      <a class="btn btn--small btn--primary" id="patchDownload" href="#">下载</a>
+      <button class="btn btn--small" id="patchClose">关闭</button>
+    </div>
+    <div class="patch-body">
+      <div class="patch-code" id="patchBody"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 删除弹窗：结构化理由必选 + 备注 + 操作人（防"删除"沦为糊弄数据的后门） -->
+<div class="modal-mask" id="deleteMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
+    <h2 id="deleteTitle">删除</h2>
+    <p id="deleteMessage"></p>
+    <label style="display:block; margin-top:12px; font-size:13.5px; font-weight:600;">
+      删除理由（必选，将留痕）
+      <select id="deleteReason" style="width:100%; margin-top:6px;"></select>
+    </label>
+    <input id="deleteNote" placeholder="备注（理由为「其他」时必填）" autocomplete="off">
+    <input id="deleteOperator" placeholder="操作人（选填）" autocomplete="off">
+    <div class="toolbar" style="margin:16px 0 0; justify-content:flex-end;">
+      <button class="btn" id="deleteCancel">取消</button>
+      <button class="btn btn--danger" id="deleteOk">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="anRuleMask" hidden>
+  <div class="modal an-wide-modal" role="dialog" aria-modal="true" aria-labelledby="anRuleTitle">
+    <h2 id="anRuleTitle">编辑检测规则</h2>
+    <div class="an-wide-body">
+      <aside class="an-wide-aside" id="anRuleAside"></aside>
+      <div class="an-wide-main">
+        <input id="anRuleName" type="hidden"><input id="anRuleDetector" type="hidden">
+        <div class="an-form">
+          <div class="an-field"><label>规则状态</label><select id="anRuleStatus"><option value="enabled">启用检测</option><option value="disabled">暂停检测</option></select><span class="an-field-note">停用后不再产生新异常，已存在的异常会自动结束。</span></div>
+          <div class="an-field"><label>允许 AI Master 申请屏蔽</label><select id="anRuleAllowArchive"><option value="true">允许</option><option value="false">不允许</option></select><span class="an-field-note">关闭后，这类异常不显示“申请屏蔽”。</span></div>
+          <div class="an-field"><label>生效范围</label><select id="anRuleScope"><option value="platform">全平台</option><option value="component">指定组件</option><option value="repository">指定仓库</option></select></div>
+          <div class="an-field" id="anRuleScopeValueField"><label id="anRuleScopeValueLabel">范围名称</label><input id="anRuleScopeValue" placeholder="填写组件或仓库名称"></div>
+          <div class="an-rule-params" id="anRuleParams"></div>
+          <div class="an-field wide"><label>变更原因</label><input id="anRuleReason" placeholder="例如：近期误报较多，将等待时间由 24 小时调整为 48 小时"></div>
+        </div>
+        <div class="an-preview" id="anRulePreview" hidden></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="anRuleCancel">取消</button><button class="btn" id="anRulePreviewBtn">试算影响</button><button class="btn btn--primary" id="anRuleSave">保存规则</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="anDetailMask" hidden>
+  <div class="modal an-wide-modal" role="dialog" aria-modal="true" aria-labelledby="anDetailTitle">
+    <h2 id="anDetailTitle">异常详情</h2>
+    <div class="an-wide-body"><div class="an-wide-aside" id="anDetailAside"></div><div class="an-wide-main" id="anDetailContent"></div></div>
+    <div class="toolbar"><button class="btn btn--primary" id="anDetailClose">关闭</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+const $ = (selector) => document.querySelector(selector);
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+})[ch]);
+const fmtBytes = (n) => {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+};
+const fmtTime = (iso) => {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleTimeString("zh-CN", { hour12: false });
+};
+const fmtDay = (iso) => {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+};
+const fmtShort = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const STATUS_LABELS = {
+  pending: "待处理", running: "执行中", retry_pending: "退避重试", failed: "失败",
+  finalized_match: "已匹配", finalized_no_match: "未匹配", not_queued: "未入队",
+};
+const REASON_LABELS = { unknown: "未知/超窗" };
+// 三级删除的结构化理由枚举（与后端 REASON_CODES 一致，设计说明书 §3.3）
+const REASON_CODES = {
+  trial: "试验性", stalled: "停滞放弃", wrong_repo: "非目标仓库",
+  superseded: "重复生成", unsatisfied: "生成后弃用",
+  no_match_unresolvable: "无法匹配", other: "其他",
+};
+// Lifecycle bookkeeping flags — folded into a "+n" chip instead of rendering
+// one noisy chip per row; audit-relevant admin_* flags always stay visible.
+const NOISE_FLAGS = new Set([
+  "attribution_pending", "attribution_failed", "external_service", "mock_attribution",
+]);
+
+let toastTimer = null;
+function toast(message, bad = false) {
+  const node = $("#toast");
+  node.textContent = message;
+  node.className = bad ? "toast bad" : "toast";
+  node.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { node.style.display = "none"; }, bad ? 6000 : 4200);
+}
+
+function markSync(ok = true) {
+  $("#syncDot").className = ok ? "dot" : "dot bad";
+  $("#lastSync").textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  let body = null;
+  try { body = await response.json(); } catch { /* non-json */ }
+  if (!response.ok) {
+    throw new Error(body && body.message ? body.message : `HTTP ${response.status}`);
+  }
+  return body;
+}
+
+/* ------------------------------ 页面内弹窗 ------------------------------
+ * 内嵌内核（及部分 webview）不支持 window.prompt/confirm（调用直接抛异常），
+ * 所有需要确认/输入的操作一律走这套自制弹窗。
+ * askDialog 返回：输入型 → 字符串（取消为 null）；确认型 → true/false。
+ * ---------------------------------------------------------------------- */
+function askDialog({ title, message = "", placeholder = "", initial = "", withInput = true, okText = "确定" }) {
+  return new Promise((resolve) => {
+    const mask = $("#promptMask");
+    $("#promptTitle").textContent = title;
+    $("#promptMessage").textContent = message;
+    $("#promptMessage").style.display = message ? "" : "none";
+    const input = $("#promptInput");
+    input.style.display = withInput ? "" : "none";
+    input.value = initial;
+    input.placeholder = placeholder;
+    $("#promptOk").textContent = okText;
+    const done = (value) => {
+      mask.hidden = true;
+      $("#promptOk").removeEventListener("click", onOk);
+      $("#promptCancel").removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onOk = () => done(withInput ? input.value.trim() : true);
+    const onCancel = () => done(withInput ? null : false);
+    const onKey = (event) => {
+      if (event.key === "Enter" && withInput) onOk();
+      if (event.key === "Escape") onCancel();
+    };
+    $("#promptOk").addEventListener("click", onOk);
+    $("#promptCancel").addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey);
+    mask.hidden = false;
+    if (withInput) { input.focus(); input.select(); }
+  });
+}
+const askConfirm = (title, message) => askDialog({ title, message, withInput: false, okText: "确认执行" });
+
+/* ------------------------------ Tab switching ------------------------------ */
+document.querySelector(".portal-nav").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-tab]");
+  if (!button) return;
+  document.querySelectorAll(".portal-nav button").forEach((b) => b.classList.toggle("is-active", b === button));
+  document.querySelectorAll("section.tab").forEach((s) => s.classList.toggle("is-active", s.id === `tab-${button.dataset.tab}`));
+  // 切页回到顶部（站内跳转随后会用 smooth 滚到目标卡片）
+  window.scrollTo({ top: 0, behavior: "auto" });
+  if (button.dataset.tab === "workflows") loadWorkflows();
+  if (button.dataset.tab === "attribution") { loadHealth(); recPage = 1; loadRecords(); }
+  if (button.dataset.tab === "components") loadComponents();
+  if (button.dataset.tab === "aimaster") loadAiMaster();
+  if (button.dataset.tab === "versions") loadVersions();
+  if (button.dataset.tab === "registry") loadRegistry();
+  if (button.dataset.tab === "anomalies") loadAnomalyModule();
+  if (button.dataset.tab === "anomaly-admin") loadAnomalyAdminModule();
+  if (button.dataset.tab === "logs") loadLogs();
+});
+
+/* ------------------------------ 共用格式化 ------------------------------
+   fmtInt / fmtRate 原属总览页，组件、AI Master 等表格仍在使用，保留在此。
+-------------------------------------------------------------------------- */
+// 统计窗口是 UTC 日粒度（后端 make_filters），筛选起点要填同一个 UTC 日才会与口径一致
+const utcDay = (offsetDays) => {
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${mm}-${dd}`;
+};
+
+const fmtInt = (n) => (n ?? 0).toLocaleString("en-US");
+const fmtRate = (rate) => (rate == null ? "—" : (rate * 100).toFixed(1) + "%");
+
+/* ------------------------------ 通用分页 ------------------------------
+   运营后台所有列表统一走这里：状态、每页条数、翻页按钮渲染与点击。
+   用法：const pager = makePager("comp", 15, renderCompRows)，渲染函数
+   从 pager.slice(rows) 取当前页，pager.render(total) 写入页脚。 */
+const PAGER_SIZE = 15;
+function makePager(key, render) {
+  const state = { page: 1, size: PAGER_SIZE, total: 0 };
+  const mount = () => document.getElementById(`${key}Pager`);
+  const wire = () => {
+    const bar = mount();
+    if (!bar || bar.dataset.wired) return;
+    bar.dataset.wired = "1";
+    bar.addEventListener("click", (event) => {
+      const prev = event.target.closest("button[data-pager-prev]");
+      const next = event.target.closest("button[data-pager-next]");
+      if (prev && state.page > 1) { state.page -= 1; render(); }
+      if (next && state.page < pages()) { state.page += 1; render(); }
+    });
+  };
+  const pages = () => Math.max(1, Math.ceil(state.total / state.size));
+  return {
+    get page() { return state.page; },
+    reset() { state.page = 1; },
+    slice(rows) {
+      state.total = rows.length;
+      if (state.page > pages()) state.page = pages();
+      return rows.slice((state.page - 1) * state.size, state.page * state.size);
+    },
+    render(total) {
+      if (total !== undefined) state.total = total;
+      wire();
+      const bar = mount();
+      if (bar) {
+        bar.hidden = state.total <= state.size;
+        bar.innerHTML = `<button class="btn" data-pager-prev ${state.page <= 1 ? "disabled" : ""}>上一页</button>
+          <span class="mono">${state.page} / ${pages()}</span>
+          <button class="btn" data-pager-next ${state.page >= pages() ? "disabled" : ""}>下一页</button>
+          <span class="muted" style="font-size:12.5px;">共 ${state.total} 条</span>`;
+      }
+    },
+  };
+}
+
+/* ------------------------------- 交互 ------------------------------- */
+
+const clickTab = (tab) => document.querySelector(`.portal-nav button[data-tab="${tab}"]`)?.click();
+
+function flashCard(selector) {
+  const card = $(selector);
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.classList.remove("flash");
+  void card.offsetWidth;
+  card.classList.add("flash");
+}
+
+async function triggerScan() {
+  const result = await api("/api/v1/admin/attribution/scan", { method: "POST" });
+  const text = result.already_running
+    ? "已有扫描在进行中"
+    : `本轮处理 ${result.processed} 条${result.revived ? "（调度器已从自暂停中恢复）" : ""}`;
+  $("#scanResultHealth").textContent = text;
+  loadHealth();
+}
+
+$("#btnScanHealth").addEventListener("click", async () => {
+  $("#btnScanHealth").disabled = true;
+  try { await triggerScan(); } catch (error) { toast(`扫描失败：${error.message}`, true); }
+  finally { $("#btnScanHealth").disabled = false; }
+});
+
+/* ------------------------- Workflow management ------------------------- */
+/* 浏览全量工作流 → 详情三级同屏（步骤 / DevRun / 归因）→ 三级删除与归档恢复。
+   删除是可恢复的标记，所有统计口径即时出清；理由必选、操作留痕。 */
+let awPage = 1;
+const AW_PAGE_SIZE = 15;
+const awOpen = new Set();
+
+function askDelete({ title, message = "" }) {
+  return new Promise((resolve) => {
+    const mask = $("#deleteMask");
+    $("#deleteTitle").textContent = title;
+    $("#deleteMessage").textContent = message;
+    $("#deleteMessage").style.display = message ? "" : "none";
+    const reasonSelect = $("#deleteReason");
+    reasonSelect.innerHTML = Object.entries(REASON_CODES)
+      .map(([code, label]) => `<option value="${esc(code)}">${esc(label)}</option>`).join("");
+    $("#deleteNote").value = "";
+    $("#deleteOperator").value = "";
+    const done = (payload) => {
+      mask.hidden = true;
+      $("#deleteOk").removeEventListener("click", onOk);
+      $("#deleteCancel").removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey);
+      resolve(payload);
+    };
+    const onOk = () => {
+      const reasonCode = reasonSelect.value;
+      const note = $("#deleteNote").value.trim();
+      if (reasonCode === "other" && !note) {
+        toast("理由为「其他」时必须填写备注", true);
+        return;
+      }
+      done({
+        reason_code: reasonCode,
+        reason: note || null,
+        operator: $("#deleteOperator").value.trim() || null,
+      });
+    };
+    const onCancel = () => done(null);
+    const onKey = (event) => { if (event.key === "Escape") onCancel(); };
+    $("#deleteOk").addEventListener("click", onOk);
+    $("#deleteCancel").addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey);
+    mask.hidden = false;
+  });
+}
+
+function awParams() {
+  const params = {
+    user: $("#awUser").value.trim() || null,
+    repository: $("#awRepo").value.trim() || null,
+    state: $("#awState").value || null,
+    lifecycle: $("#awLifecycle").value || null,
+    from: $("#awFrom").value || null,
+    to: $("#awTo").value || null,
+  };
+  Object.keys(params).forEach((key) => { if (!params[key]) delete params[key]; });
+  return params;
+}
+
+async function loadWorkflows() {
+  const params = new URLSearchParams({ page: awPage, page_size: AW_PAGE_SIZE });
+  for (const [key, value] of Object.entries(awParams())) params.set(key, value);
+  try {
+    const data = await api(`/api/v1/admin/workflows?${params}`);
+    markSync(true);
+    $("#wfAdminTotal").textContent =
+      `共 ${data.total} 条` + (data.deleted_total ? ` · 历史已删除 ${data.deleted_total} 条` : "");
+    $("#awPage").textContent = awPage;
+    $("#btnAwPrev").disabled = awPage <= 1;
+    $("#btnAwNext").disabled = awPage * AW_PAGE_SIZE >= data.total;
+    $("#awBody").innerHTML = data.items.map(awRowHtml).join("")
+      || '<tr><td colspan="8" class="muted">没有符合条件的工作流</td></tr>';
+    for (const id of awOpen) {
+      const anchor = document.querySelector(`tr[data-wf="${id}"]`);
+      if (anchor) expandWf(id, anchor, false);
+    }
+    const focusId = new URLSearchParams(location.search).get("workflow_id");
+    const focusRow = focusId ? document.querySelector(`tr[data-wf="${CSS.escape(focusId)}"]`) : null;
+    if (focusRow) {
+      focusRow.classList.add("row-fresh");
+      focusRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  } catch (error) { markSync(false); toast(`工作流加载失败：${error.message}`, true); }
+}
+
+function attributionBadge(item) {
+  if (!item.dev_runs) return '<span class="muted">无产出</span>';
+  const bits = [];
+  if (item.attribution_matched) bits.push(`<span class="badge badge--finalized_match">已归因 ${item.attribution_matched}</span>`);
+  if (item.attribution_no_match) bits.push(`<span class="badge badge--finalized_no_match">未匹配 ${item.attribution_no_match}</span>`);
+  if (item.attribution_pending) bits.push(`<span class="badge badge--pending">待定 ${item.attribution_pending}</span>`);
+  return bits.join(" ") || '<span class="badge badge--not_queued">未入队</span>';
+}
+
+function deletionLine(item) {
+  if (!item.deleted) return "";
+  const label = REASON_CODES[item.deleted_reason_code] ?? item.deleted_reason_code ?? "—";
+  return `<div style="margin-top:3px;"><span class="badge badge--excluded">已删除 · ${esc(label)}</span>
+    <div class="muted" style="font-size:12px;margin-top:2px;">${esc(item.deleted_reason ?? "")} · ${esc(item.deleted_by ?? "—")} · ${esc(item.deleted_at ? fmtDay(item.deleted_at) : "—")}</div></div>`;
+}
+
+function awRowHtml(item) {
+  const entry = { ar: "AR", sr: "SR", dev: "DEV" }[item.entry] ?? "—";
+  const action = item.deleted
+    ? `<button class="btn btn--small" data-wf-restore="${esc(item.workflow_run_id)}">恢复</button>`
+    : `<button class="btn btn--small btn--danger" data-wf-delete="${esc(item.workflow_run_id)}">删除</button>`;
+  return `
+  <tr data-wf="${esc(item.workflow_run_id)}" class="${item.deleted ? "row-excluded" : ""}">
+    <td><b>${esc(item.sr ?? "—")}</b><div class="muted mono" style="font-size:12px;">${esc(item.ar ?? "")} ${esc(item.workflow_run_id)}</div></td>
+    <td style="white-space:nowrap;"><span class="chip">${esc(entry)}</span>${item.workflow_kind !== "aaw" ? ` <span class="muted mono" style="font-size:12.5px;">${esc(item.workflow_kind)}</span>` : ""}</td>
+    <td>${esc(item.user_name ?? "—")}<div class="muted mono" style="font-size:12px;">${esc(item.user_email ?? "")}</div></td>
+    <td class="mono">${esc(item.repository)}</td>
+    <td><div style="white-space:nowrap;"><span class="mono">${item.dev_effective_lines}</span><span class="muted"> 行 · ${item.dev_runs} 产出</span></div>
+      <div style="margin-top:2px;">${attributionBadge(item)}</div></td>
+    <td class="mono" style="white-space:nowrap;">${esc(fmtShort(item.last_activity_at))}</td>
+    <td>${item.status === "completed"
+      ? '<span class="badge badge--finalized_match">已完成</span>'
+      : '<span class="badge badge--running">进行中</span>'}${deletionLine(item)}</td>
+    <td style="white-space:nowrap;">
+      <button class="btn btn--small" data-wf-detail="${esc(item.workflow_run_id)}">详情</button>
+      ${action}
+    </td>
+  </tr>`;
+}
+
+async function expandWf(wfId, row, toggle = true) {
+  const existing = document.querySelector(`tr.wf-detail[data-detail-for="${wfId}"]`);
+  if (existing) {
+    if (toggle) { existing.remove(); awOpen.delete(wfId); }
+    return;
+  }
+  const mount = document.createElement("tr");
+  mount.className = "wf-detail detail-row";
+  mount.dataset.detailFor = wfId;
+  mount.innerHTML = '<td colspan="8" class="muted">加载详情…</td>';
+  row.after(mount);
+  awOpen.add(wfId);
+  try {
+    const data = await api(`/api/v1/admin/workflows/${wfId}/detail`);
+    const w = data.workflow;
+    const steps = data.steps.map((step) => {
+      const dev = step.dev_run;
+      let devCell = '<span class="muted">—</span>';
+      if (dev) {
+        const a = dev.attribution;
+        devCell = `
+          <div><span class="mono">${dev.dev_effective_lines}</span><span class="muted"> 行</span>
+            ${dev.deleted ? '<span class="badge badge--excluded">产出已删除</span>' : ""}</div>
+          <div class="muted mono" style="font-size:12px;">${esc(dev.branch ?? "")}</div>
+          ${a ? `<div style="margin-top:2px;">
+            <span class="badge badge--${esc(a.result_status)}">${esc(STATUS_LABELS[a.result_status] ?? a.result_status)}</span>
+            ${a.deleted ? '<span class="badge badge--excluded">归因已删除</span>' : ""}
+            ${a.matched_mr_url ? ` <a href="${esc(a.matched_mr_url)}" target="_blank" rel="noopener">MR</a>` : ""}
+            <span class="muted mono" style="font-size:12px;"> 80% ${a.attributed_lines_80} 行 · 置信度 ${(a.confidence * 100).toFixed(0)}%</span>
+          </div>` : '<div class="muted" style="font-size:12px;margin-top:2px;">无归因结果</div>'}
+          <div style="margin-top:5px; white-space:nowrap;">
+            ${dev.deleted
+              ? `<button class="btn btn--small" data-dev-restore="${esc(dev.dev_run_id)}">恢复产出</button>`
+              : `<button class="btn btn--small btn--danger" data-dev-delete="${esc(dev.dev_run_id)}">删产出</button>`}
+            ${a && a.deleted
+              ? `<button class="btn btn--small" data-attr-restore="${esc(dev.dev_run_id)}">恢复归因</button>`
+              : (a ? `<button class="btn btn--small btn--danger" data-attr-delete="${esc(dev.dev_run_id)}">删归因</button>` : "")}
+            <button class="btn btn--small" data-patch-view="${esc(dev.dev_run_id)}">看文件</button>
+          </div>`;
+      }
+      return `<tr>
+        <td class="mono">${esc(step.step_type)}</td>
+        <td>${esc(step.status)}</td>
+        <td class="mono" style="white-space:nowrap;">${esc(fmtShort(step.step_started_at))}</td>
+        <td>${devCell}</td>
+      </tr>`;
+    }).join("");
+    mount.innerHTML = `<td colspan="8">
+      <dl class="kv" style="margin-bottom:12px;">
+        <dt>工作流 ID</dt><dd class="mono" style="font-size:12px;">${esc(w.workflow_run_id)}</dd>
+        <dt>版本 / 入口</dt><dd>${esc(w.aaw_version)} · ${esc(w.entry ?? "—")} · 步骤 ${w.steps} 个</dd>
+        <dt>时间</dt><dd>开始 ${esc(fmtDay(w.started_at))} · 最近活动 ${esc(fmtDay(w.last_activity_at))}</dd>
+        ${w.deleted ? `<dt>删除留痕</dt><dd><span class="badge badge--excluded">${esc(REASON_CODES[w.deleted_reason_code] ?? w.deleted_reason_code ?? "—")}</span>
+          ${esc(w.deleted_reason ?? "")} · ${esc(w.deleted_by ?? "—")} · ${esc(w.deleted_at ? fmtDay(w.deleted_at) : "—")}</dd>` : ""}
+      </dl>
+      <table>
+        <thead><tr><th>步骤</th><th>状态</th><th>开始</th><th>产出 / 归因（按粒度删除）</th></tr></thead>
+        <tbody>${steps || '<tr><td colspan="4" class="muted">无步骤</td></tr>'}</tbody>
+      </table>
+    </td>`;
+  } catch (error) {
+    mount.innerHTML = `<td colspan="8" class="muted">详情加载失败：${esc(error.message)}</td>`;
+  }
+}
+
+$("#awBody").addEventListener("click", async (event) => {
+  const detailBtn = event.target.closest("button[data-wf-detail]");
+  const wfDelete = event.target.closest("button[data-wf-delete]");
+  const wfRestore = event.target.closest("button[data-wf-restore]");
+  const devDelete = event.target.closest("button[data-dev-delete]");
+  const devRestore = event.target.closest("button[data-dev-restore]");
+  const attrDelete = event.target.closest("button[data-attr-delete]");
+  const attrRestore = event.target.closest("button[data-attr-restore]");
+  const patchBtn = event.target.closest("button[data-patch-view]");
+  if (detailBtn) {
+    await expandWf(detailBtn.dataset.wfDetail, detailBtn.closest("tr[data-wf]"));
+    return;
+  }
+  if (patchBtn) {
+    await openPatchViewer(patchBtn.dataset.patchView);
+    return;
+  }
+  if (wfDelete) return runWfDelete(wfDelete.dataset.wfDelete);
+  if (wfRestore) return runWfRestore(wfRestore.dataset.wfRestore);
+  if (devDelete) {
+    return runLevelDelete("dev-runs", devDelete.dataset.devDelete, "删除开发产出",
+      "该产出的生成行数将退出分母，归因随之失效；可随时恢复。");
+  }
+  if (devRestore) return runLevelRestore("dev-runs", devRestore.dataset.devRestore);
+  if (attrDelete) {
+    return runLevelDelete("attributions", attrDelete.dataset.attrDelete, "删除归因结果",
+      "仅删除匹配结果：该产出退回未归因状态（分母在、分子无）。");
+  }
+  if (attrRestore) return runLevelRestore("attributions", attrRestore.dataset.attrRestore);
+});
+
+/* 补丁查看器：文件概要为主视图（动了哪些文件、+N/-M），原文按需切换 */
+function renderPatchSummary(data) {
+  const max = Math.max(1, ...data.files.map((f) => f.additions + f.deletions));
+  const rows = data.files.map((f) => {
+    const total = f.additions + f.deletions;
+    const bar = total
+      ? `<span class="patch-bar"><span class="a" style="width:${(f.additions / max) * 100}%"></span><span class="d" style="width:${(f.deletions / max) * 100}%"></span></span>`
+      : '<span class="patch-bar"></span>';
+    return `<tr>
+      <td class="file-path">${esc(f.file)}${f.binary ? ' <span style="color:#8A90A5">· 二进制</span>' : ""}</td>
+      <td class="num add-n">+${f.additions}</td>
+      <td class="num del-n">-${f.deletions}</td>
+      <td>${bar}</td>
+    </tr>`;
+  }).join("");
+  return `
+    <div class="patch-totals">共 ${data.file_count} 个文件 · <span style="color:#7CE8AC">+${data.total_additions}</span> / <span style="color:#FF9BB6">-${data.total_deletions}</span> 行</div>
+    <table class="patch-files">
+      <thead><tr><th>文件</th><th class="num">新增</th><th class="num">删除</th><th>变更构成</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function showPatchView(view) {
+  $("#patchTabSummary").classList.toggle("is-active", view === "summary");
+  $("#patchTabRaw").classList.toggle("is-active", view === "raw");
+  $("#patchWrapBtn").style.display = view === "raw" ? "" : "none";
+  if (!patchViewerData) return;
+  const body = $("#patchBody");
+  if (view === "summary") {
+    body.innerHTML = renderPatchSummary(patchViewerData);
+  } else {
+    body.innerHTML = renderPatchLines(patchViewerData.content) +
+      (patchViewerData.truncated ? '<div class="patch-truncated">原文已按 2 万字符截断，完整内容请下载查看</div>' : "");
+  }
+  $(".patch-body").scrollTop = 0;
+}
+
+let patchViewerData = null;
+
+function renderPatchLines(content) {
+  return content.split("\n").map((line, i) => {
+    const cls = line.startsWith("@@") ? "hunk"
+      : line.startsWith("diff --git ") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ") ? "meta"
+      : line.startsWith("+") ? "add"
+      : line.startsWith("-") ? "del" : "";
+    return `<div class="patch-line ${cls}"><span class="ln">${i + 1}</span><span class="tx">${esc(line) || " "}</span></div>`;
+  }).join("");
+}
+
+async function openPatchViewer(devRunId) {
+  const mask = $("#patchMask");
+  $("#patchFileName").textContent = "补丁文件加载中…";
+  $("#patchMeta").textContent = "";
+  $("#patchBody").innerHTML = "";
+  mask.hidden = false;
+  try {
+    const data = await api(`/api/v1/admin/dev-runs/${devRunId}/patch`);
+    if (data.missing) {
+      $("#patchFileName").textContent = "文件不可用";
+      $("#patchMeta").textContent = data.reason ?? "";
+      $("#patchDownload").style.display = "none";
+      return;
+    }
+    $("#patchFileName").textContent = data.file_name;
+    $("#patchMeta").textContent =
+      `${data.file_count} 个文件 · +${data.total_additions}/-${data.total_deletions} 行 · ${fmtBytes(data.size_bytes)}` +
+      ` · ${data.source === "archive" ? "读自归档" : "活跃文件"}`;
+    const dl = $("#patchDownload");
+    dl.href = `/api/v1/admin/dev-runs/${devRunId}/patch?download=true`;
+    dl.style.display = "";
+    patchViewerData = data;
+    showPatchView("summary");
+  } catch (error) {
+    $("#patchFileName").textContent = "加载失败";
+    $("#patchMeta").textContent = error.message;
+  }
+}
+
+function closePatchViewer() { $("#patchMask").hidden = true; }
+
+$("#patchClose").addEventListener("click", closePatchViewer);
+$("#patchMask").addEventListener("click", (event) => {
+  if (event.target === $("#patchMask")) closePatchViewer();
+});
+$("#patchTabSummary").addEventListener("click", () => showPatchView("summary"));
+$("#patchTabRaw").addEventListener("click", () => showPatchView("raw"));
+$("#patchWrapBtn").addEventListener("click", () => {
+  const off = $("#patchBody").classList.toggle("nowrap");
+  $("#patchWrapBtn").textContent = off ? "自动换行：关" : "自动换行：开";
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#patchMask").hidden) closePatchViewer();
+});
+
+async function runWfDelete(wfId) {
+  const payload = await askDelete({
+    title: "删除工作流",
+    message: "整条工作流（含全部 dev 产出与归因）将从所有统计与列表中消失；可在「仅已删除」归档中恢复。",
+  });
+  if (!payload) return;
+  try {
+    await api(`/api/v1/admin/workflows/${wfId}/delete`, { method: "POST", body: JSON.stringify(payload) });
+    toast("已删除工作流：统计口径即时出清，可在归档中恢复");
+    loadWorkflows();
+  } catch (error) { toast(`删除失败：${error.message}`, true); }
+}
+
+async function runWfRestore(wfId) {
+  if (!(await askConfirm("恢复工作流", "恢复后该工作流及其全部产出、归因重新计入统计。确定恢复？"))) return;
+  try {
+    await api(`/api/v1/admin/workflows/${wfId}/restore`, { method: "POST", body: JSON.stringify({}) });
+    toast("已恢复工作流");
+    loadWorkflows();
+  } catch (error) { toast(`恢复失败：${error.message}`, true); }
+}
+
+async function runLevelDelete(kind, id, title, message) {
+  const payload = await askDelete({ title, message });
+  if (!payload) return;
+  try {
+    await api(`/api/v1/admin/${kind}/${id}/delete`, { method: "POST", body: JSON.stringify(payload) });
+    toast("已删除：统计口径即时出清，可随时恢复");
+    loadWorkflows();
+  } catch (error) { toast(`删除失败：${error.message}`, true); }
+}
+
+async function runLevelRestore(kind, id) {
+  if (!(await askConfirm("恢复确认", "恢复后该数据重新计入统计口径。确定恢复？"))) return;
+  try {
+    await api(`/api/v1/admin/${kind}/${id}/restore`, { method: "POST", body: JSON.stringify({}) });
+    toast("已恢复");
+    loadWorkflows();
+  } catch (error) { toast(`恢复失败：${error.message}`, true); }
+}
+
+$("#btnAwRefresh").addEventListener("click", () => { awPage = 1; loadWorkflows(); });
+$("#btnAwReset").addEventListener("click", () => {
+  ["#awUser", "#awRepo", "#awFrom", "#awTo"].forEach((id) => { $(id).value = ""; });
+  $("#awState").value = "all";
+  $("#awLifecycle").value = "active";
+  awPage = 1;
+  loadWorkflows();
+});
+$("#btnAwPrev").addEventListener("click", () => { if (awPage > 1) { awPage -= 1; loadWorkflows(); } });
+$("#btnAwNext").addEventListener("click", () => { awPage += 1; loadWorkflows(); });
+["awState", "awLifecycle", "awFrom", "awTo"].forEach((id) => {
+  $("#" + id).addEventListener("change", () => { awPage = 1; loadWorkflows(); });
+});
+let awTypeTimer = null;
+["awUser", "awRepo"].forEach((id) => {
+  $("#" + id).addEventListener("input", () => {
+    clearTimeout(awTypeTimer);
+    awTypeTimer = setTimeout(() => { awPage = 1; loadWorkflows(); }, 350);
+  });
+});
+
+/* 看板「管理」链接深链：/admin?tab=workflows&user=..&repository=..&from=..&to=.. */
+(function applyWorkflowDeepLink() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("tab") !== "workflows") return;
+  const preset = { user: "awUser", repository: "awRepo", from: "awFrom", to: "awTo" };
+  for (const [key, inputId] of Object.entries(preset)) {
+    const value = params.get(key);
+    if (value) $("#" + inputId).value = value;
+  }
+  const workflowId = params.get("workflow_id");
+  if (workflowId) awOpen.add(workflowId);
+  const button = document.querySelector('.portal-nav button[data-tab="workflows"]');
+  if (button) button.click();
+})();
+
+/* 异常中心可把排查入口带到对应业务页；工作流页继续使用上面的精确筛选。 */
+(function applyGenericTabDeepLink() {
+  const params = new URLSearchParams(location.search);
+  const tab = params.get("tab");
+  if (!tab || tab === "workflows") return;
+  const button = document.querySelector(`.portal-nav button[data-tab="${CSS.escape(tab)}"]`);
+  // 页签对应模块的 let 状态在脚本后部初始化；放到当前脚本执行完后再触发，避免 TDZ。
+  if (button) queueMicrotask(() => {
+    const repository = params.get("repository") || "";
+    if (tab === "components" && repository) $("#compSearch").value = repository;
+    if (tab === "registry" && repository) $("#regSearch").value = repository;
+    if (tab === "attribution") {
+      if (repository) $("#fRepo").value = repository;
+      const devRunId = params.get("dev_run_id");
+      if (devRunId) openDetails.add(devRunId);
+    }
+    button.click();
+  });
+})();
+
+/* --------------------------- Components view --------------------------- */
+let compData = null;
+let compMasters = [];
+// 归属按仓库登记（一个仓库一位 AI Master），组件级归属由它推导
+let compRepoAssignments = {};
+const compPager = makePager("comp", renderCompRows);
+
+function compMasterName(masterId) {
+  const master = compMasters.find((m) => m.id === masterId);
+  return master ? master.name : null;
+}
+
+/* 组件级归属由仓库推导：全部同人 → 该人；多人 → 多人分管；无人 → 未认领 */
+function componentRepoKeys(component) {
+  // 总览的组件行给 repo_keys（清单）、repos（数量）；dashboard/components 给 repos（清单）
+  if (!component) return [];
+  if (Array.isArray(component.repo_keys)) return component.repo_keys;
+  return Array.isArray(component.repos) ? component.repos : [];
+}
+
+function componentOwners(component) {
+  const repoKeys = componentRepoKeys(component);
+  const names = [...new Set(repoKeys.map((key) => compRepoAssignments[key]).filter(Boolean))]
+    .map((masterId) => compMasterName(masterId))
+    .filter(Boolean);
+  return { names, split: names.length > 1, none: names.length === 0 };
+}
+
+function componentOwnerId(component) {
+  const repoKeys = componentRepoKeys(component);
+  const ids = [...new Set(repoKeys.map((key) => compRepoAssignments[key]).filter(Boolean))];
+  return ids.length === 1 ? ids[0] : "";
+}
+
+async function loadComponents() {
+  try {
+    const days = $("#compWindow").value;
+    const from = days === "0" ? "" : `&from=${utcDay(-(Number(days) - 1))}`;
+    const [comps, masters, assignments] = await Promise.all([
+      api(`/api/v1/dashboard/components?workflow_kind=aaw${from}`),
+      api("/api/v1/ai-masters"),
+      api("/api/v1/ai-masters/assignments"),
+    ]);
+    markSync(true);
+    compData = comps.items || [];
+    compMasters = masters.items || [];
+    compRepoAssignments = assignments.assignments || {};
+    const select = $("#compMasterFilter");
+    const current = select.value;
+    select.innerHTML = '<option value="">全部 AI Master</option>' +
+      compMasters.map((m) => `<option value="${esc(m.name)}">${esc(m.name)}</option>`).join("");
+    select.value = current;
+    renderCompRows();
+  } catch (error) { markSync(false); toast(`组件加载失败：${error.message}`, true); }
+}
+
+function renderCompRows() {
+  if (!compData) return;
+  const term = ($("#compSearch").value || "").trim().toLowerCase();
+  const masterFilter = $("#compMasterFilter").value;
+  const rows = compData
+    .filter((c) => {
+      const owners = componentOwners(c);
+      if (masterFilter && !owners.names.includes(masterFilter)) return false;
+      if (!term) return true;
+      return [c.name, c.se ?? "", owners.names.join("、"), ...componentRepoKeys(c)]
+        .join("\n").toLowerCase().includes(term);
+    })
+    .sort((a, b) => (b.effective_lines ?? 0) - (a.effective_lines ?? 0));
+  const days = $("#compWindow").value;
+  $("#compMeta").textContent = `${days === "0" ? "时间不限" : `近 ${days} 天`} · 共 ${compData.length} 个组件 · 显示 ${rows.length}`;
+  const pageRows = compPager.slice(rows);
+  $("#compBody").innerHTML = pageRows.map((c) => {
+    const owners = componentOwners(c);
+    const ownerLabel = owners.split
+      ? `<span class="badge badge--none">多人分管（${owners.names.length}）</span>`
+      : (owners.none
+        ? '<span class="badge badge--none">未认领</span>'
+        : esc(owners.names[0]));
+    const repo = (c.repos && c.repos[0]) || null;
+    return `
+    <tr>
+      <td><b>${esc(c.name)}</b></td>
+      <td>${esc(c.se ?? "—")}</td>
+      <td>${ownerLabel}</td>
+      <td class="mono">${(c.repos || []).length}</td>
+      <td>${c.used_aaw ? '<span class="badge badge--finalized_match">使用</span>' : '<span class="badge badge--not_queued">未使用</span>'}</td>
+      <td class="mono">${fmtInt(c.effective_lines)}</td>
+      <td class="mono">${fmtRate(c.attribution_rate_80)}</td>
+      <td class="mono">${fmtRate(c.attribution_rate_90)}</td>
+      <td>${repo ? `<button class="btn btn--small" data-comp-jump="${esc(repo)}">查工作流</button>` : '<span class="muted">—</span>'}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="9" class="muted">没有匹配的组件</td></tr>';
+  compPager.render();
+}
+
+$("#btnCompRefresh").addEventListener("click", loadComponents);
+$("#compWindow").addEventListener("change", loadComponents);
+
+$("#compSearch").addEventListener("input", () => { compPager.reset(); renderCompRows(); });
+$("#compMasterFilter").addEventListener("change", () => { compPager.reset(); renderCompRows(); });
+$("#compBody").addEventListener("click", (event) => {
+  const jump = event.target.closest("button[data-comp-jump]");
+  if (jump) jumpToWorkflows(jump.dataset.compJump);
+});
+
+/* --------------------------- AI Master view --------------------------- */
+let amRoster = [];
+let amAssignComps = [];
+let amAssignments = {};
+const amRosterPager = makePager("amRoster", renderAmRoster);
+const amAssignPager = makePager("amAssign", renderAmAssign);
+
+async function loadAiMaster() {
+  try {
+    const [masters, comps, assignments] = await Promise.all([
+      api("/api/v1/ai-masters"),
+      api("/api/v1/dashboard/components?workflow_kind=aaw"),
+      api("/api/v1/ai-masters/assignments"),
+    ]);
+    markSync(true);
+    amRoster = masters.items || [];
+    amAssignComps = comps.items || [];
+    amAssignments = assignments.assignments || {};
+    renderAmRoster();
+    renderAmAssign();
+  } catch (error) { markSync(false); toast(`AI Master 加载失败：${error.message}`, true); }
+}
+
+function renderAmRoster() {
+  const pageRows = amRosterPager.slice(amRoster);
+  $("#amRosterBody").innerHTML = pageRows.map((m) => `
+    <tr data-am-id="${esc(m.id)}">
+      <td><b>${esc(m.name)}</b></td>
+      <td class="mono">${m.repo_count} 仓库</td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn--small" data-am-rename="${esc(m.id)}">重命名</button>
+        <button class="btn btn--small btn--danger" data-am-delete="${esc(m.id)}">删除</button>
+      </td>
+    </tr>`).join("") || '<tr><td colspan="3" class="muted">暂无 AI Master</td></tr>';
+  amRosterPager.render();
+}
+
+// 归属表按仓库逐行：一个仓库一位 AI Master（责任单位）
+function amRepoRows() {
+  return amAssignComps.flatMap((c) =>
+    ((c.repos && c.repos) || []).map((repoKey) => ({
+      repoKey,
+      componentName: c.name,
+      se: c.se,
+    })),
+  );
+}
+
+function renderAmAssign() {
+  const term = ($("#amAssignSearch").value || "").trim().toLowerCase();
+  const options = ['<option value="">未认领</option>']
+    .concat(amRoster.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`))
+    .join("");
+  const allRows = amRepoRows();
+  const rows = amAssignPager.slice(allRows)
+    .filter((row) => {
+      if (!term) return true;
+      const owner = (amRoster.find((m) => m.id === amAssignments[row.repoKey]) || {}).name ?? "";
+      return [row.repoKey, row.componentName, row.se ?? "", owner]
+        .join(" ")
+        .toLowerCase()
+        .includes(term);
+    })
+    .map((row) => `
+      <tr>
+        <td class="mono"><b>${esc(row.repoKey)}</b></td>
+        <td>${esc(row.componentName)}</td>
+        <td>${esc(row.se ?? "—")}</td>
+        <td><select data-assign-repo="${esc(row.repoKey)}">${options}</select></td>
+      </tr>`);
+  $("#amAssignBody").innerHTML =
+    rows.join("") || '<tr><td colspan="4" class="muted">没有匹配的仓库</td></tr>';
+  amAssignPager.render();
+  for (const row of allRows) {
+    const select = document.querySelector(
+      `select[data-assign-repo="${CSS.escape(row.repoKey)}"]`,
+    );
+    if (select) select.value = amAssignments[row.repoKey] ?? "";
+  }
+}
+
+$("#amAssignSearch").addEventListener("input", () => { amAssignPager.reset(); renderAmAssign(); });
+
+$("#btnAmAdd").addEventListener("click", async () => {
+  const name = ($("#amNewName").value || "").trim();
+  if (!name) { toast("请输入姓名", true); return; }
+  try {
+    await api("/api/v1/ai-masters", { method: "POST", body: JSON.stringify({ name }) });
+    toast(`已新增 AI Master：${name}`);
+    $("#amNewName").value = "";
+    loadAiMaster();
+  } catch (error) { toast(`新增失败：${error.message}`, true); }
+});
+
+$("#amRosterBody").addEventListener("click", async (event) => {
+  const renameBtn = event.target.closest("button[data-am-rename]");
+  const deleteBtn = event.target.closest("button[data-am-delete]");
+  if (renameBtn) {
+    const tr = renameBtn.closest("tr");
+    const current = tr.querySelector("b").textContent;
+    const name = await askDialog({ title: "重命名 AI Master", initial: current });
+    if (name === null || !name.trim()) return;
+    try {
+      await api(`/api/v1/ai-masters/${renameBtn.dataset.amRename}`, {
+        method: "PATCH", body: JSON.stringify({ name: name.trim() }),
+      });
+      toast("已重命名");
+      loadAiMaster();
+    } catch (error) { toast(`重命名失败：${error.message}`, true); }
+    return;
+  }
+  if (deleteBtn) {
+    const tr = deleteBtn.closest("tr");
+    const name = tr.querySelector("b").textContent;
+    if (!(await askConfirm("删除 AI Master", `确定删除 ${name}？其名下组件将回到「未分配」。`))) return;
+    try {
+      await api(`/api/v1/ai-masters/${deleteBtn.dataset.amDelete}`, { method: "DELETE" });
+      toast("已删除");
+      loadAiMaster();
+    } catch (error) { toast(`删除失败：${error.message}`, true); }
+  }
+});
+
+$("#amAssignBody").addEventListener("change", async (event) => {
+  const select = event.target.closest("select[data-assign-repo]");
+  if (!select) return;
+  const repoKey = select.dataset.assignRepo;
+  try {
+    await api(`/api/v1/ai-masters/repo-assignments/${encodeURIComponent(repoKey)}`, {
+      method: "PUT",
+      body: JSON.stringify({ ai_master_id: select.value || null }),
+    });
+    amAssignments[repoKey] = select.value || null;
+    toast("归属已更新");
+    reloadAfterOwnershipChange();
+  } catch (error) { toast(`归属更新失败：${error.message}`, true); loadAiMaster(); }
+});
+
+/* 归属会同时影响组件页，改完顺手刷新在场的那几个 */
+function reloadAfterOwnershipChange() {
+  if (document.querySelector("#tab-components.is-active")) loadComponents();
+}
+
+
+/* ------------------------- Attribution management ------------------------- */
+let recPage = 1;
+let recCache = [];
+let recRecordKind = "all";   // 积压体检色块的跳转筛选（queued/not_queued/all）
+let recPending = false;      // 「待归因」口径：窗口内没有任何归因行的 dev 产出（与总览卡片同集合）
+const freshRows = new Set();
+const openDetails = new Set();
+const RERUN_SETTLED = ["finalized_match", "finalized_no_match", "failed", "retry_pending"];
+
+function recordFilterParams(overrides = {}) {
+  const params = {
+    repository: $("#fRepo").value.trim() || null,
+    user: $("#fUser").value.trim() || null,
+    sr: $("#fSr").value.trim() || null,
+    ar: $("#fAr").value.trim() || null,
+    mr: $("#fMr").value.trim() || null,
+    attribution_status: $("#fStatus").value || null,
+    result_status: $("#fResult").value || null,
+    quality_flag: $("#fFlag").value.trim() || null,
+    algorithm_version: $("#fAlgo").value.trim() || null,
+    workflow_kind: $("#fKind").value || null,
+    entry: $("#fEntry").value || null,
+    excluded: $("#fExcluded").value,
+    record_kind: recRecordKind,
+    pending_attribution: recPending ? "true" : null,
+    ...overrides,
+  };
+  Object.keys(params).forEach((key) => {
+    if (params[key] === null || params[key] === undefined || params[key] === "") delete params[key];
+  });
+  return params;
+}
+
+async function loadHealth() {
+  try {
+    const data = await api("/api/v1/admin/attribution/health");
+    markSync(true);
+    const b = data.backlog;
+    const stones = [
+      { label: "等待补丁", value: b.waiting_patch, cls: "stone--iris", hint: "开发已完成、等待补丁上传确认", jump: { record_kind: "not_queued" } },
+      { label: "等待调度", value: b.waiting_dispatch, cls: "stone--warn", hint: "已入队、等待下一轮扫描", jump: { attribution_status: "pending" } },
+      { label: "退避中", value: b.backing_off, cls: "stone--tangerine", hint: "失败后按退避规则等待重试", jump: { attribution_status: "retry_pending" } },
+      { label: "疑似卡死", value: b.suspected_stuck, cls: b.suspected_stuck ? "stone--alert" : "stone--warn",
+        hint: `执行超时 ${b.stuck_breakdown.stale_running} · 重试逾期 ${b.stuck_breakdown.overdue_retry}，建议人工重跑` },
+      { label: "超窗失败", value: b.window_expired_failed, cls: b.window_expired_failed ? "stone--magenta" : "stone--warn",
+        hint: "已超出重试窗口的失败记录，可用「强制重跑」补救", jump: { attribution_status: "failed" } },
+    ];
+    $("#backlogStones").innerHTML = stones.map((s, index) => `
+      <div class="stone ${s.cls}" ${s.jump ? `data-jump="${index}" title="${esc(s.hint)}"` : `title="${esc(s.hint)}"`}>
+        <small>${esc(s.label)}</small><strong>${s.value}</strong>
+      </div>`).join("");
+    const s = data.scheduler;
+    const pausedOrStopped = s.paused || !s.running;
+    $("#healthSchedulerKv").innerHTML = `${pausedOrStopped
+      ? '<span class="badge badge--failed">' + (s.paused ? "已自暂停" : "未运行") + "</span>"
+      : '<span class="badge badge--finalized_match">运行中</span>'}
+      <span class="health-band__item">上次扫描 <b class="mono">${s.last_scan_at ? fmtShort(s.last_scan_at) : "—"}</b>${s.last_scan_processed !== null ? ` · 处理 ${s.last_scan_processed} 条` : ""}</span>
+      <span class="health-band__item">连续失败 <b class="mono">${s.consecutive_failures}</b></span>
+      <span class="health-band__item">扫描间隔 <b class="mono">${Math.round(s.scan_interval_seconds / 60)} 分钟</b> · 重试窗口 <b class="mono">${Math.round(s.retry_window_seconds / 86400)} 天</b></span>`;
+    $("#failGroups").innerHTML = (data.failures || []).length
+      ? data.failures.map((g) => `<span class="chip chip--warn" data-failflag="${esc(g.reason)}" title="点击按此原因圈定记录">${esc(REASON_LABELS[g.reason] ?? g.reason)} × ${g.count}</span>`).join("")
+      : "";
+    const trendRow = (p) => `
+      <tr><td class="mono">${esc(p.date.slice(5))}</td><td class="mono">${p.matched}</td>
+      <td class="mono">${p.no_match}</td><td class="mono">${p.failed}</td>
+      <td class="mono">${p.avg_confidence === null ? "—" : (p.avg_confidence * 100).toFixed(0) + "%"}</td></tr>`;
+    const trend = data.trend || [];
+    $("#trendBody").innerHTML = trend.map(trendRow).join("") || '<tr><td colspan="5" class="muted">暂无数据</td></tr>';
+    $("#algoBody").innerHTML = data.algorithms.map((a) => `
+      <tr><td class="mono">${esc(a.algorithm_version)}</td>
+      <td><span class="badge badge--${esc(a.result_status)}">${esc(STATUS_LABELS[a.result_status] ?? a.result_status)}</span></td>
+      <td class="mono">${a.count}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">暂无数据</td></tr>';
+  } catch (error) { markSync(false); toast(`体检加载失败：${error.message}`, true); }
+}
+
+$("#backlogStones").addEventListener("click", async (event) => {
+  const stone = event.target.closest("[data-jump]");
+  if (!stone) return;
+  const jump = [
+    { record_kind: "not_queued" }, { attribution_status: "pending" },
+    { attribution_status: "retry_pending" }, null, { attribution_status: "failed" },
+  ][Number(stone.dataset.jump)];
+  if (!jump) return;
+  recRecordKind = jump.record_kind ?? "all";
+  recPending = false;   // 队列状态视图与「待归因」口径不是同一集合
+  $("#fStatus").value = jump.attribution_status ?? "";
+  recPage = 1;
+  await loadRecords();
+  // Jump to the records card and flash it so the applied filter is visible.
+  const card = $("#cardRecords");
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.classList.remove("flash");
+  void card.offsetWidth;
+  card.classList.add("flash");
+});
+
+$("#failGroups").addEventListener("click", async (event) => {
+  const chip = event.target.closest("[data-failflag]");
+  if (!chip) return;
+  const reason = chip.dataset.failflag;
+  recPending = false;   // 失败原因分组看的是有归因结果的失败记录
+  $("#fStatus").value = "failed";
+  // "unknown" covers window-expired records that carry no engine reason;
+  // filtering by the literal string would match nothing.
+  $("#fFlag").value = reason === "unknown" ? "" : reason;
+  recPage = 1;
+  await loadRecords();
+  const card = $("#cardRecords");
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.classList.remove("flash");
+  void card.offsetWidth;
+  card.classList.add("flash");
+});
+
+function renderKindChip() {
+  const chip = $("#kindChip");
+  const labels = { not_queued: "仅看未入队", queued: "仅看已入队" };
+  if (recRecordKind === "all") { chip.style.display = "none"; } else {
+    chip.textContent = `${labels[recRecordKind] ?? recRecordKind} ✕`;
+    chip.style.display = "inline-block";
+  }
+  // 「待归因」口径与会把条数带偏的筛选互斥，所以命中时把它标出来，并说清列表为什么短
+  $("#pendingChip").style.display = recPending ? "inline-block" : "none";
+}
+
+$("#pendingChip").addEventListener("click", () => {
+  recPending = false;
+  renderKindChip();
+  recPage = 1;
+  loadRecords();
+});
+
+$("#kindChip").addEventListener("click", () => {
+  recRecordKind = "all";
+  renderKindChip();
+  recPage = 1;
+  loadRecords();
+});
+
+async function loadRecords() {
+  renderKindChip();
+  try {
+    const params = new URLSearchParams({ page: recPage, page_size: 25 });
+    for (const [key, value] of Object.entries(recordFilterParams())) {
+      params.set(key, value);
+    }
+    const data = await api(`/api/v1/admin/attribution/records?${params}`);
+    markSync(true);
+    recCache = data.items;
+    $("#recTotal").textContent = `共 ${data.total} 条`;
+    $("#recPage").textContent = recPage;
+    $("#btnRecPrev").disabled = recPage <= 1;
+    $("#btnRecNext").disabled = recPage * 25 >= data.total;
+    for (const [id, at] of [...freshRows]) { if (Date.now() - at > 6000) freshRows.delete(id); }
+    $("#recBody").innerHTML = data.items.map((item) => recordRowHtml(item)).join("")
+      || '<tr><td colspan="8" class="muted">没有符合条件的记录</td></tr>';
+    for (const id of openDetails) {
+      const anchor = document.querySelector(`tr[data-dev="${id}"]`);
+      if (anchor) expandDetail(id, anchor, false);
+    }
+    const focusId = new URLSearchParams(location.search).get("dev_run_id");
+    const focusRow = focusId ? document.querySelector(`tr[data-dev="${CSS.escape(focusId)}"]`) : null;
+    if (focusRow) {
+      focusRow.classList.add("row-fresh");
+      focusRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  } catch (error) { markSync(false); toast(`记录加载失败：${error.message}`, true); }
+}
+
+function recordRowHtml(item) {
+  const fresh = freshRows.has(item.dev_run_id) ? " row-fresh" : "";
+  const excluded = item.admin_excluded ? " row-excluded" : "";
+  // Audit-relevant flags stay visible; lifecycle noise folds into "+n".
+  const meaningful = [];
+  const noise = [];
+  for (const flag of item.quality_flags ?? []) {
+    (NOISE_FLAGS.has(flag) ? noise : meaningful).push(flag);
+  }
+  const flags = meaningful.slice(0, 2).map((flag) => {
+    if (flag === "admin_retry") return '<span class="chip chip--admin">人工重跑</span>';
+    if (flag === "admin_retry_expired") return '<span class="chip chip--admin">超窗补跑</span>';
+    const warn = flag.startsWith("remote_") || flag.startsWith("worker_");
+    return `<span class="chip${warn ? "--warn" : ""}" title="${esc(flag)}">${esc(flag.length > 22 ? flag.slice(0, 20) + "…" : flag)}</span>`;
+  }).join("")
+    + (meaningful.length > 2 ? `<span class="chip" title="${esc(meaningful.slice(2).join("、"))}">+${meaningful.length - 2}</span>` : "")
+    + (noise.length ? `<span class="muted mono" style="font-size:12px;" title="${esc(noise.join("、"))}">+${noise.length}</span>` : "");
+  const retries = item.record_status === "not_queued"
+    ? '<span class="muted">—</span>'
+    : `<span class="mono">重试 ${item.retry_count}</span>${item.next_retry_at
+      ? `<div class="muted mono" style="font-size:12px;">下次 ${esc(fmtShort(item.next_retry_at))}</div>` : ""}`;
+  const throughput = item.record_status === "not_queued"
+    ? '<span class="muted">未产生生成</span>'
+    : `<span class="mono">${item.attributed_lines_80 ?? 0}</span><span class="muted"> / ${item.dev_effective_lines} 行</span>${item.matched_mr_url
+      ? ` <a href="${esc(item.matched_mr_url)}" target="_blank" rel="noopener">MR</a>` : ""}`;
+  const retryBtn = item.record_status === "not_queued"
+    ? ""
+    : `<button class="btn btn--small" data-retry="${esc(item.dev_run_id)}">重跑</button>
+       ${item.retry_window_expired ? `<button class="btn btn--small btn--danger" data-force="${esc(item.dev_run_id)}">强制重跑</button>` : ""}`;
+  const excludeBtn = item.admin_excluded
+    ? `<button class="btn btn--small" data-restore="${esc(item.dev_run_id)}">恢复</button>`
+    : `<button class="btn btn--small btn--danger" data-exclude="${esc(item.dev_run_id)}">删除</button>`;
+  return `
+  <tr data-dev="${esc(item.dev_run_id)}" class="${(fresh + excluded).trim()}">
+    <td>
+      <span class="badge badge--${esc(item.record_status)}">${esc(STATUS_LABELS[item.record_status] ?? item.record_status)}</span>
+      ${item.admin_excluded ? '<span class="badge badge--excluded">已删除</span>' : ""}
+      ${item.attribution_deleted ? '<span class="badge badge--excluded">归因已删除</span>' : ""}
+      ${item.retry_window_expired && item.record_status === "failed" ? '<div class="muted" style="font-size:12px;margin-top:3px;">窗口已过</div>' : ""}
+      ${item.upload_status && item.record_status === "not_queued" ? `<div class="muted" style="font-size:12px;margin-top:3px;">补丁: ${esc(item.upload_status)}</div>` : ""}
+    </td>
+    <td><b>${esc(item.repository)}</b><div class="muted">${esc(item.sr ?? "")} ${esc(item.ar ?? "")} · ${esc(item.workflow_kind ?? "aaw")}${item.entry ? " / " + esc(item.entry) : ""}</div></td>
+    <td>${esc(item.user_name)}<div class="muted mono" style="font-size:12px;">${esc(item.user_email ?? "")}</div></td>
+    <td>${throughput}</td>
+    <td>${retries}</td>
+    <td class="mono">${esc(fmtShort(item.server_updated_at))}</td>
+    <td>${flags}</td>
+    <td style="white-space:nowrap;">
+      <button class="btn btn--small" data-detail="${esc(item.dev_run_id)}">详情</button>
+      ${retryBtn}
+      ${excludeBtn}
+    </td>
+  </tr>`;
+}
+
+async function expandDetail(devRunId, row, toggle = true) {
+  const existing = document.querySelector(`tr.detail-row[data-detail-for="${devRunId}"]`);
+  if (existing) {
+    if (toggle) { existing.remove(); openDetails.delete(devRunId); }
+    return;
+  }
+  const mount = document.createElement("tr");
+  mount.className = "detail-row";
+  mount.dataset.detailFor = devRunId;
+  mount.innerHTML = '<td colspan="8" class="muted">加载详情…</td>';
+  row.after(mount);
+  openDetails.add(devRunId);
+  try {
+    const item = await api(`/api/v1/admin/attribution/records/${devRunId}/detail`);
+    const a = item.attribution_detail;
+    const g = item.governance;
+    const stats = item.dev_run?.code_statistics || {};
+    mount.innerHTML = `<td colspan="10">
+      <div class="grid halves">
+        <dl class="kv">
+          <dt>归因结果</dt><dd>${a ? `80% ${a.attributed_lines_80} 行 · 90% ${a.attributed_lines_90} 行 · 60% ${a.attributed_lines_60 ?? "—"} 行 · 置信度 ${(a.confidence * 100).toFixed(1)}%` : "无（未入队或尚未产出）"}</dd>
+          <dt>MR 信息</dt><dd>${item.matched_mr_iid
+            ? `${esc(item.matched_mr_iid)} · 合入 ${esc(a?.mr_merged_at ? fmtDay(a.mr_merged_at) : "—")} · <a href="${esc(item.matched_mr_url)}" target="_blank" rel="noopener">链接</a>` : "—"}</dd>
+          <dt>分支</dt><dd class="mono">${esc(item.dev_run?.branch ?? "—")} → 目标 ${esc(a?.target_branch ?? "—")}</dd>
+          <dt>判定口径</dt><dd>算法 ${esc(a?.algorithm_version ?? "—")} · diff 规则 ${esc(a?.diff_rule_version ?? "—")}</dd>
+          <dt>代码构成</dt><dd class="mono">${stats && stats.total_effective_lines !== undefined
+            ? `有效 ${stats.total_effective_lines} 行${stats.production_lines !== undefined ? ` · 生产 ${stats.production_lines}` : ""}${stats.test_lines !== undefined ? ` · 测试 ${stats.test_lines}` : ""}${stats.script_lines !== undefined ? ` · 脚本 ${stats.script_lines}` : ""}${stats.config_lines !== undefined ? ` · 配置 ${stats.config_lines}` : ""}${stats.doc_lines !== undefined ? ` · 文档 ${stats.doc_lines}` : ""}` : "—"}</dd>
+          <dt>补丁上传</dt><dd>${item.upload ? `${esc(item.upload.status)}${item.upload.confirmed_at ? " · 确认于 " + esc(fmtDay(item.upload.confirmed_at)) : ""}` : (item.upload_status ? esc(item.upload_status) : "无上传记录")}</dd>
+        </dl>
+        <dl class="kv">
+          <dt>工作流</dt><dd>${item.workflow ? `${esc(item.workflow.workflow_kind)} / ${esc(item.workflow.entry ?? "—")} · 版本 ${esc(item.workflow.aaw_version ?? "—")} · ${esc(item.workflow.status)}` : "—"}</dd>
+          <dt>开发记录</dt><dd>${esc(item.dev_run?.status ?? "—")} · 开始 ${esc(item.dev_started_at ? fmtDay(item.dev_started_at) : "—")} · 完成 ${esc(item.dev_completed_at ? fmtDay(item.dev_completed_at) : "—")}</dd>
+          <dt>重试</dt><dd>已重试 ${item.retry_count} 次 · 下次 ${esc(item.next_retry_at ?? "—")}</dd>
+          <dt>治理</dt><dd>${g.admin_excluded
+            ? `<span class="badge badge--excluded">产出已删除${g.deleted_reason_code ? " · " + esc(REASON_CODES[g.deleted_reason_code] ?? g.deleted_reason_code) : ""}</span> ${esc(g.reason ?? "—")} · 操作人 ${esc(g.by ?? "—")} · ${esc(g.at ? fmtDay(g.at) : "—")}`
+            : '未删除'}${g.workflow_deleted
+            ? ' <span class="badge badge--excluded">所在工作流已删除</span>' : ""}${g.attribution_deleted
+            ? ` <span class="badge badge--excluded">归因已删除${g.attribution_deleted_reason_code ? " · " + esc(REASON_CODES[g.attribution_deleted_reason_code] ?? g.attribution_deleted_reason_code) : ""}</span>` : ""}</dd>
+          <dt>质量标记</dt><dd>${(item.quality_flags ?? []).map((f) => `<span class="chip">${esc(f)}</span>`).join("") || "无"}</dd>
+          <dt>dev_run_id</dt><dd class="mono" style="font-size:12px;">${esc(devRunId)}</dd>
+          <dt>补丁文件</dt><dd style="white-space:nowrap;">
+            <button class="btn btn--small" data-patch-view="${esc(devRunId)}">看文件</button>
+          </dd>
+        </dl>
+      </div>
+    </td>`;
+  } catch (error) {
+    mount.innerHTML = `<td colspan="8" class="muted">详情加载失败：${esc(error.message)}</td>`;
+  }
+}
+
+$("#recBody").addEventListener("click", async (event) => {
+  const detailBtn = event.target.closest("button[data-detail]");
+  const retryBtn = event.target.closest("button[data-retry]");
+  const forceBtn = event.target.closest("button[data-force]");
+  const excludeBtn = event.target.closest("button[data-exclude]");
+  const restoreBtn = event.target.closest("button[data-restore]");
+  const patchBtn = event.target.closest("button[data-patch-view]");
+  const row = event.target.closest("tr[data-dev]");
+  if (!row) return;
+  const devRunId = row.dataset.dev;
+  if (detailBtn) { await expandDetail(devRunId, row); return; }
+  if (patchBtn) {
+    await openPatchViewer(patchBtn.dataset.patchView);
+    return;
+  }
+  if (retryBtn) { await runRetry(devRunId, retryBtn, false); return; }
+  if (forceBtn) { await runRetry(devRunId, forceBtn, true); return; }
+  if (excludeBtn) { await runExclude(devRunId, false); return; }
+  if (restoreBtn) { await runRestore(devRunId, false); }
+});
+
+async function watchRerun(devRunId, button) {
+  // Poll until the rerun settles so the operator sees the outcome.
+  for (let round = 0; round < 10; round += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await loadRecords();
+    const item = recCache.find((entry) => entry.dev_run_id === devRunId);
+    if (item && RERUN_SETTLED.includes(item.attribution_status)) {
+      freshRows.add(devRunId);
+      await loadRecords();
+      toast(`重跑完成：${STATUS_LABELS[item.attribution_status] ?? item.attribution_status}`,
+            item.attribution_status === "failed" || item.attribution_status === "retry_pending");
+      button.disabled = false;
+      return;
+    }
+  }
+  toast("已提交重跑，调度器处理中；稍后刷新查看结果");
+  button.disabled = false;
+}
+
+async function runRetry(devRunId, button, force) {
+  if (force && !(await askConfirm(
+    "强制重跑",
+    "将绕过 90 天重试窗口重新发起归因，记录上会留下「超窗补跑」标记。确定继续？",
+  ))) return;
+  button.disabled = true;
+  button.textContent = "重跑中…";
+  try {
+    await api(`/api/v1/admin/attribution/records/${devRunId}/${force ? "force-retry" : "retry"}`, { method: "POST" });
+    freshRows.add(devRunId);
+    await loadRecords();
+    toast(force ? "已强制重置为 pending 并唤醒调度器（留痕：超窗补跑）" : "已重置为 pending 并唤醒调度器");
+    await watchRerun(devRunId, button);
+  } catch (error) {
+    toast(`${force ? "强制重跑" : "重跑"}失败：${error.message}`, true);
+    button.disabled = false;
+    button.textContent = force ? "强制重跑" : "重跑";
+  }
+}
+
+async function runExclude(devRunId) {
+  const payload = await askDelete({
+    title: "删除开发产出",
+    message: "该产出的生成行数将退出分母，归因随之失效；可随时恢复。删除将按理由留痕。",
+  });
+  if (!payload) return;
+  try {
+    await api(`/api/v1/admin/dev-runs/${devRunId}/delete`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    toast("已删除：该产出已退出采纳统计，可随时恢复");
+    loadRecords();
+    loadHealth();
+  } catch (error) { toast(`删除失败：${error.message}`, true); }
+}
+
+async function runRestore(devRunId) {
+  if (!(await askConfirm("恢复确认", "恢复后该记录重新计入采纳统计口径。确定恢复？"))) return;
+  try {
+    await api(`/api/v1/admin/dev-runs/${devRunId}/restore`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    toast("已恢复");
+    loadRecords();
+    loadHealth();
+  } catch (error) { toast(`恢复失败：${error.message}`, true); }
+}
+
+async function runBulk(action) {
+  const filters = recordFilterParams(
+    action === "force_retry" ? { attribution_status: $("#fStatus").value || "failed" } : {}
+  );
+  if (action === "exclude" && filters.excluded !== "hidden") {
+    toast("批量删除请在「隐藏已删除」模式下圈定记录", true);
+    return;
+  }
+  let preview;
+  try {
+    preview = await api("/api/v1/admin/attribution/bulk", {
+      method: "POST",
+      body: JSON.stringify({ action, dry_run: true, ...filters }),
+    });
+  } catch (error) { toast(`预览失败：${error.message}`, true); return; }
+  const names = { retry: "批量重跑", force_retry: "批量强制重跑", exclude: "批量删除产出", restore: "批量恢复" };
+  const lines = [
+    `命中 ${preview.matched} 条，其中可执行 ${preview.applicable} 条`,
+    preview.skipped_running ? `执行中跳过 ${preview.skipped_running} 条` : "",
+    preview.skipped_state ? `状态不允许跳过 ${preview.skipped_state} 条` : "",
+  ].filter(Boolean).join("；");
+  if (!preview.applicable) { toast(`${names[action]}：没有可执行的记录（${lines}）`, true); return; }
+  let reason = null;
+  let operator = null;
+  if (action === "exclude") {
+    reason = await askDialog({
+      title: "批量删除产出",
+      message: "将圈定当前筛选命中的记录按同一理由删除（可随时恢复）。",
+      placeholder: "备注（必填，将留痕；理由码记为「其他」）",
+      initial: "",
+    });
+    if (reason === null || !reason) { toast("必须填写备注", true); return; }
+    operator = await askDialog({ title: "操作人（选填）", placeholder: "姓名", initial: "" });
+    if (operator === null) return;
+  }
+  if (!(await askConfirm(`${names[action]}预览`, `${lines}。确定执行？`))) return;
+  try {
+    const result = await api("/api/v1/admin/attribution/bulk", {
+      method: "POST",
+      body: JSON.stringify({ action, dry_run: false, reason, operator, ...filters }),
+    });
+    toast(`已执行：成功 ${result.processed} 条${result.failed ? `，失败 ${result.failed} 条` : ""}${result.skipped_running ? `，执行中跳过 ${result.skipped_running} 条` : ""}`,
+          result.failed > 0);
+    loadRecords();
+    loadHealth();
+  } catch (error) { toast(`批量执行失败：${error.message}`, true); }
+}
+
+$("#btnBulkRetry").addEventListener("click", () => runBulk("retry"));
+$("#btnBulkForce").addEventListener("click", () => runBulk("force_retry"));
+$("#btnBulkExclude").addEventListener("click", () => runBulk("exclude"));
+$("#btnBulkRestore").addEventListener("click", () => runBulk("restore"));
+
+$("#btnRecRefresh").addEventListener("click", () => { recPage = 1; loadRecords(); });
+$("#btnRecReset").addEventListener("click", () => {
+  ["#fRepo", "#fUser", "#fSr", "#fAr", "#fMr", "#fFlag", "#fAlgo"].forEach((id) => { $(id).value = ""; });
+  ["#fStatus", "#fResult", "#fKind", "#fEntry"].forEach((id) => { $(id).value = ""; });
+  $("#fExcluded").value = "hidden";
+  $("#fFrom").value = "";
+  $("#fTo").value = "";
+  recRecordKind = "all";
+  recPending = false;
+  recPage = 1;
+  loadRecords();
+});
+$("#btnRecPrev").addEventListener("click", () => { if (recPage > 1) { recPage -= 1; loadRecords(); } });
+$("#btnRecNext").addEventListener("click", () => { recPage += 1; loadRecords(); });
+
+/* ------------------------------ Version ops ------------------------------ */
+const verPager = makePager("ver", loadVersions);
+async function loadVersions() {
+  const windowDays = $("#verWindow").value;
+  try {
+    const [roster, dist] = await Promise.all([
+      api(`/api/v1/admin/versions/roster?window_days=${windowDays}`),
+      api(`/api/v1/admin/versions/distribution?window_days=${windowDays}`),
+    ]);
+    markSync(true);
+    $("#verBaseline").textContent =
+      `基准 ${roster.latest_version ?? "—"} · ${roster.release_source === "release_dir" ? "发布目录" : "数据推算"}`;
+    $("#verStones").innerHTML = `
+      <div class="stone stone--iris"><small>窗口内活跃人数</small><strong>${roster.active_users}</strong></div>
+      <div class="stone stone--grass"><small>已用最新版</small><strong>${roster.on_latest}</strong></div>
+      <div class="stone stone--tangerine"><small>仍在旧版本</small><strong>${roster.on_old}</strong></div>
+      <div class="stone stone--warn"><small>非发布版本账号</small><strong>${roster.non_release_users}</strong></div>`;
+    const verRows = verPager.slice(roster.items);
+    $("#verBody").innerHTML = verRows.map((row) => `
+      <tr data-email="${esc(row.user_email)}">
+        <td><b>${esc(row.user_name)}</b><div class="muted mono" style="font-size:12px;">${esc(row.user_email)}</div></td>
+        <td class="mono">${esc(row.version)}</td>
+        <td><span class="badge badge--retry_pending">落后 ${row.behind} 位</span></td>
+        <td class="mono">${esc(fmtShort(row.last_report_at))}</td>
+        <td><button class="btn btn--small" data-timeline="${esc(row.user_email)}">展开</button></td>
+      </tr>`).join("") || '<tr><td colspan="5" class="muted">窗口内没有停留在旧版本的用户 🎉</td></tr>';
+    verPager.render();
+    $("#verNonReleaseCount").textContent =
+      roster.non_release.length ? `· ${roster.non_release.length} 个（冒烟/联调，不入名单）` : "· 无";
+    $("#verNonRelease").innerHTML = roster.non_release.map((row) => `
+      <tr data-email="${esc(row.user_email)}"><td>${esc(row.user_name)}</td><td class="mono">${esc(row.user_email)}</td>
+      <td class="mono">${esc(row.version)}</td><td class="mono">${esc(fmtShort(row.last_report_at))}</td></tr>`).join("")
+      || '<tr><td colspan="4" class="muted">无</td></tr>';
+    $("#verDistStones").innerHTML = dist.items.map((item) => `
+      <div class="stone ${item.is_latest ? "stone--grass" : (item.is_release ? "stone--tangerine" : "stone--warn")}">
+        <small>${esc(item.version)}${item.is_latest ? " · 最新" : ""}${item.is_release ? "" : " · 非发布"}</small>
+        <strong>${item.users}</strong><span class="muted" style="font-size:12px;">人 · ${item.reports} 次上报</span>
+      </div>`).join("");
+    const focusEmail = new URLSearchParams(location.search).get("user_email");
+    const focusRow = focusEmail
+      ? document.querySelector(`#tab-versions tr[data-email="${CSS.escape(focusEmail)}"]`)
+      : null;
+    if (focusRow) {
+      const disclosure = focusRow.closest("details");
+      if (disclosure) disclosure.open = true;
+      focusRow.classList.add("row-fresh");
+      focusRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      focusRow.querySelector("button[data-timeline]")?.click();
+    }
+  } catch (error) { markSync(false); toast(`版本运营加载失败：${error.message}`, true); }
+}
+
+$("#verBody").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-timeline]");
+  if (!button) return;
+  const email = button.dataset.timeline;
+  const row = button.closest("tr[data-email]");
+  // 行内展开，与归因记录的详情交互一致；同时只展开一行
+  const existing = document.querySelector(`tr.ver-detail[data-detail-for="${email}"]`);
+  document.querySelectorAll("tr.ver-detail").forEach((el) => el.remove());
+  document.querySelectorAll("#verBody button[data-timeline]").forEach((b) => {
+    if (b !== button) b.textContent = "展开";
+  });
+  if (existing) { button.textContent = "展开"; return; }
+  const detail = document.createElement("tr");
+  detail.className = "ver-detail detail-row";
+  detail.dataset.detailFor = email;
+  detail.innerHTML = '<td colspan="5" class="muted">加载轨迹…</td>';
+  row.after(detail);
+  button.textContent = "收起";
+  try {
+    const data = await api(`/api/v1/admin/versions/timeline?user_email=${encodeURIComponent(email)}`);
+    detail.innerHTML = `<td colspan="5">
+      <table>
+        <thead><tr><th>版本</th><th>首次上报</th><th>最近上报</th><th>上报次数</th></tr></thead>
+        <tbody>
+          ${data.items.map((span) => `
+            <tr>
+              <td class="mono">${esc(span.version)}${span.version === data.latest_version ? ' <span class="chip">最新</span>' : ""}</td>
+              <td class="mono">${esc(fmtShort(span.first_report_at))}</td>
+              <td class="mono">${esc(fmtShort(span.last_report_at))}</td>
+              <td class="mono">${span.report_count}</td>
+            </tr>`).join("") || '<tr><td colspan="4" class="muted">无上报记录</td></tr>'}
+        </tbody>
+      </table>
+    </td>`;
+  } catch (error) {
+    detail.innerHTML = `<td colspan="5" class="muted">轨迹加载失败：${esc(error.message)}</td>`;
+  }
+});
+
+$("#btnVerRefresh").addEventListener("click", () => { verPager.reset(); loadVersions(); });
+$("#verWindow").addEventListener("change", () => { verPager.reset(); loadVersions(); });
+
+/* -------------------------------- Registry -------------------------------- */
+/* 主从布局：左侧组件列表（搜索过滤），右侧为选中组件的仓库明细；
+   组件几十个、仓库几百个时只渲染当前选中组件，页面不再无限拉长。 */
+let regData = null;
+let regSelected = null;
+
+const COMPONENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const REPO_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9./_-]*$/;
+const CANONICAL_URL_RE = /^(?:(?:https?|ssh|git):\/\/\S+|git@[A-Za-z0-9._-]+[:\/]\S+)$/;
+
+function regHit(component, term) {
+  if (!term) return true;
+  const hay = [
+    component.id, component.name, component.se ?? "", component.ai_master ?? "",
+    ...component.repos.flatMap((repo) => [repo.repo_key, repo.canonical_url]),
+  ].join("\n").toLowerCase();
+  return hay.includes(term);
+}
+
+async function loadRegistry() {
+  try {
+    const data = await api("/api/v1/admin/registry");
+    markSync(true);
+    regData = data.components;
+    if (!regData.some((c) => c.id === regSelected)) regSelected = regData[0]?.id ?? null;
+    renderRegistry();
+  } catch (error) { markSync(false); toast(`注册表加载失败：${error.message}`, true); }
+}
+
+function renderRegistry() {
+  const term = $("#regSearch").value.trim().toLowerCase();
+  const components = regData ?? [];
+  const visible = components.filter((c) => regHit(c, term));
+  if (visible.length && !visible.some((component) => component.id === regSelected)) {
+    regSelected = visible[0].id;
+  }
+  const repoTotal = components.reduce((sum, c) => sum + c.repos.length, 0);
+  $("#regStats").textContent = regData === null
+    ? "加载中…"
+    : `${components.length} 组件 · ${repoTotal} 仓库${term ? ` · 匹配 ${visible.length}` : ""}`;
+  $("#regList").innerHTML = visible.map((component) => `
+    <div class="reg-item${component.id === regSelected ? " is-active" : ""}" data-component="${esc(component.id)}">
+      <b>${esc(component.name)}</b>
+      <span class="mono">${esc(component.id)}</span>
+      <div class="meta"><span>SE ${esc(component.se ?? "—")}</span><span>${component.repos.length} 仓库</span></div>
+    </div>`).join("")
+    || `<div class="muted" style="padding:16px 10px; font-size:13.5px;">${components.length ? "没有匹配的组件。" : "注册表为空，点上方「新增组件」创建。"}</div>`;
+  renderRegistryDetail(term);
+}
+
+function renderRegistryDetail(term = "") {
+  const component = (regData ?? []).find((c) => c.id === regSelected);
+  const mount = $("#regDetail");
+  if (!component) {
+    mount.innerHTML = '<div class="muted" style="padding:40px 10px; text-align:center;">← 从左侧选择一个组件，这里展示它的仓库明细。</div>';
+    return;
+  }
+  const componentHit = [component.id, component.name, component.se ?? ""].join("\n").toLowerCase().includes(term);
+  const repos = componentHit ? component.repos : component.repos.filter((repo) =>
+    [repo.repo_key, repo.canonical_url, repo.target_branch].join("\n").toLowerCase().includes(term));
+  mount.innerHTML = `
+    <div class="reg-head">
+      <div>
+        <h2 style="margin:0;">${esc(component.name)} <span class="count">${esc(component.id)}</span></h2>
+        <div class="muted" style="font-size:13px;">SE ${esc(component.se ?? "—")} · AI Master ${esc(component.ai_master ?? "未认领")} · 共 ${component.repos.length} 个仓库</div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn--small" data-edit-component>编辑</button>
+        <button class="btn btn--small btn--danger" data-delete-component="${esc(component.id)}">删除组件</button>
+      </div>
+    </div>
+    <form class="inline" id="regEditForm" hidden style="margin:0 0 14px;">
+      <div class="field"><span>名称</span><input name="name" required maxlength="128" value="${esc(component.name)}"></div>
+      <div class="field"><span>SE（留空保持不变）</span><input name="se" maxlength="64" value="${esc(component.se ?? "")}"></div>
+      <button type="submit" class="btn btn--small btn--primary">保存</button>
+      <button type="button" class="btn btn--small" data-cancel-edit>取消</button>
+    </form>
+    <div class="reg-repos">
+      <table>
+        <thead><tr><th>repo key（须与 CLI 上报一致）</th><th>canonical url</th><th>目标分支</th><th>启用</th><th>操作</th></tr></thead>
+        <tbody>
+          ${repos.map((repo) => `
+            <tr>
+              <td class="mono">${esc(repo.repo_key)}</td>
+              <td class="mono">${esc(repo.canonical_url)}</td>
+              <td>${esc(repo.target_branch)}</td>
+              <td>${repo.enabled
+                ? '<span class="badge badge--finalized_match">启用</span>'
+                : '<span class="badge badge--failed">停用</span>'}</td>
+              <td style="white-space:nowrap;">
+                <button class="btn btn--small" data-toggle-repo="${esc(component.id)}|${esc(repo.repo_key)}|${repo.enabled ? "false" : "true"}">${repo.enabled ? "停用" : "启用"}</button>
+                <button class="btn btn--small btn--danger" data-delete-repo="${esc(component.id)}|${esc(repo.repo_key)}">删除</button>
+              </td>
+            </tr>`).join("")
+            || `<tr><td colspan="5" class="muted">${component.repos.length ? "当前搜索没有匹配的仓库。" : "暂无仓库，可在下方添加。"}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <p class="mono muted" style="font-size:12px; margin:8px 2px 0;">显示 ${repos.length} / ${component.repos.length} 个仓库</p>
+    <details class="trend-more" style="margin-top:8px;">
+      <summary>添加仓库</summary>
+      <form class="inline" data-add-repo="${esc(component.id)}">
+        <div class="field"><span>repo key</span><input name="repo_key" required maxlength="256" placeholder="example-service"></div>
+        <div class="field"><span>canonical url</span><input name="canonical_url" required maxlength="2048" size="34" placeholder="git@git.company.com:team/example-service.git"></div>
+        <div class="field"><span>目标分支</span><input name="target_branch" value="master" maxlength="512"></div>
+        <button type="submit" class="btn btn--small">添加</button>
+      </form>
+    </details>`;
+}
+
+$("#regSearch").addEventListener("input", renderRegistry);
+$("#btnRegRefresh").addEventListener("click", loadRegistry);
+
+$("#regList").addEventListener("click", (event) => {
+  const item = event.target.closest(".reg-item[data-component]");
+  if (!item) return;
+  regSelected = item.dataset.component;
+  renderRegistry();
+});
+
+$("#formComponent").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const componentId = String(form.get("component_id") ?? "").trim();
+  if (!COMPONENT_ID_RE.test(componentId)) {
+    toast("组件 ID 只能是字母/数字开头，含字母、数字、点、下划线、中划线", true);
+    return;
+  }
+  try {
+    const result = await api("/api/v1/admin/registry/components", {
+      method: "POST",
+      body: JSON.stringify(Object.fromEntries(form)),
+    });
+    toast(result.message);
+    regSelected = String(form.get("component_id") ?? "");
+    event.target.reset();
+    $("#regAddBox").removeAttribute("open");
+    loadRegistry();
+  } catch (error) { toast(`创建失败：${error.message}`, true); }
+});
+
+$("#regDetail").addEventListener("submit", async (event) => {
+  const addForm = event.target.closest("form[data-add-repo]");
+  if (addForm) {
+    event.preventDefault();
+    const componentId = addForm.dataset.addRepo;
+    const data = Object.fromEntries(new FormData(addForm));
+    if (!REPO_KEY_RE.test(String(data.repo_key ?? "").trim())) {
+      toast("repo key 只能是字母/数字开头，含字母、数字、点、下划线、中划线", true);
+      return;
+    }
+    if (!CANONICAL_URL_RE.test(String(data.canonical_url ?? "").trim())) {
+      toast("canonical url 须为 git 地址（https://、ssh://、git:// 或 git@host:path）", true);
+      return;
+    }
+    try {
+      const result = await api(`/api/v1/admin/registry/components/${encodeURIComponent(componentId)}/repos`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      toast(result.message);
+      loadRegistry();
+    } catch (error) { toast(`添加失败：${error.message}`, true); }
+    return;
+  }
+  if (!event.target.closest("#regEditForm")) return;
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  try {
+    const result = await api(`/api/v1/admin/registry/components/${encodeURIComponent(regSelected)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: data.name, ...(data.se ? { se: data.se } : {}) }),
+    });
+    toast(result.message ?? "组件已更新");
+    loadRegistry();
+  } catch (error) { toast(`更新失败：${error.message}`, true); }
+});
+
+$("#regDetail").addEventListener("click", async (event) => {
+  if (event.target.closest("button[data-cancel-edit]")) {
+    $("#regEditForm").hidden = true;
+    return;
+  }
+  if (event.target.closest("button[data-edit-component]")) {
+    const form = $("#regEditForm");
+    form.hidden = !form.hidden;
+    if (!form.hidden) form.querySelector("input[name=name]").focus();
+    return;
+  }
+  const toggle = event.target.closest("button[data-toggle-repo]");
+  if (toggle) {
+    const [componentId, repoKey, next] = toggle.dataset.toggleRepo.split("|");
+    try {
+      await api(`/api/v1/admin/registry/components/${encodeURIComponent(componentId)}/repos/${encodeURIComponent(repoKey)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: next === "true" }),
+      });
+      loadRegistry();
+    } catch (error) { toast(`更新失败：${error.message}`, true); }
+    return;
+  }
+  const delRepo = event.target.closest("button[data-delete-repo]");
+  if (delRepo) {
+    const [componentId, repoKey] = delRepo.dataset.deleteRepo.split("|");
+    if (!(await askConfirm("删除仓库", `确定删除仓库 ${repoKey}？删除后其统计将不再纳入组件。`))) return;
+    try {
+      await api(`/api/v1/admin/registry/components/${encodeURIComponent(componentId)}/repos/${encodeURIComponent(repoKey)}`, { method: "DELETE" });
+      toast(`仓库 ${repoKey} 已删除`);
+      loadRegistry();
+    } catch (error) { toast(`删除失败：${error.message}`, true); }
+    return;
+  }
+  const delComponent = event.target.closest("button[data-delete-component]");
+  if (delComponent) {
+    const componentId = delComponent.dataset.deleteComponent;
+    if (!(await askConfirm("删除组件", `确定删除组件 ${componentId} 及其全部仓库？`))) return;
+    try {
+      await api(`/api/v1/admin/registry/components/${encodeURIComponent(componentId)}`, { method: "DELETE" });
+      toast(`组件 ${componentId} 已删除`);
+      if (regSelected === componentId) regSelected = null;
+      loadRegistry();
+    } catch (error) { toast(`删除失败：${error.message}`, true); }
+  }
+});
+
+/* ---------------------------------- Logs ---------------------------------- */
+let logTimer = null;
+let logQueryTimer = null;
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function renderLogLines(lines, keyword) {
+  const output = $("#logOutput");
+  if (!lines.length) {
+    output.innerHTML = "（无匹配行）— 试试清空关键字、把级别换回「全部」、放宽时间窗，或换一个文件。";
+    return;
+  }
+  const needle = keyword.trim();
+  output.innerHTML = lines.map((line) => {
+    const cls = /\[(ERROR|CRITICAL)\]/.test(line) ? " line--error"
+      : /\[WARNING\]/.test(line) ? " line--warn" : "";
+    let html = esc(line);
+    if (needle) {
+      // 捕获组保留命中片段（奇数下标），逐段转义后再包 <mark>，避免日志内容注入
+      const parts = line.split(new RegExp(`(${escapeRegExp(needle)})`, "gi"));
+      html = parts.map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join("");
+    }
+    return `<span class="line${cls}">${html}</span>`;
+  }).join("\n");
+}
+
+async function loadLogs() {
+  try {
+    const params = new URLSearchParams({
+      file: $("#logFile").value,
+      lines: $("#logLines").value || "200",
+    });
+    const level = $("#logLevel").value;
+    const query = $("#logQuery").value.trim();
+    const since = $("#logSince").value;
+    const until = $("#logUntil").value;
+    if (level) params.set("level", level);
+    if (query) params.set("q", query);
+    if (since) params.set("since", since.replace("T", " "));
+    if (until) params.set("until", until.replace("T", " "));
+    const data = await api(`/api/v1/admin/logs?${params}`);
+    renderLogLines(data.lines, query);
+    $("#logMeta").textContent =
+      `显示末尾 ${data.lines.length} 行 · 文件 ${fmtBytes(data.size_bytes)}` +
+      (data.truncated ? " · 文件较大，仅扫描了尾部 2MB" : "");
+    markSync(true);
+  } catch (error) { toast(`日志读取失败：${error.message}`, true); }
+}
+
+const LOG_PRESETS = {
+  server: { file: "server.log", level: "", q: "", range: "" },
+  error: { file: "error.log", level: "", q: "", range: "" },
+  attributionFail: { file: "server.log", level: "WARNING", q: "attribution", range: "" },
+  attributionDone: { file: "server.log", level: "", q: "event=attribution.completed", range: "" },
+  adminOps: { file: "server.log", level: "", q: "admin.attribution", range: "" },
+  registry: { file: "server.log", level: "", q: "registry.", range: "" },
+  telemetry: { file: "server.log", level: "", q: "telemetry.", range: "" },
+  objects: { file: "server.log", level: "", q: "objects.", range: "" },
+  access: { file: "access.log", level: "", q: "", range: "" },
+  service: { file: "server.log", level: "", q: "event=service.", range: "" },
+};
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const toLocalInput = (date) =>
+  `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+
+function applyLogRange(value) {
+  // 把「最近 N 分钟 / 今天」换算成开始时间；结束留空表示到现在
+  $("#logUntil").value = "";
+  if (!value) { $("#logSince").value = ""; return; }
+  const now = new Date();
+  if (value === "today") {
+    $("#logSince").value = toLocalInput(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    return;
+  }
+  const minutes = { "5m": 5, "30m": 30, "1h": 60, "24h": 1440 }[value];
+  $("#logSince").value = toLocalInput(new Date(now.getTime() - minutes * 60000));
+}
+
+document.querySelector(".log-presets").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-log-preset]");
+  if (!button) return;
+  const preset = LOG_PRESETS[button.dataset.logPreset];
+  $("#logFile").value = preset.file;
+  $("#logLevel").value = preset.level;
+  $("#logQuery").value = preset.q;
+  applyLogRange(preset.range);
+  $("#logRange").value = preset.range;
+  loadLogs();
+});
+
+$("#btnLogRefresh").addEventListener("click", loadLogs);
+["logFile", "logLevel", "logLines", "logSince", "logUntil"].forEach((id) => $("#" + id).addEventListener("change", loadLogs));
+$("#logRange").addEventListener("change", (event) => {
+  applyLogRange(event.target.value);
+  loadLogs();
+});
+$("#logQuery").addEventListener("input", () => {
+  clearTimeout(logQueryTimer);
+  logQueryTimer = setTimeout(loadLogs, 350);
+});
+$("#logAuto").addEventListener("change", (event) => {
+  clearInterval(logTimer);
+  if (event.target.checked) { logTimer = setInterval(loadLogs, 5000); loadLogs(); }
+});
+
+/* ------------------------------ 异常模块 ------------------------------ */
+let anCsrf = "";
+let anMastersLoaded = false;
+let anCatalog = [];
+let anRules = [];
+let anEvents = new Map();
+let anEditingRule = null;
+let anPreviewFingerprint = "";
+let anAdminView = "rules";
+let anEventsCache = [];   // 分页渲染的原始列表（翻页时不再请求）
+let anReviewCache = [];   // 屏蔽审核列表同上
+const anEventPager = makePager("anEvent", renderAnomalyEventPage);
+const anRulePager = makePager("anRule", renderAnomalyRulePage);
+const anReviewPager = makePager("anReview", renderAnomalyReviewPage);
+const anMasterBoardPager = makePager("anMasterBoard", renderAnomalyMasterPage);
+
+const AN_CATEGORY_LABELS = { component: "组件统计", workflow: "工作流", attribution: "归因处理", version: "版本使用" };
+const AN_SCOPE_LABELS = { platform: "全平台", component: "指定组件", repository: "指定仓库" };
+const AN_PARAM_META = {
+  max_idle_hours: { label: "连续无活动超过", unit: "小时", note: "达到该时长后判定为停滞或中断" },
+  active_window_days: { label: "近期活跃范围", unit: "天", note: "只检查这段时间内曾经活跃的仓库" },
+  baseline_days: { label: "历史基线周期", unit: "天", note: "使用这段时间的数据计算正常水平" },
+  deviation_ratio: { label: "偏离历史水平超过", unit: "%", note: "例如 50 表示偏离一半", scale: 100 },
+  min_sample: { label: "最少历史样本", unit: "条", note: "样本不足时不产生异常" },
+  window_hours: { label: "观察窗口", unit: "小时", note: "在这段时间内统计持续情况" },
+  min_count: { label: "最少出现次数", unit: "次", note: "达到该次数才视为持续异常" },
+  grace_minutes: { label: "允许恢复时间", unit: "分钟", note: "短暂状态变化不会立即产生异常" },
+  statuses: { label: "需要关注的步骤状态", note: "多个状态使用逗号分隔", kind: "list" },
+  max_wait_hours: { label: "人工确认等待超过", unit: "小时", note: "达到该时长后提示门禁超时" },
+  step_types: { label: "需要关注的人工步骤", note: "多个类型使用逗号分隔", kind: "list" },
+  wait_hours: { label: "等待补丁超过", unit: "小时", note: "开发结束后仍未收到补丁的等待时长" },
+  pending_hours: { label: "待处理停留超过", unit: "小时", note: "归因任务排队过久的判断线" },
+  running_minutes: { label: "执行中停留超过", unit: "分钟", note: "归因任务运行过久的判断线" },
+  retry_hours: { label: "等待重试超过", unit: "小时", note: "归因任务长时间未重试的判断线" },
+  min_retry_count: { label: "失败重试达到", unit: "次", note: "达到该次数后判定持续失败" },
+  ignored_flags: { label: "忽略的质量标记", note: "这些标记不会产生异常，使用逗号分隔", kind: "list" },
+  active_days: { label: "近期活跃范围", unit: "天", note: "只检查这段时间内仍在使用的人员" },
+  lag_positions: { label: "落后正式版本达到", unit: "个版本", note: "达到该差距后提示旧版本使用" },
+  allowlist: { label: "允许使用的非发布版本", note: "多个版本使用逗号分隔；留空表示都不允许", kind: "list" },
+  confirm_count: { label: "连续回退达到", unit: "次", note: "排除一次性的版本切换" },
+};
+
+async function ensureAnomalyAdmin() {
+  try {
+    const session = await api("/api/v1/anomalies/admin/session");
+    anCsrf = session.csrf_token;
+    return true;
+  } catch { /* ask for the shared administrator password below */ }
+  const password = await askDialog({
+    title: "系统管理员验证",
+    message: "规则管理、组织全局视角和屏蔽审核需要管理员密码。",
+    placeholder: "管理员密码",
+    okText: "验证",
+  });
+  if (!password) return false;
+  try {
+    const session = await api("/api/v1/anomalies/admin/login", {
+      method: "POST", body: JSON.stringify({ password }),
+    });
+    anCsrf = session.csrf_token;
+    toast("管理员验证成功");
+    return true;
+  } catch (error) {
+    toast(`验证失败：${error.message}`, true);
+    return false;
+  }
+}
+
+const anomalyWrite = (path, options = {}) => api(path, {
+  ...options,
+  headers: { "Content-Type": "application/json", "X-CSRF-Token": anCsrf },
+});
+
+async function loadAnomalyModule() {
+  if (!anMastersLoaded) {
+    const data = await api("/api/v1/ai-masters");
+    anMasterSelect.setOptions([
+      { id: "__admin__", name: "组织全局（管理员）" },
+      ...data.items.map((item) => ({ id: item.id, name: item.name, count: `${item.repo_count} 仓库` })),
+    ]);
+    if (data.items.length && !anMasterSelect.value) anMasterSelect.value = data.items[0].id;
+    anMastersLoaded = true;
+  }
+  await loadAnomalyEvents();
+}
+
+async function loadAnomalyAdminModule() {
+  if (!await ensureAnomalyAdmin()) return;
+  if (anAdminView === "rules") await loadAnomalyRules();
+  if (anAdminView === "reviews") await loadAnomalyReviews();
+  if (anAdminView === "masters") await loadAnomalyMasterBoard();
+}
+
+/* 可搜索单选下拉：与门户采纳看板同款交互（触发按钮 + 搜索浮层），替代原生 select。
+   挂载点保持原 id；读 .value、赋 .value 与监听 "change" 的旧代码全部继续工作。 */
+function buildSearchSelect(mountId, options, { placeholder = "请选择", searchLabel = "选项" } = {}) {
+  const mount = document.getElementById(mountId);
+  const state = { value: mount.dataset.value || "", listeners: new Set() };
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "multi__trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  mount.replaceChildren(trigger);
+  let pop = null;
+
+  const labelOf = (v) => options.find((o) => o.id === v)?.name;
+
+  function renderTrigger() {
+    const name = labelOf(state.value);
+    trigger.innerHTML = "";
+    if (!name) {
+      const ph = document.createElement("span");
+      ph.className = "multi__ph";
+      ph.textContent = placeholder;
+      trigger.appendChild(ph);
+    } else {
+      const val = document.createElement("span");
+      val.className = "multi__val";
+      val.textContent = name;
+      trigger.appendChild(val);
+    }
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "▾";
+    trigger.appendChild(caret);
+  }
+
+  function closePop() {
+    if (pop) { pop.remove(); pop = null; }
+    mount.classList.remove("is-open");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.removeAttribute("aria-controls");
+  }
+  mount._close = closePop;
+
+  function setValue(v, notify = true) {
+    if (state.value === v) return;
+    state.value = v;
+    renderTrigger();
+    if (notify) state.listeners.forEach((fn) => fn());
+  }
+
+  function openPop() {
+    document.querySelectorAll(".multi").forEach((m) => m !== mount && m._close && m._close());
+    pop = document.createElement("div");
+    pop.className = "pop";
+    const listId = `${mountId}-options`;
+
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "pop__search-wrap";
+    const icon = document.createElement("span");
+    icon.className = "pop__search-icon";
+    icon.setAttribute("aria-hidden", "true");
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "pop__search";
+    search.placeholder = `搜索${searchLabel}`;
+    search.setAttribute("aria-label", `搜索${searchLabel}`);
+    search.setAttribute("autocomplete", "off");
+    search.setAttribute("spellcheck", "false");
+    searchWrap.append(icon, search);
+
+    const list = document.createElement("div");
+    list.className = "pop__list";
+    list.id = listId;
+    list.setAttribute("role", "listbox");
+    trigger.setAttribute("aria-controls", listId);
+
+    const empty = document.createElement("div");
+    empty.className = "pop__empty";
+    empty.textContent = `没有匹配的${searchLabel}`;
+    empty.hidden = true;
+
+    options.forEach((o) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "pop__opt";
+      el.dataset.id = o.id;
+      el.dataset.search = `${o.name} ${o.id}`.toLowerCase();
+      el.setAttribute("role", "option");
+      el.setAttribute("aria-selected", String(state.value === o.id));
+      const label = document.createElement("span");
+      label.textContent = o.name;
+      el.appendChild(label);
+      if (o.count !== undefined) {
+        const count = document.createElement("span");
+        count.className = "count";
+        count.textContent = o.count;
+        el.appendChild(count);
+      }
+      el.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setValue(o.id);
+        closePop();
+        trigger.focus();
+      });
+      list.appendChild(el);
+    });
+    list.appendChild(empty);
+
+    search.addEventListener("input", () => {
+      const query = search.value.trim().toLowerCase();
+      let matches = 0;
+      list.querySelectorAll(".pop__opt").forEach((el) => {
+        const visible = !query || el.dataset.search.includes(query);
+        el.hidden = !visible;
+        if (visible) matches += 1;
+      });
+      empty.hidden = matches > 0;
+      list.scrollTop = 0;
+    });
+    search.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.stopPropagation(); closePop(); trigger.focus(); }
+    });
+
+    pop.append(searchWrap, list);
+    mount.appendChild(pop);
+    mount.classList.add("is-open");
+    trigger.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => search.focus());
+  }
+
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    mount.classList.contains("is-open") ? closePop() : openPop();
+  });
+  trigger.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closePop();
+  });
+
+  renderTrigger();
+  return {
+    get value() { return state.value; },
+    set value(v) { setValue(v, false); },
+    setOptions(next) {
+      options = next;
+      if (!labelOf(state.value)) { state.value = ""; renderTrigger(); }
+    },
+    addEventListener(type, fn) { if (type === "change") state.listeners.add(fn); },
+  };
+}
+
+const anMasterSelect = buildSearchSelect("anMaster", [{ id: "__admin__", name: "组织全局（管理员）" }], { placeholder: "选择 AI Master", searchLabel: "AI Master" });
+const anCategorySelect = buildSearchSelect("anCategory", [
+  { id: "", name: "全部" },
+  { id: "component", name: "组件统计" },
+  { id: "workflow", name: "工作流" },
+  { id: "attribution", name: "归因处理" },
+  { id: "version", name: "版本使用" },
+], { placeholder: "全部", searchLabel: "类型" });
+
+// 点组件外部收起（与门户一致）；浮层在 .multi 里，stopPropagation 只挡触发按钮
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".multi")) {
+    document.querySelectorAll(".multi").forEach((m) => m._close && m._close());
+  }
+});
+
+// 悬浮气泡跟随 ？ 图标：fixed 定位挂在图标正下方（左对齐图标），右侧越界时左移。
+function positionAnomalyPops() {
+  document.querySelectorAll(".an-cond").forEach((cond) => {
+    const icon = cond.querySelector(".an-cond-icon");
+    const pop = cond.querySelector(".an-cond-pop");
+    if (!icon || !pop) return;
+    const place = () => {
+      const r = icon.getBoundingClientRect();
+      const w = pop.offsetWidth, h = pop.offsetHeight;  // CSS 默认 visibility:hidden，测量不会闪
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 16));
+      const top = Math.max(8, Math.min(r.bottom + 8, window.innerHeight - h - 8));
+      pop.style.left = `${left}px`;
+      pop.style.top = `${top}px`;
+    };
+    icon.addEventListener("mouseenter", () => requestAnimationFrame(place));
+    icon.addEventListener("focus", () => requestAnimationFrame(place));
+  });
+}
+
+function anDuration(iso) {
+  const hours = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 36e5));
+  return hours < 24 ? `${hours} 小时` : `${Math.floor(hours / 24)} 天`;
+}
+
+async function loadAnomalyEvents() {
+  const master = anMasterSelect.value;
+  if (!master) {
+    $("#anEventBody").innerHTML = "";
+    $("#anEventEmpty").hidden = false;
+    anEventsCache = [];
+    anEventPager.render(0);
+    return;
+  }
+  const isAdmin = master === "__admin__";
+  if (isAdmin && !await ensureAnomalyAdmin()) return;
+  const query = new URLSearchParams(isAdmin ? { admin_view: "true" } : { ai_master_id: master });
+  if (anCategorySelect.value) query.set("category", anCategorySelect.value);
+  await loadAnomalyCatalog();  // 判定句模板来自检测器目录，先取目录再渲染
+  try {
+    const [events, summary] = await Promise.all([
+      api(`/api/v1/anomalies/events?${query}`),
+      api(`/api/v1/anomalies/summary?${isAdmin ? "admin_view=true" : `ai_master_id=${master}`}`),
+    ]);
+    anEvents = new Map(events.items.map((item) => [item.id, item]));
+    $("#anSumOpen").textContent = summary.open;
+    for (const key of ["Component", "Workflow", "Attribution", "Version"]) {
+      $("#anSum" + key).textContent = summary.categories[key.toLowerCase()];
+    }
+    anEventsCache = events.items;
+    renderAnomalyEventPage();
+    $("#anEventEmpty").hidden = events.items.length > 0;
+    positionAnomalyPops();
+    markSync(true);
+  } catch (error) {
+    markSync(false);
+    toast(`异常加载失败：${error.message}`, true);
+  }
+}
+
+function renderAnomalyEventPage() {
+  const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
+  const pageRows = anEventPager.slice(anEventsCache);
+  $("#anEventBody").innerHTML = pageRows.map((item) => `<tr>
+      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<span class="an-cond"><span class="an-cond-icon" tabindex="0">?</span><span class="an-cond-pop">${sentence}</span></span>`; })()}</div></td>
+      <td>${esc(item.user_email || "—")}</td>
+      <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
+      <td>${anDuration(item.first_detected_at)}</td>
+      <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported && !item.archive_request ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}${item.archive_request ? `<span class="badge badge--waiting-review" title="屏蔽申请已提交，等待管理员在屏蔽审核中处理">屏蔽待审</span>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
+    </tr>`).join("");
+  anEventPager.render();
+  positionAnomalyPops();
+}
+
+function openAnomalyDetail(title, asideHtml, mainHtml) {
+  $("#anDetailTitle").textContent = title;
+  $("#anDetailAside").innerHTML = asideHtml;
+  $("#anDetailContent").innerHTML = mainHtml;
+  $("#anDetailMask").hidden = false;
+}
+
+function showAnomalyEvent(id) {
+  const item = anEvents.get(id);
+  const target = item.detail_target || {};
+  const href = target.tab ? `/admin?${new URLSearchParams(target)}` : "";
+  const evidence = item.evidence || {};
+  const facts = [];
+  const addFact = (label, value) => { if (value !== null && value !== undefined && value !== "") facts.push([label, value]); };
+  addFact("影响对象", item.user_email || item.repository || item.component_id || "系统级");
+  if (item.user_email && item.repository) addFact("所在仓库", item.repository);
+  addFact("当前数值", item.actual_value || "—");
+  addFact("判定阈值", item.threshold_value || "—");
+  const evidenceLabels = {
+    last_reported_at: "最后一次上报", current_version: "当前版本",
+    status: "当前状态", last_activity_at: "最后活动",
+    step_name: "异常步骤", step_status: "步骤状态",
+    retry_count: "重试次数", quality_flags: "质量标记",
+    recent_count: "近 24 小时上报", baseline_daily: "历史日均上报",
+    count: "窗口内记录数",
+  };
+  for (const [key, label] of Object.entries(evidenceLabels)) {
+    const raw = evidence[key];
+    if (raw === null || raw === undefined || raw === "" || (Array.isArray(raw) && !raw.length)) continue;
+    const value = key.endsWith("_at") ? fmtShort(raw) : (Array.isArray(raw) ? raw.join("、") : raw);
+    addFact(label, value);
+  }
+  const targetLabels = { workflows: "查看工作流详情", attribution: "查看归因处理详情", versions: "查看版本使用详情", components: "查看组件详情", registry: "查看注册表详情" };
+  const factsHtml = facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+  const spec = anCatalog.find((entry) => entry.code === item.detector_type);
+  const sentence = anomalySentenceHtml(spec, item.rule?.params);
+  const archiveRequest = item.archive_request
+    ? `<div class="an-aside-section">屏蔽申请</div><div class="an-aside-kv"><div class="an-fact"><dt>状态</dt><dd><span class="badge badge--waiting-review">屏蔽待审</span></dd></div><div class="an-fact"><dt>屏蔽理由</dt><dd>${esc(item.archive_request.reason)}</dd></div><div class="an-fact"><dt>申请人</dt><dd>${esc(item.archive_request.requested_by)} · ${fmtShort(item.archive_request.created_at)}</dd></div></div>`
+    : "";
+  const nextHint = item.archive_request
+    ? "屏蔽申请已提交，等待管理员在「屏蔽审核」中处理；审核通过后该异常数据将不再纳入统计。"
+    : (href ? "定位到具体业务内容核实情况，必要时申请屏蔽或反馈问题。" : "核实数据后可申请屏蔽或提交问题反馈。");
+  openAnomalyDetail(
+    item.title,
+    `<p class="an-aside-name">${esc(spec?.name || item.rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || item.summary)}</p>${sentence ? `<p class="an-sentence">${sentence}</p>` : ""}<div class="an-aside-section">发生了什么</div><div class="an-aside-kv">${factsHtml}</div>${archiveRequest}`,
+    `<div class="an-detail-section">下一步</div><p class="an-next-hint">${nextHint}</p>${href ? `<div class="toolbar" style="margin:14px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`,
+  );
+}
+
+async function requestAnomalyArchive(id) {
+  const requestedBy = await askDialog({ title: "申请屏蔽", placeholder: "AI Master 姓名" });
+  if (!requestedBy) return;
+  const reason = await askDialog({
+    title: "屏蔽理由",
+    message: "屏蔽只针对这条异常事件，对应业务数据的统计不会自动变化。建议先在对应业务页处理数据（删除或屏蔽），数据出清后事件会在下一轮检测中自动消失，再无需单独屏蔽。",
+    placeholder: "必填",
+  });
+  if (!reason) return;
+  try {
+    await api(`/api/v1/anomalies/events/${id}/archive-requests`, { method: "POST", body: JSON.stringify({ requested_by: requestedBy, reason }) });
+    toast("屏蔽申请已提交，等待管理员审核");
+    loadAnomalyEvents();
+  } catch (error) { toast(`提交失败：${error.message}`, true); }
+}
+
+async function createAnomalyIssue(id) {
+  const reporter = await askDialog({ title: "提问题 / 提诉求", placeholder: "提出人" });
+  if (!reporter) return;
+  const assignee = await askDialog({ title: "问题负责人", placeholder: "负责人姓名" });
+  if (!assignee) return;
+  const suggestion = await askDialog({ title: "优化建议", message: "说明希望产品、组件或流程如何改进。", placeholder: "必填" });
+  if (!suggestion) return;
+  try {
+    await api(`/api/v1/anomalies/events/${id}/issues`, { method: "POST", body: JSON.stringify({ reporter, assignee, suggestion }) });
+    toast("问题或诉求已记录到问题看板");
+    loadAnomalyEvents();
+  } catch (error) { toast(`生成失败：${error.message}`, true); }
+}
+
+async function loadAnomalyCatalog() {
+  if (anCatalog.length) return;
+  const data = await api("/api/v1/anomalies/detector-types");
+  anCatalog = data.items;
+}
+
+function anomalyParamText(key, value) {
+  const meta = AN_PARAM_META[key] || { label: key };
+  if (Array.isArray(value)) return `${meta.label}：${value.length ? value.join("、") : "无"}`;
+  const shown = meta.scale ? Number(value) * meta.scale : value;
+  return `${meta.label}：${shown}${meta.unit || ""}`;
+}
+
+function anomalyParamSummary(params) {
+  const entries = Object.entries(params || {});
+  if (!entries.length) return "使用系统默认判定条件";
+  const shown = entries.slice(0, 2).map(([key, value]) => anomalyParamText(key, value));
+  return shown.join(" · ") + (entries.length > 2 ? ` · 另 ${entries.length - 2} 项` : "");
+}
+
+// 把检测器的一句话模板渲染成 HTML：{参数名} 替换为带底色突出的当前值，
+// 高亮只覆盖数值（可调参数），单位不参与高亮。
+function anomalySentenceHtml(spec, params) {
+  if (!spec?.sentence) return "";
+  return spec.sentence.replace(/\{(\w+)\}/g, (_, key) => {
+    const meta = AN_PARAM_META[key] || {};
+    const value = params?.[key] ?? spec.defaults?.[key];
+    if (value === undefined || value === null) return "";
+    const shown = Array.isArray(value) ? (value.length ? value.join("、") : "无")
+      : (meta.scale ? Number(value) * meta.scale : value);
+    // 高亮只标数值本身：数值是可调参数，单位跟着语境走、不可编辑
+    return `<span class="an-tune">${esc(String(shown))}</span>${esc(meta.unit || "")}`;
+  });
+}
+
+function anomalyScopeText(rule) {
+  return rule.scope_type === "platform"
+    ? AN_SCOPE_LABELS.platform
+    : `${AN_SCOPE_LABELS[rule.scope_type] || "指定范围"} · ${rule.scope_value || "未填写"}`;
+}
+
+async function loadAnomalyRules() {
+  if (!await ensureAnomalyAdmin()) return;
+  try {
+    await loadAnomalyCatalog();
+    const data = await api("/api/v1/anomalies/rules");
+    const order = new Map(anCatalog.map((item, index) => [item.code, index]));
+    anRules = data.items.sort((a, b) => (order.get(a.detector_type) ?? 999) - (order.get(b.detector_type) ?? 999));
+    const enabled = anRules.filter((item) => item.status === "enabled").length;
+    $("#anRuleCount").textContent = `${anRules.length} 类检测 · ${enabled} 类已启用`;
+    renderAnomalyRulePage();
+  } catch (error) { toast(`规则加载失败：${error.message}`, true); }
+}
+
+function renderAnomalyRulePage() {
+  const pageRows = anRulePager.slice(anRules);
+  $("#anRuleList").innerHTML = pageRows.map((item) => {
+      const spec = anCatalog.find((type) => type.code === item.detector_type);
+      const isEnabled = item.status === "enabled";
+      const sentence = anomalySentenceHtml(spec, item.params);
+      return `<tr>
+        <td><div class="an-problem">${esc(spec?.name || item.name)}</div><div class="an-sub">${esc(AN_CATEGORY_LABELS[item.category] || item.category)}${item.last_match_count ? ` · 当前命中 ${item.last_match_count}` : ""}</div></td>
+        <td><div class="an-sentence" style="margin:0; max-width:420px;">${sentence || esc(anomalyParamSummary(item.params))}</div></td>
+        <td>${esc(anomalyScopeText(item))}</td>
+        <td>${item.allow_archive ? '<span class="badge badge--finalized_match">允许</span>' : '<span class="muted">不允许</span>'}</td>
+        <td><span class="an-rule-status ${isEnabled ? "is-enabled" : ""}">${isEnabled ? "检测中" : "已停用"}</span></td>
+        <td><div class="an-actions"><button class="btn btn--small" data-an-rule-detail="${item.id}">详情</button><button class="btn btn--small" data-an-rule-edit="${item.id}">编辑</button><button class="btn btn--small" data-an-rule-toggle="${item.id}" data-status="${isEnabled ? "disabled" : "enabled"}">${isEnabled ? "停用" : "启用"}</button></div></td>
+      </tr>`;
+    }).join("");
+  anRulePager.render();
+}
+
+function syncAnomalyScopeField() {
+  const scope = $("#anRuleScope").value;
+  $("#anRuleScopeValueField").hidden = scope === "platform";
+  $("#anRuleScopeValueLabel").textContent = scope === "component" ? "组件名称" : "仓库名称";
+  $("#anRuleScopeValue").placeholder = scope === "component" ? "填写组件名称" : "填写仓库名称";
+  if (scope === "platform") $("#anRuleScopeValue").value = "";
+}
+
+function renderAnomalyParamInputs(params) {
+  $("#anRuleParams").innerHTML = Object.entries(params || {}).map(([key, value]) => {
+    const meta = AN_PARAM_META[key] || { label: key };
+    const isList = meta.kind === "list" || Array.isArray(value);
+    const shown = isList ? value.join("，") : (meta.scale ? Number(value) * meta.scale : value);
+    return `<div class="an-field"><label>${esc(meta.label)}</label><div class="an-unit-input"><input class="an-param-input" data-param="${esc(key)}" data-kind="${isList ? "list" : "number"}" data-scale="${meta.scale || 1}" type="${isList ? "text" : "number"}" min="${isList ? "" : "0.01"}" step="${meta.scale ? "1" : "any"}" value="${esc(shown)}">${meta.unit ? `<span>${esc(meta.unit)}</span>` : ""}</div>${meta.note ? `<span class="an-field-note">${esc(meta.note)}</span>` : ""}</div>`;
+  }).join("");
+}
+
+function renderAnomalyRuleAside(rule, spec) {
+  const facts = [
+    ["当前状态", rule.status === "enabled" ? "正在检测" : "已停用"],
+    ["生效范围", anomalyScopeText(rule)],
+    ["允许申请屏蔽", rule.allow_archive ? "允许" : "不允许"],
+  ];
+  const sentence = anomalySentenceHtml(spec, rule.params);
+  $("#anRuleAside").innerHTML = `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "配置这类异常的判断条件和处理权限。")}</p>${sentence ? `<p class="an-sentence">${sentence}</p><p class="an-sentence-note">带底色的数值是可调整的判定参数，在右侧表单中修改。</p>` : ""}<div class="an-aside-section">当前配置</div><div class="an-aside-kv">${facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</div>`;
+}
+
+function resetAnomalyRuleForm(rule) {
+  if (!rule) return;
+  anEditingRule = rule;
+  anPreviewFingerprint = "";
+  const spec = anCatalog.find((item) => item.code === rule.detector_type);
+  $("#anRuleTitle").textContent = `编辑：${spec?.name || rule.name}`;
+  renderAnomalyRuleAside(rule, spec);
+  $("#anRuleName").value = rule.name;
+  $("#anRuleDetector").value = rule.detector_type;
+  $("#anRuleStatus").value = rule.status === "enabled" ? "enabled" : "disabled";
+  $("#anRuleAllowArchive").value = rule.allow_archive ? "true" : "false";
+  $("#anRuleScope").value = rule.scope_type;
+  $("#anRuleScopeValue").value = rule.scope_value || "";
+  syncAnomalyScopeField();
+  renderAnomalyParamInputs(rule.params || spec?.defaults || {});
+  $("#anRuleReason").value = "";
+  $("#anRulePreview").hidden = true;
+  $("#anRuleMask").hidden = false;
+}
+
+function anomalyRuleBody() {
+  const spec = anCatalog.find((item) => item.code === $("#anRuleDetector").value);
+  const params = {};
+  document.querySelectorAll("#anRuleParams .an-param-input").forEach((input) => {
+    if (input.dataset.kind === "list") {
+      params[input.dataset.param] = input.value.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean);
+    } else {
+      const value = Number(input.value);
+      params[input.dataset.param] = value / Number(input.dataset.scale || 1);
+    }
+  });
+  return {
+    name: $("#anRuleName").value.trim(), category: spec.category, detector_type: spec.code,
+    scope_type: $("#anRuleScope").value, scope_value: $("#anRuleScopeValue").value.trim() || null,
+    params, allow_archive: $("#anRuleAllowArchive").value === "true", status: $("#anRuleStatus").value,
+    change_reason: $("#anRuleReason").value.trim() || null,
+  };
+}
+
+async function showAnomalyRule(id) {
+  try {
+    const rule = await api(`/api/v1/anomalies/rules/${id}`);
+    const spec = anCatalog.find((item) => item.code === rule.detector_type);
+    const actionLabels = { created: "创建规则", updated: "修改配置", enabled: "启用规则", disabled: "停用规则", deleted: "删除规则" };
+    const params = Object.entries(rule.params || {}).map(([key, value]) => `<div class="an-fact"><dt>${esc((AN_PARAM_META[key] || {}).label || key)}</dt><dd>${esc(anomalyParamText(key, value).split("：").slice(1).join("："))}</dd></div>`).join("");
+    const auditsHtml = rule.audits.map((row) => `<div class="an-audit"><strong>${esc(actionLabels[row.action] || "配置变更")} · 第 ${row.version} 版</strong><div class="an-sub">${new Date(row.created_at).toLocaleString()} · ${esc(row.operator)}${row.reason ? ` · ${esc(row.reason)}` : ""}</div></div>`).join("") || '<p class="muted">暂无记录</p>';
+    const configFacts = [
+      ["当前状态", rule.status === "enabled" ? "正在检测" : "已停用"],
+      ["生效范围", anomalyScopeText(rule)],
+      ["允许申请屏蔽", rule.allow_archive ? "允许" : "不允许"],
+      ["最近一次检测", rule.last_evaluated_at ? fmtShort(rule.last_evaluated_at) : "尚未检测"],
+    ].map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+    const sentence = anomalySentenceHtml(spec, rule.params);
+    openAnomalyDetail(
+      spec?.name || rule.name,
+      `<p class="an-aside-name">${esc(spec?.name || rule.name)}</p><p class="an-aside-desc">${esc(spec?.description || "该规则用于发现需要关注的异常情况。")}</p>${sentence ? `<p class="an-sentence">${sentence}</p><p class="an-sentence-note">带底色的数值是可调整的判定参数。</p>` : ""}<div class="an-aside-section">当前配置</div><div class="an-aside-kv">${configFacts}</div>`,
+      `<div class="an-detail-section">可调整的判定参数</div><div class="an-facts">${params}</div><div class="an-detail-section">变更记录</div>${auditsHtml}`,
+    );
+  } catch (error) { toast(`详情加载失败：${error.message}`, true); }
+}
+
+async function toggleAnomalyRule(id, status) {
+  const reason = await askDialog({ title: status === "enabled" ? "启用规则" : "停用规则", placeholder: "变更原因（必填）" });
+  if (!reason) return;
+  try {
+    await anomalyWrite(`/api/v1/anomalies/rules/${id}/status`, { method: "POST", body: JSON.stringify({ status, reason }) });
+    toast("规则状态已更新"); loadAnomalyRules();
+  } catch (error) { toast(`更新失败：${error.message}`, true); }
+}
+
+async function loadAnomalyReviews() {
+  if (!await ensureAnomalyAdmin()) return;
+  try {
+    const data = await api("/api/v1/anomalies/archive-requests");
+    anReviewCache = data.items;
+    renderAnomalyReviewPage();
+    $("#anReviewEmpty").hidden = data.items.length > 0;
+  } catch (error) { toast(`审核列表加载失败：${error.message}`, true); }
+}
+
+function renderAnomalyReviewPage() {
+  const targetLabels = { workflow: "工作流", dev_run: "开发产出", attribution: "归因记录", event: "异常事件" };
+  const pageRows = anReviewPager.slice(anReviewCache);
+  $("#anReviewBody").innerHTML = pageRows.map((item) => `<tr><td>${esc(item.requested_by)}<div class="an-sub">${new Date(item.created_at).toLocaleString()}</div></td><td>${esc(targetLabels[item.target_type] ?? item.target_type)}<div class="an-sub mono">${esc(item.target_id)}</div></td><td>${esc(item.reason)}<div class="an-sub">影响 ${item.impact_preview.affected_rows ?? "—"} 条数据</div></td><td><span class="badge">${esc(item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : item.status)}</span>${item.review_note ? `<div class="an-sub">${esc(item.review_note)}</div>` : ""}</td><td>${item.status === "pending" ? `<div class="an-actions"><button class="btn btn--small btn--primary" data-an-review="${item.id}" data-approved="true">通过</button><button class="btn btn--small btn--danger" data-an-review="${item.id}" data-approved="false">拒绝</button></div>` : "—"}</td></tr>`).join("");
+  anReviewPager.render();
+}
+
+async function reviewAnomalyArchive(id, approved) {
+  const note = await askDialog({ title: approved ? "通过屏蔽申请" : "拒绝屏蔽申请", placeholder: approved ? "审核意见（可选）" : "拒绝理由（必填）" });
+  if (note === null || (!approved && !note)) return;
+  try {
+    await anomalyWrite(`/api/v1/anomalies/archive-requests/${id}/review`, { method: "POST", body: JSON.stringify({ approved, note }) });
+    toast("审核结果已保存"); loadAnomalyReviews();
+  } catch (error) { toast(`审核失败：${error.message}`, true); }
+}
+
+$("#anAdminRefresh").addEventListener("click", loadAnomalyAdminModule);
+
+/* 「按 AI Master」：全量事件按归属聚合。
+   事件与 AI Master 分别取自 anomalies/events?admin_view 与 ai-masters 列表。 */
+let anMasterMasters = [];
+const masterBoardLabel = (id) => {
+  if (id === "__none__") return "未归属";
+  const found = anMasterMasters.find((m) => m.id === id);
+  // 名字里可能带「· AI Master」后缀（历史演示数据），表头已说明身份，去掉
+  return found ? found.name.replace(/\s*·\s*AI Master\s*$/, "") : "未知";
+};
+const countsForMaster = (items) => {
+  const cats = { component: 0, workflow: 0, attribution: 0, version: 0 };
+  for (const item of items) cats[item.category] += 1;
+  return cats;
+};
+const oldestForMaster = (items) => items.reduce((min, item) => {
+  const at = new Date(item.first_detected_at).getTime();
+  return at < min ? at : min;
+}, Number.POSITIVE_INFINITY);
+
+async function loadAnomalyMasterBoard() {
+  try {
+    await loadAnomalyCatalog();  // 展开明细要用判定句模板
+    const [events, masters] = await Promise.all([
+      api("/api/v1/anomalies/events?admin_view=true"),
+      api("/api/v1/ai-masters"),
+    ]);
+    anMasterMasters = masters.items;
+    const byMaster = new Map();
+    for (const item of events.items) {
+      const key = item.ai_master_id ?? "__none__";
+      if (!byMaster.has(key)) byMaster.set(key, []);
+      byMaster.get(key).push(item);
+    }
+    // 堆积多的排前面；未归属行垫底
+    const rows = [...byMaster.entries()].sort((a, b) => {
+      if ((a[0] === "__none__") !== (b[0] === "__none__")) return a[0] === "__none__" ? 1 : -1;
+      return b[1].length - a[1].length;
+    });
+    anMasterBoardRows = rows;
+    renderAnomalyMasterPage();
+    $("#anMasterEmpty").hidden = rows.length > 0;
+  } catch (error) { toast(`按 AI Master 加载失败：${error.message}`, true); }
+}
+
+let anMasterBoardRows = [];
+function renderAnomalyMasterPage() {
+  const pageRows = anMasterBoardPager.slice(anMasterBoardRows);
+  $("#anMasterBody").innerHTML = pageRows.map(([id, items]) => {
+      const cats = countsForMaster(items);
+      return `<tr data-an-master-row="${esc(id)}">
+        <td><b>${esc(masterBoardLabel(id))}</b></td>
+        <td><span class="badge ${items.length ? "badge--failed" : ""}">${items.length}</span></td>
+        <td class="mono">${cats.component}</td><td class="mono">${cats.workflow}</td>
+        <td class="mono">${cats.attribution}</td><td class="mono">${cats.version}</td>
+        <td>${anDuration(new Date(oldestForMaster(items)).toISOString())}</td>
+        <td><button class="btn btn--small" data-an-master-expand="${esc(id)}">展开明细</button></td>
+      </tr>
+      <tr class="an-master-detail" data-an-master-detail="${esc(id)}" hidden><td colspan="8"></td></tr>`;
+    }).join("");
+  anMasterBoardPager.render();
+}
+
+async function toggleAnomalyMasterDetail(id, cell) {
+  const filled = cell.dataset.filled === "1";
+  if (!filled) {
+    const events = await api("/api/v1/anomalies/events?admin_view=true");
+    const items = events.items.filter((item) => (item.ai_master_id ?? "__none__") === id);
+    const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
+    cell.innerHTML = `<div class="table-wrap" style="overflow-x:auto;"><table class="an-event-table"><thead><tr><th>问题</th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody>${
+      items.map((item) => `<tr>
+        <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span></div></td>
+        <td>${esc(item.user_email || "—")}</td>
+        <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
+        <td>${anDuration(item.first_detected_at)}</td>
+        <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button></div></td>
+      </tr>`).join("")
+    }</tbody></table></div>`;
+    cell.dataset.filled = "1";
+    // 明细行的详情按钮走 anEvents 缓存；缓存里没有就补一份
+    for (const item of items) if (!anEvents.has(item.id)) anEvents.set(item.id, item);
+  }
+  const row = cell.closest("tr");
+  row.hidden = !row.hidden;
+  const button = document.querySelector(`[data-an-master-expand="${CSS.escape(id)}"]`);
+  if (button) button.textContent = row.hidden ? "展开明细" : "收起";
+}
+
+$("#anMasterBody").addEventListener("click", async (event) => {
+  const expand = event.target.closest("[data-an-master-expand]");
+  if (expand) {
+    const cell = document.querySelector(`tr[data-an-master-detail="${CSS.escape(expand.dataset.anMasterExpand)}"] > td`);
+    if (cell) await toggleAnomalyMasterDetail(expand.dataset.anMasterExpand, cell);
+    return;
+  }
+  const detail = event.target.closest("[data-an-detail]");
+  if (detail) showAnomalyEvent(detail.dataset.anDetail);
+});
+
+document.querySelector("#tab-anomaly-admin .an-mode").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-an-admin-view]");
+  if (!button) return;
+  anAdminView = button.dataset.anAdminView;
+  document.querySelectorAll("[data-an-admin-view]").forEach((item) => item.classList.toggle("is-active", item === button));
+  document.querySelectorAll("#tab-anomaly-admin .an-view").forEach((view) => { view.hidden = view.id !== `an-admin-view-${anAdminView}`; });
+  if (anAdminView === "rules") loadAnomalyRules();
+  if (anAdminView === "reviews") loadAnomalyReviews();
+  if (anAdminView === "masters") loadAnomalyMasterBoard();
+});
+
+anMasterSelect.addEventListener("change", () => { anEventPager.reset(); loadAnomalyEvents(); });
+anCategorySelect.addEventListener("change", () => { anEventPager.reset(); loadAnomalyEvents(); });
+$("#anRefresh").addEventListener("click", loadAnomalyModule);
+$("#anEventBody").addEventListener("click", (event) => {
+  const detail = event.target.closest("[data-an-detail]"); if (detail) showAnomalyEvent(detail.dataset.anDetail);
+  const archive = event.target.closest("[data-an-archive]"); if (archive) requestAnomalyArchive(archive.dataset.anArchive);
+  const issue = event.target.closest("[data-an-issue]"); if (issue) createAnomalyIssue(issue.dataset.anIssue);
+});
+$("#anRuleList").addEventListener("click", (event) => {
+  const detail = event.target.closest("[data-an-rule-detail]"); if (detail) showAnomalyRule(detail.dataset.anRuleDetail);
+  const edit = event.target.closest("[data-an-rule-edit]"); if (edit) resetAnomalyRuleForm(anRules.find((item) => item.id === edit.dataset.anRuleEdit));
+  const toggle = event.target.closest("[data-an-rule-toggle]"); if (toggle) toggleAnomalyRule(toggle.dataset.anRuleToggle, toggle.dataset.status);
+});
+$("#anReviewBody").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-an-review]");
+  if (button) reviewAnomalyArchive(button.dataset.anReview, button.dataset.approved === "true");
+});
+$("#anRuleScope").addEventListener("change", () => { syncAnomalyScopeField(); anPreviewFingerprint = ""; $("#anRulePreview").hidden = true; });
+$("#anRuleMask").addEventListener("input", () => { anPreviewFingerprint = ""; $("#anRulePreview").hidden = true; });
+$("#anRuleCancel").addEventListener("click", () => { $("#anRuleMask").hidden = true; });
+$("#anDetailClose").addEventListener("click", () => { $("#anDetailMask").hidden = true; });
+$("#anRulePreviewBtn").addEventListener("click", async () => {
+  try {
+    const body = anomalyRuleBody();
+    const result = await anomalyWrite("/api/v1/anomalies/rules/preview", { method: "POST", body: JSON.stringify(body) });
+    anPreviewFingerprint = JSON.stringify(body);
+    $("#anRulePreview").innerHTML = `预计命中 <strong>${result.matches}</strong> 个对象${result.samples.length ? `<div class="an-sub">${result.samples.map((item) => esc(item.title)).join("<br>")}</div>` : ""}`;
+    $("#anRulePreview").hidden = false;
+  } catch (error) { toast(`试算失败：${error.message}`, true); }
+});
+$("#anRuleSave").addEventListener("click", async () => {
+  try {
+    const body = anomalyRuleBody();
+    if (JSON.stringify(body) !== anPreviewFingerprint) throw new Error("请先试算当前参数，再保存规则");
+    await anomalyWrite(`/api/v1/anomalies/rules/${anEditingRule.id}`, { method: "PUT", body: JSON.stringify(body) });
+    $("#anRuleMask").hidden = true; toast("规则已保存"); loadAnomalyRules();
+  } catch (error) { toast(`保存失败：${error.message}`, true); }
+});
+$("#anEvaluate").addEventListener("click", async () => {
+  try {
+    const result = await anomalyWrite("/api/v1/anomalies/rules/evaluate", { method: "POST" });
+    toast(`检测完成：${result.matches} 个对象命中`); loadAnomalyRules();
+  } catch (error) { toast(`检测失败：${error.message}`, true); }
+});
+
+/* 首屏落地：默认停在异常中心；带 ?tab= 的深链（看板「管理」入口、异常事件定位）
+   由上面的 applyWorkflowDeepLink / applyGenericTabDeepLink 负责切过去。 */
+loadAnomalyModule();
+</script>
+</body>
+</html>

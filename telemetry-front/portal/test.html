@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>测试看板 · Adoption Studio</title>
+<link rel="stylesheet" href="vendor/fonts.css" />
+<link rel="stylesheet" href="bright.css?v=20260904-1" />
+</head>
+<body data-loading="true" data-dashboard="test" data-dashboard-api-prefix="/testing/dashboard">
+<div class="wash" aria-hidden="true"></div>
+
+<header class="bar">
+  <div class="mark">
+    <span class="mark__glyph" aria-hidden="true">
+      <svg viewBox="0 0 28 28" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 24c5-3 8-7 8-12V6l-8-3-8 3v6c0 5 3 9 8 12Z" />
+        <path d="M10 13.5 13 16.5 18.5 10.5" />
+      </svg>
+    </span>
+    <div class="mark__text"><strong>代码采纳工坊</strong><span>ADOPTION&nbsp;STUDIO</span></div>
+  </div>
+  <nav class="portal-nav" aria-label="主导航">
+    <a class="portal-nav__link" href="aaw-workflow.html">AAW 工作流介绍</a>
+    <a class="portal-nav__link" href="bright.html">采纳看板</a>
+    <a class="portal-nav__link is-active" href="test.html" aria-current="page">测试看板</a>
+    <a class="portal-nav__link" href="wishes.html">问题许愿池</a>
+    <a class="portal-nav__link" href="/admin">运营后台</a>
+  </nav>
+  <div class="controls" aria-label="筛选条件">
+    <div class="ctrl"><span class="ctrl__tag">组件</span><div class="multi" id="fComponent" data-placeholder="全量组件"></div></div>
+    <div class="ctrl"><span class="ctrl__tag">人员</span><div class="multi" id="fPerson" data-placeholder="所有人员"></div></div>
+    <div class="ctrl ctrl--range"><span class="ctrl__tag">时间窗</span><div class="segs" id="fRange" role="radiogroup" aria-label="时间范围"></div></div>
+    <button class="reset" id="btnReset" type="button" title="恢复默认：全量组件 · 所有人员 · 90天">复位</button>
+  </div>
+  <div class="bar__sync"><span class="dot" aria-hidden="true"></span><span id="lastSync">同步中…</span></div>
+</header>
+
+<main class="stage" aria-busy="true">
+  <section class="hero">
+    <div class="hero__say">
+      <p class="kicker">TEST DASHBOARD</p>
+      <h1>测试相关的代码，<em>有多少活到了合入？</em></h1>
+      <p class="lede">AI 合入代码量为与匹配 MR 相似度达到 60% 的代码行数；AI 生成占比 = AI 合入代码量 ÷ 匹配 MR 总行数。</p>
+    </div>
+    <figure class="dial">
+      <canvas id="dialCanvas" width="340" height="340" aria-label="代码采纳率仪表"></canvas>
+      <figcaption class="dial__core"><span class="dial__k">AI 生成占比 · 60%</span><span class="dial__val" id="dialVal">—</span></figcaption>
+    </figure>
+    <ul class="pills">
+      <li class="pill pill--iris"><span class="pill__k">使用次数</span><span class="pill__v num" id="factUse">—</span></li>
+      <li class="pill pill--tangerine"><span class="pill__k">AI 生成代码量</span><span class="pill__v num" id="factGen">—</span></li>
+      <li class="pill pill--magenta"><span class="pill__k">匹配 MR 总行数</span><span class="pill__v num" id="factMr">—</span></li>
+      <li class="pill pill--grass"><span class="pill__k">AI 合入代码量 · 60%</span><span class="pill__v num" id="factM60">—</span></li>
+    </ul>
+  </section>
+  <section class="grid">
+    <article class="card" style="--span:7"><header class="card__head"><h2>趋势 · AI 生成占比与产出</h2><div class="toggle" id="trendToggle" role="tablist" aria-label="趋势指标"></div></header><div class="plot" id="trendChart"></div></article>
+    <article class="card" style="--span:5"><header class="card__head"><h2>组件构成</h2><span class="hint" id="compoHint">按生成代码量占比</span></header><div class="compo" id="componentCompo"></div></article>
+    <article class="card" style="--span:12"><header class="card__head"><h2>人员产出 · MR 与 AI 合入</h2><span class="hint">按匹配 MR 总行数排序，绿段为 AI 合入代码量</span></header><div class="plot plot--tall plot--selectable" id="personChart"></div><div class="pager" id="personPager" aria-label="人员产出分页"></div></article>
+    <article class="card" style="--span:12"><header class="card__head"><h2>组件明细</h2><span class="hint" id="tableCount">—</span></header><div class="table-wrap"><table class="ledger"><thead><tr><th class="th-name">组件</th><th class="th-num" data-sort="usageCount">使用次数</th><th class="th-num" data-sort="generatedLines">AI 生成代码量</th><th class="th-num" data-sort="mrCommitLines">匹配 MR 总行数</th><th class="th-num" data-sort="mergedLines60">AI 合入代码量</th><th class="th-num" data-sort="adoptionRate60">AI 生成占比</th></tr></thead><tbody id="ledgerBody"></tbody></table></div><div class="pager" id="componentPager" aria-label="组件明细分页"></div></article>
+  </section>
+</main>
+<footer class="foot"><span>实时对接 <code>/api/v1/dashboard</code> · 归因算法 <strong>mock-v1</strong></span><span class="foot__sig">test dashboard</span></footer>
+<script src="vendor/echarts.min.js"></script>
+<script src="config.js"></script>
+<script src="mock-data.js?v=20260904-1"></script>
+<script src="bright.js?v=20260904-1"></script>
+</body>
+</html>

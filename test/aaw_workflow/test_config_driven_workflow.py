@@ -1,0 +1,1056 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+
+ROOT = Path(__file__).resolve().parents[2]
+AAW_SCRIPT = ROOT / "skills" / "aaw-workflow" / "scripts" / "aaw.py"
+SCRIPTS_DIR = AAW_SCRIPT.parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from cli.models import DataError, Step, Workflow, WorkflowError  # noqa: E402
+from cli import main as cli_main  # noqa: E402
+from cli.workflow import WorkflowManager  # noqa: E402
+
+
+class ConfigDrivenWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.sdd = self.root / ".sdd"
+        self.mgr = WorkflowManager(self.sdd)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _abs(self, stored_path: str) -> Path:
+        """Resolve a repo-relative stored path the same way the manager does."""
+        return self.root / stored_path
+
+    def test_task_dev_completion_uses_cli_state_without_data_schema(self) -> None:
+        self.assertIsNone(self.mgr.templates["task-dev"]["data_schema"])
+
+    def _touch_required_inputs(self, wf, step_id: int) -> None:
+        step = wf.get_step(step_id)
+        assert step is not None
+        for item in step.input:
+            path = item.get("path")
+            if path and item.get("required", True):
+                p = self._abs(path)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("required input", "utf-8")
+
+    def _touch_required_outputs(self, wf, step_id: int) -> None:
+        step = wf.get_step(step_id)
+        assert step is not None
+        for item in step.output:
+            path = item.get("path")
+            if path and item.get("required", True):
+                p = self._abs(path)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("required output", "utf-8")
+
+    def _done(self, wf, step_id: int, data_raw: str | None = None):
+        step = wf.get_step(step_id)
+        assert step is not None
+        if step.execution in {"skill", "prompt"} and not step.started_at:
+            self.mgr.mark_started(wf, step_id)
+        self._touch_required_inputs(wf, step_id)
+        self._touch_required_outputs(wf, step_id)
+        result = self.mgr.mark_done(wf, step_id, data_raw)
+        if result.get("state") == "awaiting_user_confirm":
+            return self.mgr.user_confirm(wf)
+        return result
+
+    def _gate_pass_data(self) -> str:
+        return json.dumps(
+            {
+                "gate_result": "pass",
+                "recommendation": "可进入 AICoding",
+                "report": "gate passed",
+            },
+            ensure_ascii=False,
+        )
+
+    def _workflow_at_gate(self, sr: str):
+        wf = self.mgr.start("ar", {"SR": sr, "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._done(wf, 2)
+        self._done(wf, 3)
+        self._done(
+            wf,
+            4,
+            json.dumps(
+                {
+                    "module_groups": [
+                        {"name": "用户与权限模块组", "modules": ["模块A"], "requirement": "用户管理"}
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+        for step_id in [5, 6, 7]:
+            self._done(wf, step_id)
+        return wf
+
+    def _workflow_at_sr_gate(self, sr: str):
+        wf = self.mgr.start("sr", {"SR": sr}, "req")
+        self._done(wf, 1)
+        self._done(wf, 2)
+        return wf
+
+    def _sr_gate_pass_data(self, report: str = ".sdd/SR-001/SR-design-gate.md") -> str:
+        return json.dumps(
+            {
+                "gate_result": "pass",
+                "recommendation": "可进入 AR 拆分",
+                "report": report,
+                "summary": {
+                    "unqualified_dimensions": 0,
+                    "p0_conflicts": 0,
+                    "p1_conflicts": 0,
+                    "p2_findings": 0,
+                    "pending_questions": 0,
+                    "blocking_issues": 0,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    def test_status_without_sdd_returns_empty_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "status", "--json"],
+                cwd=tmp,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual([], json.loads(result.stdout)["srs"])
+
+    def test_cli_start_accepts_ascii_title_var_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(AAW_SCRIPT),
+                    "start",
+                    "--entry",
+                    "ar",
+                    "--var",
+                    "SR=SR-CLI",
+                    "--var",
+                    "AR=AR-001",
+                    "--var",
+                    "TITLE=user-management",
+                    "--json",
+                ],
+                cwd=tmp,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual("SR-CLI", payload["sr"])
+        self.assertEqual("ar", payload["entry"])
+
+    def test_start_sr_entry_creates_init_work_order(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-001"}, "req")
+        payload = self.mgr.build_next_payload(wf)
+
+        self.assertFalse(payload["done"])
+        order = payload["ready"][0]
+        self.assertEqual("sr-init", order["type"])
+        self.assertEqual("skill", order["execution"])
+        self.assertEqual(["repo-init"], order["skill"])
+        self.assertFalse(order["deliverables"]["can_skip"])
+        self.assertIn("software_architecture.md", order["deliverables"]["missing_required"][0])
+        self.assertTrue((self.sdd / "SR-001" / ".aaw" / "data").is_dir())
+
+    def test_deliverables_exist_marks_required_output_as_skippable(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-001"}, "req")
+        arch = self.sdd / "software_architecture.md"
+        arch.write_text("architecture", "utf-8")
+
+        order = self.mgr.build_next_payload(wf)["ready"][0]
+
+        self.assertTrue(order["deliverables"]["can_skip"])
+        self.assertTrue(order["existing_output_reusable"])
+
+        wf.get_step(1).attempt = 2
+        retried_order = self.mgr.build_next_payload(wf)["ready"][0]
+        self.assertFalse(retried_order["existing_output_reusable"])
+
+    def test_missing_required_output_blocks_done(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-OUTPUT"}, "req")
+
+        with self.assertRaises(WorkflowError):
+            self.mgr.mark_done(wf, 1)
+
+        (self.sdd / "software_architecture.md").write_text("architecture", "utf-8")
+        self.mgr.mark_started(wf, 1)
+        result = self.mgr.mark_done(wf, 1)
+
+        self.assertEqual(1, result["generated"])
+        self.assertEqual("sr-design", self.mgr.get_ready(wf)[0].type)
+
+    def test_done_waits_for_user_confirm_on_must_edge(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-CONFIRM", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._touch_required_inputs(wf, 2)
+        self._touch_required_outputs(wf, 2)
+        self.mgr.mark_started(wf, 2)
+
+        result = self.mgr.mark_done(wf, 2)
+
+        self.assertEqual("awaiting_user_confirm", result["state"])
+        self.assertEqual(0, result["generated"])
+        self.assertEqual(1, result["planned"])
+        self.assertTrue(wf.get_step(2).finished)
+        self.assertEqual([], wf.get_step(2).next)
+        self.assertEqual(2, len(wf.steps))
+        self.assertEqual([], self.mgr.get_ready(wf))
+
+        payload = self.mgr.build_next_payload(wf)
+        self.assertEqual("awaiting_user_confirm", payload["status"])
+        self.assertEqual([], payload["ready"])
+        self.assertIn("user-confirm", payload["commands"]["user_confirm"])
+        self.assertEqual(
+            "module-boundary-design",
+            payload["pending_user_confirm"]["planned_next"][0]["type"],
+        )
+
+        confirmed = self.mgr.user_confirm(wf)
+
+        self.assertEqual(1, confirmed["generated"])
+        self.assertEqual([3], wf.get_step(2).next)
+        self.assertEqual("module-boundary-design", self.mgr.get_ready(wf)[0].type)
+
+    def test_step_execution_timestamps_are_persisted_in_workflow_yaml(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-TIMESTAMPS"}, "req")
+
+        step = self.mgr.mark_started(wf, 1)
+        started_at = step.started_at
+        self.assertEqual("running", step.execution_status)
+        self.assertEqual(1, step.attempt)
+        self.assertIsNotNone(started_at)
+        self.assertEqual(started_at, self.mgr.load("SR-TIMESTAMPS").get_step(1).started_at)
+
+        self._done(wf, 1)
+        completed = self.mgr.load("SR-TIMESTAMPS").get_step(1)
+        assert completed is not None
+        self.assertEqual("completed", completed.execution_status)
+        self.assertEqual(started_at, completed.started_at)
+        self.assertIsNotNone(completed.ended_at)
+        self.assertGreaterEqual(completed.ended_at, started_at)
+
+    def test_next_retries_same_start_message_after_initial_transition(self) -> None:
+        self.mgr.start("sr", {"SR": "SR-RUNNING"}, "req")
+        store = MagicMock()
+        message = {"message_id": "start-message", "data": {"status": "start"}}
+        store.step_message.return_value = message
+
+        with (
+            patch.object(cli_main, "_get_manager", return_value=self.mgr),
+            patch.object(cli_main, "_get_telemetry", return_value=store),
+            patch.object(cli_main, "_echo_json"),
+            patch.object(cli_main.TelemetryClient, "send", return_value={"status": "accepted"}) as send,
+        ):
+            cli_main.next("SR-RUNNING", True)
+            cli_main.next("SR-RUNNING", True)
+
+        step = self.mgr.load("SR-RUNNING").get_step(1)
+        assert step is not None
+        self.assertEqual("running", step.execution_status)
+        self.assertIsNotNone(step.started_at)
+        self.assertEqual(2, store.step_message.call_count)
+        self.assertEqual("start", store.step_message.call_args.args[2])
+        self.assertTrue(all(call.args == (message,) for call in send.call_args_list))
+
+    def test_next_retries_missing_task_dev_baseline_for_running_step(self) -> None:
+        step = MagicMock(
+            id=8,
+            type="task-dev",
+            execution="skill",
+            execution_status="running",
+            attempt=1,
+        )
+        workflow = MagicMock()
+        manager = MagicMock()
+        manager.load.return_value = workflow
+        manager.get_ready.return_value = [step]
+        manager.mark_started.return_value = step
+        manager.build_next_payload.return_value = {"done": False, "ready": []}
+        store = MagicMock()
+        message = {"message_id": "task-dev-start", "data": {"status": "start"}}
+        store.step_message.return_value = message
+
+        with (
+            patch.object(cli_main, "_get_manager", return_value=manager),
+            patch.object(cli_main, "_get_telemetry", return_value=store),
+            patch.object(cli_main, "_echo_json"),
+            patch.object(cli_main.TelemetryClient, "send", return_value={"status": "duplicate"}),
+        ):
+            cli_main.next("SR-TASK-DEV", True)
+
+        store.dev_started.assert_called_once_with(workflow, step, 1)
+        manager.mark_started.assert_called_once_with(workflow, 8, 1)
+
+    def test_done_keeps_task_dev_artifacts_when_diff_upload_fails(self) -> None:
+        workflow = MagicMock()
+        step = MagicMock(type="task-dev", attempt=1)
+        workflow.get_step.return_value = step
+        manager = MagicMock()
+        manager.load.return_value = workflow
+        manager.mark_done.return_value = {"ok": True}
+        store = MagicMock()
+        dev_state = {"file": {"file_name": "step.diff", "sha256": "a" * 64}}
+        store.dev_finished.return_value = dev_state
+        store.step_message.return_value = {"message_id": "task-dev-done"}
+
+        with (
+            patch.object(cli_main, "_get_manager", return_value=manager),
+            patch.object(cli_main, "_get_telemetry", return_value=store),
+            patch.object(cli_main, "_echo_json") as echo,
+            patch.object(cli_main.TelemetryClient, "send", side_effect=cli_main.TelemetryError("upload failed")),
+        ):
+            cli_main.done("SR-TASK-DEV", 8, None, None, True)
+
+        store.cleanup_step.assert_not_called()
+        self.assertEqual("failed", echo.call_args.args[0]["telemetry"]["status"])
+
+    def test_done_cleans_task_dev_artifacts_after_successful_upload(self) -> None:
+        workflow = MagicMock()
+        step = MagicMock(type="task-dev", attempt=1)
+        workflow.get_step.return_value = step
+        manager = MagicMock()
+        manager.load.return_value = workflow
+        manager.mark_done.return_value = {"ok": True}
+        store = MagicMock()
+        dev_state = {"file": {"file_name": "step.diff", "sha256": "a" * 64}}
+        store.dev_finished.return_value = dev_state
+        store.step_message.return_value = {"message_id": "task-dev-done"}
+
+        with (
+            patch.object(cli_main, "_get_manager", return_value=manager),
+            patch.object(cli_main, "_get_telemetry", return_value=store),
+            patch.object(cli_main, "_echo_json"),
+            patch.object(
+                cli_main.TelemetryClient,
+                "send",
+                return_value={"message_id": "task-dev-done", "status": "accepted", "uploaded": 1},
+            ),
+        ):
+            cli_main.done("SR-TASK-DEV", 8, None, None, True)
+
+        store.cleanup_step.assert_called_once_with(workflow, step, 1, dev_state)
+
+    def test_prompt_template_is_returned_by_next_payload(self) -> None:
+        wf = self._workflow_at_sr_gate("SR-001")
+        self._done(wf, 3, self._sr_gate_pass_data())
+
+        order = self.mgr.build_next_payload(wf)["ready"][0]
+
+        self.assertEqual("ar-split", order["type"])
+        self.assertEqual("prompt", order["execution"])
+        # The work order carries the executable text, not the authoring form.
+        self.assertIn("是否需要拆分 AR", order["prompt"])
+        self.assertIn("ars", order["data"]["fields"])
+        self.assertEqual([".sdd/SR-001/AR-split.md"], order["deliverables"]["required"])
+        self.assertTrue(order["data_file"]["path"].endswith("/.sdd/SR-001/.aaw/data/step-0004-ar-split.json"))
+        self.assertEqual("utf-8", order["data_file"]["encoding"])
+        self.assertTrue(order["commands"]["done_argv"][1].endswith("aaw.py"))
+        self.assertTrue(
+            any("step-0004-ar-split.json" in arg for arg in order["commands"]["done_argv"])
+        )
+
+    def test_sr_design_generates_gate_with_required_report_without_confirmation(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-GATE"}, "req")
+        self._done(wf, 1)
+        self.mgr.mark_started(wf, 2)
+        self._touch_required_outputs(wf, 2)
+
+        result = self.mgr.mark_done(wf, 2)
+
+        self.assertEqual(1, result["generated"])
+        self.assertNotEqual("awaiting_user_confirm", result.get("state"))
+        gate = self.mgr.get_ready(wf)[0]
+        self.assertEqual("sr-design-gate", gate.type)
+        self.assertEqual(["sr-design-gate"], gate.skill)
+        self.assertEqual(
+            [
+                ".sdd/software_architecture.md",
+                ".sdd/SR-GATE/original-requirement.md",
+                ".sdd/SR-GATE/SR-design.md",
+            ],
+            [item["path"] for item in gate.input],
+        )
+        self.assertEqual([False, True, True], [item["required"] for item in gate.input])
+        self.assertEqual(".sdd/SR-GATE/SR-design-gate.md", gate.output[0]["path"])
+        self.assertTrue(gate.output[0]["required"])
+        deliverables = self.mgr.check_deliverables(gate)
+        self.assertEqual([".sdd/SR-GATE/SR-design-gate.md"], deliverables["missing_required"])
+        self.assertFalse(deliverables["can_skip"])
+        report = self._abs(gate.output[0]["path"])
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("gate report", "utf-8")
+        self.assertTrue(self.mgr.check_deliverables(gate)["can_skip"])
+        gate_order = self.mgr.build_next_payload(wf)["ready"][0]
+        self.assertIn("summary", gate_order["data"]["fields"])
+
+    def test_sr_gate_pass_generates_ar_split_without_confirmation(self) -> None:
+        wf = self._workflow_at_sr_gate("SR-GATE-PASS")
+        self.mgr.mark_started(wf, 3)
+        gate = wf.get_step(3)
+        assert gate is not None
+        report = self._abs(gate.output[0]["path"])
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("gate report", "utf-8")
+
+        result = self.mgr.mark_done(wf, 3, self._sr_gate_pass_data(gate.output[0]["path"]))
+
+        self.assertEqual(1, result["generated"])
+        self.assertNotEqual("awaiting_user_confirm", result.get("state"))
+        self.assertEqual("ar-split", self.mgr.get_ready(wf)[0].type)
+
+    def test_sr_gate_pass_requires_report_deliverable(self) -> None:
+        wf = self._workflow_at_sr_gate("SR-GATE-NOREPORT")
+        self.mgr.mark_started(wf, 3)
+        gate = wf.get_step(3)
+        assert gate is not None
+        self.assertFalse(self._abs(gate.output[0]["path"]).exists())
+
+        with self.assertRaises(WorkflowError):
+            self.mgr.mark_done(wf, 3, self._sr_gate_pass_data(gate.output[0]["path"]))
+
+        self.assertFalse(gate.finished)
+
+    def test_sr_gate_fail_and_blocked_keep_gate_unfinished(self) -> None:
+        for gate_result, expected_message in (("fail", "门禁不通过"), ("blocked", "门禁阻塞")):
+            with self.subTest(gate_result=gate_result):
+                wf = self._workflow_at_sr_gate(f"SR-GATE-{gate_result.upper()}")
+                gate = wf.get_step(3)
+                assert gate is not None
+                report = self._abs(gate.output[0]["path"])
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text(f"gate {gate_result}", "utf-8")
+                with self.assertRaises(DataError) as ctx:
+                    self._done(
+                        wf,
+                        3,
+                        json.dumps(
+                            {
+                                "gate_result": gate_result,
+                                "recommendation": "整改后重试",
+                                "report": gate.output[0]["path"],
+                                "summary": {
+                                    "unqualified_dimensions": 1,
+                                    "p0_conflicts": 1 if gate_result == "fail" else 0,
+                                    "p1_conflicts": 0,
+                                    "p2_findings": 0,
+                                    "pending_questions": 0,
+                                    "blocking_issues": 1 if gate_result == "blocked" else 0,
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                self.assertIn(expected_message, str(ctx.exception))
+                self.assertTrue(report.exists())
+                self.assertFalse(gate.finished)
+                self.assertEqual([], gate.next)
+                self.assertEqual([3], [step.id for step in self.mgr.get_ready(wf)])
+
+    def test_choice_generates_ar_clarify_steps_from_config(self) -> None:
+        wf = self._workflow_at_sr_gate("SR-001")
+        self._done(wf, 3, self._sr_gate_pass_data())
+
+        result = self._done(
+            wf,
+            4,
+            json.dumps(
+                {
+                    "ars": [
+                        {"id": "AR-001", "title": "用户管理"},
+                        {"id": "AR-002", "title": "权限控制"},
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        self.assertEqual(2, result["generated"])
+        ready = self.mgr.get_ready(wf)
+        self.assertEqual(["AR-001-ar-clarify", "AR-002-ar-clarify"], [s.name for s in ready])
+        self.assertEqual("AR-001", ready[0].vars["AR"])
+        self.assertEqual("用户管理", ready[0].vars["描述"])
+        self.assertEqual("AR-001:用户管理", ready[0].input[0]["value"])
+
+    def test_cli_done_accepts_data_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            req_file = cwd / "req.md"
+            req_file.write_text("原始需求内容", "utf-8")
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "start", "--entry", "sr", "--sr", "SR-DATAFILE",
+                 "--requirement-file", str(req_file), "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            (cwd / ".sdd" / "software_architecture.md").write_text("architecture", "utf-8")
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            (cwd / ".sdd" / "SR-DATAFILE" / "AR-split.md").write_text(
+                "# AR 拆分决定\n\nAR-001：用户管理", "utf-8"
+            )
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "done", "--sr", "SR-DATAFILE", "1", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            (cwd / ".sdd" / "SR-DATAFILE" / "SR-design.md").write_text("sr design", "utf-8")
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "done", "--sr", "SR-DATAFILE", "2", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            gate_data_file = cwd / "gate.json"
+            gate_report = cwd / ".sdd" / "SR-DATAFILE" / "SR-design-gate.md"
+            gate_report.write_text("gate report", "utf-8")
+            gate_data_file.write_text(
+                self._sr_gate_pass_data(".sdd/SR-DATAFILE/SR-design-gate.md"), "utf-8-sig"
+            )
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(AAW_SCRIPT),
+                    "done",
+                    "--sr",
+                    "SR-DATAFILE",
+                    "3",
+                    "--data-file",
+                    str(gate_data_file),
+                    "--json",
+                ],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            data_file = cwd / "split.json"
+            data_file.write_text(
+                json.dumps({"ars": [{"id": "AR-001", "title": "用户管理"}]}, ensure_ascii=False),
+                "utf-8-sig",
+            )
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(AAW_SCRIPT),
+                    "done",
+                    "--sr",
+                    "SR-DATAFILE",
+                    "4",
+                    "--data-file",
+                    str(data_file),
+                    "--json",
+                ],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            nxt = subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(["AR-001-ar-clarify"], [item["name"] for item in json.loads(nxt.stdout)["ready"]])
+
+    def test_choice_no_split_uses_configured_synthetic_ar(self) -> None:
+        wf = self._workflow_at_sr_gate("SR-001")
+        self._done(wf, 3, self._sr_gate_pass_data())
+
+        self._done(wf, 4, json.dumps({"mode": "no_split"}))
+        ready = self.mgr.get_ready(wf)
+
+        self.assertEqual(1, len(ready))
+        self.assertEqual("module-boundary-design", ready[0].type)
+        self.assertEqual("ALL", ready[0].vars["AR"])
+        self.assertTrue(ready[0].output[0]["path"].endswith("/SR-001/ALL/module-boundary-design.md"))
+
+    def test_invalid_choice_item_is_rejected_without_mutating_workflow(self) -> None:
+        wf = self._workflow_at_sr_gate("SR-BAD")
+        self._done(wf, 3, self._sr_gate_pass_data())
+
+        with self.assertRaises(DataError):
+            self._done(wf, 4, json.dumps({"ars": [{"id": "AR-001"}]}))
+
+        step = wf.get_step(4)
+        assert step is not None
+        self.assertFalse(step.finished)
+        self.assertEqual([], step.next)
+        self.assertEqual(4, len(wf.steps))
+
+    def test_ar_entry_skips_sr_design_and_ar_split(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-002", "AR": "AR-010", "描述": "直接入口"})
+        first = self.mgr.build_next_payload(wf)["ready"][0]
+        self.assertEqual("ar-init", first["type"])
+
+        self._done(wf, 1)
+        second = self.mgr.build_next_payload(wf)["ready"][0]
+
+        self.assertEqual("ar-clarify", second["type"])
+        # `vars` is workflow state, not part of the work order; the AR value
+        # reaches the agent through the rendered paths instead.
+        self.assertEqual("AR-010", wf.get_step(second["id"]).vars["AR"])
+        self.assertNotIn("sr-design", [s.type for s in wf.steps])
+        self.assertNotIn("sr-design-gate", [s.type for s in wf.steps])
+        self.assertNotIn("ar-split", [s.type for s in wf.steps])
+
+    def test_ar_entry_requires_repo_init_artifact_before_done(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-REPO", "AR": "AR-001", "描述": "直接入口"})
+        first = self.mgr.build_next_payload(wf)["ready"][0]
+
+        self.assertTrue(first["inputs"]["blocked"])
+        self.assertEqual(".sdd/software_architecture.md", first["inputs"]["missing_required"][0])
+        self.mgr.mark_started(wf, 1)
+        with self.assertRaises(WorkflowError):
+            self.mgr.mark_done(wf, 1)
+
+        (self.sdd / "software_architecture.md").write_text("architecture", "utf-8")
+        result = self.mgr.mark_done(wf, 1)
+
+        self.assertEqual(1, result["generated"])
+        self.assertEqual("ar-clarify", self.mgr.get_ready(wf)[0].type)
+
+    def test_start_allows_existing_sr_directory_without_workflow(self) -> None:
+        existing = self.sdd / "SR-EXISTING"
+        existing.mkdir(parents=True)
+        (existing / "source.md").write_text("existing context", "utf-8")
+
+        wf = self.mgr.start("ar", {"SR": "SR-EXISTING", "AR": "AR-001", "描述": "已有资料"})
+
+        self.assertEqual("SR-EXISTING", wf.sr)
+        with self.assertRaises(WorkflowError):
+            self.mgr.start("ar", {"SR": "SR-EXISTING", "AR": "AR-002", "描述": "重复启动"})
+
+    def test_foreach_generates_module_steps_from_config(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-003", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._done(wf, 2)
+        self._done(wf, 3)
+
+        result = self._done(
+            wf,
+            4,
+            json.dumps(
+                {
+                    "module_groups": [
+                        {
+                            "name": "用户与权限模块组",
+                            "modules": ["模块A", "模块B"],
+                            "requirement": "用户管理",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        self.assertEqual(1, result["generated"])
+        ready = self.mgr.get_ready(wf)
+        self.assertEqual("module-asis-analysis", ready[0].type)
+        self.assertEqual("用户与权限模块组", ready[0].vars["模块组名"])
+        self.assertEqual("用户管理", ready[0].vars["需求短名"])
+        self.assertTrue(ready[0].output[0]["path"].endswith("/AR-001/用户与权限模块组/.context/详细设计上下文.md"))
+
+    def test_module_group_directory_name_rejects_unsafe_or_long_values(self) -> None:
+        for sr, name in [
+            ("SR-LONG-GROUP", "超" * 41),
+            ("SR-UNSAFE-GROUP", "支付/审计模块组"),
+            ("SR-SUFFIX-GROUP", "支付审计"),
+        ]:
+            with self.subTest(name=name):
+                wf = self.mgr.start("ar", {"SR": sr, "AR": "AR-001", "描述": "用户管理"})
+                self._done(wf, 1)
+                self._done(wf, 2)
+                self._done(wf, 3)
+                with self.assertRaises(DataError):
+                    self._done(
+                        wf,
+                        4,
+                        json.dumps(
+                            {"module_groups": [{"name": name, "modules": ["模块A"], "requirement": "用户管理"}]},
+                            ensure_ascii=False,
+                        ),
+                    )
+
+    def test_module_group_directory_name_must_be_unique(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-DUP-GROUP", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._done(wf, 2)
+        self._done(wf, 3)
+
+        with self.assertRaises(DataError):
+            self._done(
+                wf,
+                4,
+                json.dumps(
+                    {
+                        "module_groups": [
+                            {"name": "支付审计模块", "modules": ["模块A"], "requirement": "用户管理"},
+                            {"name": "支付审计模块", "modules": ["模块B"], "requirement": "用户管理"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
+    def test_runtime_does_not_generate_legacy_module_artifact_paths(self) -> None:
+        legacy = Workflow(
+            sr="SR-LEGACY",
+            vars={"SR": "SR-LEGACY", "AR": "AR-001", "详设路径版本": "v1"},
+            steps=[
+                Step(
+                    id=5,
+                    type="module-asis-analysis",
+                    name="支付审计模块-module-asis-analysis",
+                    finished=True,
+                    vars={
+                        "SR": "SR-LEGACY",
+                        "AR": "AR-001",
+                        "模块组名": "支付审计模块",
+                        "需求短名": "快速退款",
+                        "详设路径版本": "v1",
+                    },
+                    output=[
+                        {
+                            "path": ".sdd/SR-LEGACY/AR-001/AR-001-快速退款-支付审计模块模块详细设计说明书.context.md",
+                            "required": True,
+                        }
+                    ],
+                )
+            ],
+        )
+
+        ids, steps = self.mgr._generate_direct(
+            legacy,
+            legacy.steps[0],
+            self.mgr.templates["module-asis-analysis"]["edge"],
+        )
+
+        self.assertEqual([6], ids)
+        self.assertEqual(
+            ".sdd/SR-LEGACY/AR-001/支付审计模块/模块详细设计说明书.md",
+            steps[0].output[0]["path"],
+        )
+
+    def test_workflow_parser_does_not_mutate_missing_path_version(self) -> None:
+        workflow_path = self.sdd / "SR-LEGACY-LOAD" / "workflow.yaml"
+        workflow_path.parent.mkdir(parents=True)
+        workflow_path.write_text(
+            "sr: SR-LEGACY-LOAD\nentry: ar\nstatus: in_progress\nvars:\n  SR: SR-LEGACY-LOAD\nsteps: []\n",
+            "utf-8",
+        )
+
+        loaded = Workflow.from_yaml(workflow_path)
+
+        self.assertNotIn("详设路径版本", loaded.vars)
+
+    def test_gate_pass_generates_task_split(self) -> None:
+        wf = self._workflow_at_gate("SR-GATE-PASS")
+        gate_order = self.mgr.build_next_payload(wf)["ready"][0]
+
+        self.assertEqual("module-design-gate", gate_order["type"])
+        self.assertIn("gate_result", gate_order["data"]["fields"])
+        self.assertTrue(gate_order["data_file"]["path"].endswith("/.sdd/SR-GATE-PASS/.aaw/data/step-0008-module-design-gate.json"))
+        self.assertTrue(gate_order["deliverables"]["required"][0].endswith("模块设计门禁结果.md"))
+
+        result = self._done(wf, 8, self._gate_pass_data())
+
+        self.assertEqual(1, result["generated"])
+        ready = self.mgr.get_ready(wf)
+        self.assertEqual("task-split", ready[0].type)
+        self.assertEqual(1, len(ready[0].output))
+        self.assertTrue(ready[0].output[0]["path"].endswith("/用户与权限模块组/tasks-overview.md"))
+        self.assertTrue(
+            any(item["path"].endswith("模块设计门禁结果.md") for item in ready[0].input)
+        )
+
+    def test_gate_fail_keeps_step_unfinished_without_generating_downstream(self) -> None:
+        wf = self._workflow_at_gate("SR-GATE-FAIL")
+        gate_step = wf.get_step(8)
+        assert gate_step is not None
+        report = self._abs(gate_step.output[0]["path"])
+
+        with self.assertRaises(DataError) as ctx:
+            self._done(
+                wf,
+                8,
+                json.dumps(
+                    {
+                        "gate_result": "fail",
+                        "recommendation": "回 TOBE 补设计后重试",
+                        "report": "gate failed",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
+        self.assertIn("门禁不通过", str(ctx.exception))
+        self.assertTrue(report.exists())
+        self.assertFalse(gate_step.finished)
+        self.assertEqual([], gate_step.next)
+        self.assertEqual(8, len(wf.steps))
+        self.assertEqual([8], [s.id for s in self.mgr.get_ready(wf)])
+
+    def test_gate_blocked_keeps_step_unfinished_without_rollback(self) -> None:
+        wf = self._workflow_at_gate("SR-GATE-BLOCKED")
+        gate_step = wf.get_step(8)
+        assert gate_step is not None
+        report = self._abs(gate_step.output[0]["path"])
+
+        with self.assertRaises(DataError) as ctx:
+            self._done(
+                wf,
+                8,
+                json.dumps(
+                    {
+                        "gate_result": "blocked",
+                        "recommendation": "阻塞，缺少必要输入",
+                        "report": "gate blocked",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
+        self.assertIn("门禁阻塞", str(ctx.exception))
+        self.assertTrue(report.exists())
+        self.assertFalse(gate_step.finished)
+        self.assertEqual([], gate_step.next)
+        self.assertEqual(8, len(wf.steps))
+        self.assertEqual([8], [s.id for s in self.mgr.get_ready(wf)])
+
+    def test_task_split_foreach_uses_index_and_task_title(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-004", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._done(wf, 2)
+        self._done(wf, 3)
+        self._done(
+            wf,
+            4,
+            json.dumps(
+                {
+                    "module_groups": [
+                        {"name": "用户与权限模块组", "modules": ["模块A"], "requirement": "用户管理"}
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+        for step_id in [5, 6, 7]:
+            self._done(wf, step_id)
+        self._done(wf, 8, self._gate_pass_data())
+
+        result = self._done(wf, 9, json.dumps({"tasks": ["用户CRUD", "权限校验"]}, ensure_ascii=False))
+
+        self.assertEqual(2, result["generated"])
+        ready = self.mgr.get_ready(wf)
+        self.assertEqual(["T1-task-dev"], [s.name for s in ready])
+        input_paths = [item["path"] for item in ready[0].input]
+        self.assertTrue(any(path.endswith("/用户与权限模块组/tasks-overview.md") for path in input_paths))
+        self.assertTrue(any(path.endswith("模块详细设计说明书.md") for path in input_paths))
+        self.assertTrue(any(path.endswith("模块测试用例设计.md") for path in input_paths))
+        self.assertTrue(any(path.endswith("模块设计门禁结果.md") for path in input_paths))
+        self.assertFalse(any("_tasks/T1-" in path for path in input_paths))
+        task_steps = [step for step in wf.steps if step.type == "task-dev"]
+        self.assertEqual("inherit", task_steps[0].session)
+        self.assertEqual([], task_steps[0].depends_on)
+        self.assertEqual([task_steps[0].id], task_steps[1].depends_on)
+        task_steps[0].finished = True
+        task_steps[0].execution_status = "completed"
+        self.assertEqual(["T2-task-dev"], [s.name for s in self.mgr.get_ready(wf)])
+
+    def test_task_split_requires_user_confirmation_before_task_dev(self) -> None:
+        wf = self._workflow_at_gate("SR-TASK-CONFIRM")
+        self._done(wf, 8, self._gate_pass_data())
+
+        task_split = self.mgr.get_ready(wf)[0]
+        self.assertEqual("task-split", task_split.type)
+        self.mgr.mark_started(wf, task_split.id)
+        self._touch_required_inputs(wf, task_split.id)
+        self._touch_required_outputs(wf, task_split.id)
+
+        result = self.mgr.mark_done(
+            wf,
+            task_split.id,
+            json.dumps({"tasks": ["用户CRUD", "权限校验"]}, ensure_ascii=False),
+        )
+
+        self.assertEqual("awaiting_user_confirm", result["state"])
+        self.assertEqual(0, result["generated"])
+        self.assertEqual(2, result["planned"])
+        self.assertEqual([], [step for step in wf.steps if step.type == "task-dev"])
+
+        confirmed = self.mgr.user_confirm(wf)
+        self.assertEqual(2, confirmed["generated"])
+        self.assertEqual(["T1-task-dev"], [s.name for s in self.mgr.get_ready(wf)])
+
+    def test_task_split_rejects_prefixed_task_titles(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-004B", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._done(wf, 2)
+        self._done(wf, 3)
+        self._done(
+            wf,
+            4,
+            json.dumps(
+                {
+                    "module_groups": [
+                        {"name": "用户与权限模块组", "modules": ["模块A"], "requirement": "用户管理"}
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+        for step_id in [5, 6, 7]:
+            self._done(wf, step_id)
+        self._done(wf, 8, self._gate_pass_data())
+
+        with self.assertRaises(DataError) as ctx:
+            self._done(wf, 9, json.dumps({"tasks": ["T1-用户CRUD"]}, ensure_ascii=False))
+
+        self.assertIn("不要包含 T1-/T2- 前缀", str(ctx.exception))
+        step = wf.get_step(9)
+        assert step is not None
+        self.assertFalse(step.finished)
+        self.assertEqual([], step.next)
+
+    def test_missing_foreach_data_raises_data_error(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-005", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        self._done(wf, 2)
+        self._done(wf, 3)
+
+        with self.assertRaises(DataError):
+            self._done(wf, 4, json.dumps({"module_groups": []}))
+
+    def test_rollback_preserve_removes_descendant_steps_but_keeps_files(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-006", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        ar_step = wf.get_step(2)
+        assert ar_step is not None
+        ar_output = self._abs(ar_step.output[0]["path"])
+        ar_output.parent.mkdir(parents=True, exist_ok=True)
+        ar_output.write_text("clarified", "utf-8")
+        self._done(wf, 2)
+
+        result = self.mgr.rollback(wf, 1, "preserve")
+
+        self.assertEqual(2, result["removed"])
+        self.assertTrue(ar_output.exists())
+        self.assertEqual([1], [s.id for s in wf.steps])
+        self.assertFalse(wf.steps[0].finished)
+        self.assertEqual([], wf.steps[0].next)
+
+    def test_rollback_discard_removes_target_and_descendant_files(self) -> None:
+        wf = self.mgr.start("ar", {"SR": "SR-006-D", "AR": "AR-001", "描述": "用户管理"})
+        self._done(wf, 1)
+        target = wf.get_step(1)
+        descendant = wf.get_step(2)
+        assert target is not None
+        assert descendant is not None
+        target_output = self._abs(target.output[0]["path"])
+        descendant_output = self._abs(descendant.output[0]["path"])
+        descendant_output.parent.mkdir(parents=True, exist_ok=True)
+        descendant_output.write_text("clarified", "utf-8")
+
+        result = self.mgr.rollback(wf, 1, "discard")
+
+        self.assertEqual("discard", result["artifact_policy"])
+        self.assertFalse(target_output.exists())
+        self.assertFalse(descendant_output.exists())
+
+    def test_io_paths_are_stored_repo_relative(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-REL"}, "req")
+        step = wf.get_step(1)
+        assert step is not None
+
+        for item in step.input + step.output:
+            path = item.get("path")
+            if path:
+                self.assertFalse(
+                    Path(path).is_absolute(),
+                    msg=f"stored path must be repo-relative, got {path!r}",
+                )
+                self.assertTrue(path.startswith(".sdd/"), msg=path)
+
+    def test_workflow_is_portable_after_moving_sdd_dir(self) -> None:
+        # Author the workflow and produce the required deliverable under root A.
+        wf = self.mgr.start("sr", {"SR": "SR-MOVE"}, "req")
+        self.mgr.mark_started(wf, 1)
+        self._touch_required_outputs(wf, 1)
+
+        # Relocate the whole .sdd tree to a fresh root B and validate from there.
+        import shutil
+
+        other_root = Path(self.tmp.name) / "relocated"
+        other_root.mkdir()
+        shutil.move(str(self.sdd), str(other_root / ".sdd"))
+
+        moved_mgr = WorkflowManager(other_root / ".sdd")
+        moved_wf = moved_mgr.load("SR-MOVE")
+        # The required output travelled with the tree, so check_deliverables must
+        # resolve it relative to the new root — no absolute path baked into yaml.
+        self.assertTrue(moved_mgr.check_deliverables(moved_wf.get_step(1))["can_skip"])
+        result = moved_mgr.mark_done(moved_wf, 1)
+        if result.get("state") == "awaiting_user_confirm":
+            result = moved_mgr.user_confirm(moved_wf)
+        self.assertEqual(1, result["generated"])
+
+
+if __name__ == "__main__":
+    unittest.main()

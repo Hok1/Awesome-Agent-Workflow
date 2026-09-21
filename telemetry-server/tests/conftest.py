@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import hashlib
+import uuid
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, event
+
+from aaw_telemetry.config import (
+    ComponentEntry,
+    ComponentsDocument,
+    ProjectEntry,
+    ProjectRegistry,
+    Settings,
+)
+from aaw_telemetry.database import Base
+from aaw_telemetry.main import create_app
+from aaw_telemetry.services.attribution_service import (
+    AttributionRequest,
+    AttributionResult,
+    AttributionService,
+)
+
+WORKFLOW_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
+MESSAGE_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
+SECOND_MESSAGE_ID = uuid.UUID("33333333-3333-4333-8333-333333333333")
+STARTED_AT = int(
+    (
+        datetime.now(UTC).replace(hour=1, minute=0, second=0, microsecond=0) - timedelta(days=3)
+    ).timestamp()
+    * 1000
+)
+STEP_STARTED_AT = STARTED_AT + 60_000
+STEP_COMPLETED_AT = STARTED_AT + 1_800_000
+UPDATED_AT = STEP_COMPLETED_AT + 1_000
+DIFF = (
+    b"diff --git a/app.py b/app.py\n"
+    b"--- a/app.py\n"
+    b"+++ b/app.py\n"
+    b"@@ -1 +1,3 @@\n"
+    b" old\n"
+    b"+new line\n"
+    b"+second line\n"
+)
+
+
+class StubAttributionService(AttributionService):
+    def attribute(self, request: AttributionRequest) -> AttributionResult:
+        total = int(request.diff.statistics.get("total_effective_lines", 0))
+        has_match = total > 0
+        mock_iid = str((request.request_id.int % 900_000) + 100_000) if has_match else None
+        return AttributionResult(
+            request_id=request.request_id,
+            result_status="finalized_match" if has_match else "finalized_no_match",
+            dev_effective_lines=total,
+            attributed_lines_60=total,
+            attributed_lines_80=total,
+            attributed_lines_90=total,
+            mr_commit_lines=total * 2 if has_match else 0,
+            confidence=0.8 if has_match else 0.0,
+            quality_flags=["mock_attribution", "external_service"],
+            matched_mr_iid=mock_iid,
+            matched_mr_url=(
+                f"https://example.invalid/mock/merge_requests/{mock_iid}"
+                if mock_iid
+                else None
+            ),
+            algorithm_version="mock-v1",
+            diff_rule_version="unified-diff-additions-v1",
+            matched_at=datetime.now(UTC),
+        )
+
+
+@pytest.fixture
+def projects() -> ProjectRegistry:
+    return ProjectRegistry(_registry_document())
+
+
+def _registry_document() -> ComponentsDocument:
+    return ComponentsDocument(
+        components={
+            "example-component": ComponentEntry(
+                name="示例组件",
+                se="张三",
+                repos={
+                    "team/example-service": ProjectEntry(
+                        canonical_url="git@git.company.com:team/example-service.git",
+                        target_branch="main",
+                        enabled=True,
+                    )
+                },
+            )
+        }
+    )
+
+
+def _make_client(tmp_path, registry_document, *, db_name: str, objects_dir: str):
+    """Build an app that boots the production way: yaml seed → DB registry."""
+    database_path = (tmp_path / db_name).as_posix()
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    engine = create_engine(
+        database_url,
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(engine)
+    projects_file = tmp_path / f"{db_name}-projects.yaml"
+    projects_file.write_text(
+        yaml.safe_dump(registry_document.model_dump()), encoding="utf-8"
+    )
+    settings = Settings(
+        database_url=database_url,
+        object_storage_dir=tmp_path / objects_dir,
+        log_directory=tmp_path / f"{objects_dir}-logs",
+        log_level="INFO",
+        max_request_bytes=1024 * 1024,
+        max_patch_bytes=2 * 1024 * 1024,
+        upload_session_seconds=3600,
+        projects_file=projects_file,
+    )
+    attribution_service = StubAttributionService()
+    app = create_app(
+        settings,
+        engine=engine,
+        attribution_service=attribution_service,
+    )
+    test_client = TestClient(app, raise_server_exceptions=False)
+    return test_client, engine
+
+
+@pytest.fixture
+def client(tmp_path) -> Iterator[TestClient]:
+    test_client, engine = _make_client(
+        tmp_path, _registry_document(), db_name="telemetry.db", objects_dir="objects"
+    )
+    with test_client:
+        yield test_client
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+@pytest.fixture
+def concurrent_client(tmp_path) -> Iterator[TestClient]:
+    test_client, engine = _make_client(
+        tmp_path,
+        _registry_document(),
+        db_name="concurrent.db",
+        objects_dir="concurrent-objects",
+    )
+    with test_client:
+        yield test_client
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+def message(
+    *,
+    message_id: uuid.UUID = MESSAGE_ID,
+    workflow_id: uuid.UUID = WORKFLOW_ID,
+    user_email: str = "Developer@Example.com",
+    user_name: str = "Z30049429",
+    repository: str = "team/example-service",
+    sr: str = "SR-1001",
+    ar: str | None = "AR-2001",
+    entry: str | None = None,
+    step_type: str = "task-dev",
+    status: str = "done",
+    with_file: bool | None = None,
+    workflow_completed: bool = True,
+    started_at: int = STARTED_AT,
+    step_started_at: int = STEP_STARTED_AT,
+    step_completed_at: int | None = STEP_COMPLETED_AT,
+    updated_at: int = UPDATED_AT,
+    step_id: int | None = None,
+    step_name: str | None = None,
+    attempt: int = 1,
+    execution_type: str = "skill",
+    skill_names: list[str] | None = None,
+    task_id: str | None = None,
+    development: dict | None = None,
+) -> dict:
+    if with_file is None:
+        with_file = step_type == "task-dev" and status == "done"
+    payload = {
+        "message_id": str(message_id),
+        "workflow_id": str(workflow_id),
+        "entry": entry,
+        "aaw_version": "0.1.0",
+        "user_email": user_email,
+        "user_name": user_name,
+        "repository": repository,
+        "sr": sr,
+        "started_at": started_at,
+        "completed_at": updated_at if workflow_completed else None,
+        "updated_at": updated_at,
+        "data": {
+            "ar": ar,
+            "step_type": step_type,
+            "status": status,
+            "started_at": step_started_at,
+            "completed_at": step_completed_at,
+            "file": (
+                {
+                    "file_name": f"{sr}-{ar}.diff",
+                    "sha256": hashlib.sha256(DIFF).hexdigest(),
+                }
+                if with_file
+                else None
+            ),
+        },
+    }
+    if step_id is not None:
+        payload["data"].update(
+            {
+                "step_id": step_id,
+                "step_name": step_name or step_type,
+                "attempt": attempt,
+                "execution_type": execution_type,
+                "skill_names": skill_names if skill_names is not None else [step_type],
+                "task_id": task_id,
+                "development": development,
+            }
+        )
+    return payload
+
+
+def sync(client: TestClient, payload: dict):
+    return client.post("/api/v1/telemetry/sync", json=payload)
+
+
+def upload_diff(client: TestClient, payload: dict, *, content: bytes = DIFF):
+    confirmed = client.put(
+        f"/api/v1/objects/step-diffs/{payload['message_id']}",
+        content=content,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    return confirmed.json()

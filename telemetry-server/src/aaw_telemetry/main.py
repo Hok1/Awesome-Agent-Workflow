@@ -1,0 +1,296 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import text
+
+from .config import ComponentsDocument, ProjectRegistry, Settings, get_settings
+from .database import build_engine, build_session_factory, session_dependency
+from .errors import ApiError
+from .logging import configure_logging, request_id_var
+from .middleware import RequestBodyLimitMiddleware, RequestContextMiddleware
+from .routers.admin import build_admin_router
+from .routers.ai_masters import build_ai_masters_router
+from .routers.anomalies import build_anomalies_router
+from .routers.dashboard import build_dashboard_router
+from .routers.issues import build_issues_router
+from .routers.objects import build_objects_router
+from .routers.releases import build_releases_router
+from .routers.telemetry import build_telemetry_router
+from .routers.testing_telemetry import build_testing_telemetry_router
+from .services.anomalies import AnomalyService
+from .services.anomaly_scheduler import AnomalyScheduler
+from .services.attribution_scheduler import AttributionScheduler
+from .services.attribution_service import AttributionService
+from .services.diff_archiver import DiffArchiver
+from .services.issue_images import IssueImageJanitor
+from .services.registry import RegistryService
+from .services.remote_attribution_service import RemoteAttributionService
+
+logger = logging.getLogger("aaw_telemetry.system")
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    engine=None,
+    projects: ProjectRegistry | None = None,
+    attribution_service: AttributionService | None = None,
+) -> FastAPI:
+    settings = settings or get_settings()
+    log_directory = configure_logging(
+        settings.logging_config_file,
+        level=settings.log_level,
+        directory_override=settings.log_directory,
+    )
+    engine = engine or build_engine(settings)
+    # The registry lives in the database and is loaded during startup (see
+    # lifespan): wiring below captures this object, and loading only replaces
+    # its content, so import-time construction never needs a DB connection.
+    # Explicitly passed registries (tests) skip the database entirely.
+    registry_provided = projects is not None
+    projects = projects or ProjectRegistry(
+        ComponentsDocument.model_validate({"components": {}})
+    )
+    if attribution_service is None:
+        attribution_service = RemoteAttributionService(
+            settings.attribution_service_url,
+            timeout_seconds=settings.attribution_timeout_seconds,
+            api_token=(
+                settings.attribution_api_token.get_secret_value()
+                if settings.attribution_api_token
+                else None
+            ),
+        )
+    session_factory = build_session_factory(engine)
+    get_session = session_dependency(session_factory)
+    attribution_scheduler = AttributionScheduler(
+        session_factory,
+        settings,
+        projects,
+        attribution_service,
+    )
+    issue_image_janitor = IssueImageJanitor(session_factory, settings)
+    diff_archiver = DiffArchiver(session_factory, settings)
+    anomaly_scheduler = AnomalyScheduler(session_factory, settings, projects)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        if not registry_provided:
+            with session_factory() as session:
+                RegistryService.load_or_seed(session, projects, settings)
+        with session_factory() as session:
+            AnomalyService(session, projects).ensure_builtin_rules()
+        scheduler_task = attribution_scheduler.start()
+        image_cleanup_task = asyncio.create_task(
+            issue_image_janitor.run(),
+            name="issue-image-janitor",
+        )
+        diff_archiver_task = asyncio.create_task(
+            diff_archiver.run(),
+            name="diff-archiver",
+        )
+        anomaly_scheduler_task = anomaly_scheduler.start()
+        logger.info(
+            "Telemetry Server 已启动，可以接收请求",
+            extra={"event": "service.started", "version": "0.1.0"},
+        )
+        try:
+            yield
+        finally:
+            attribution_scheduler.stop()
+            issue_image_janitor.stop()
+            diff_archiver.stop()
+            anomaly_scheduler.stop()
+            try:
+                await asyncio.gather(
+                    attribution_scheduler.task or scheduler_task,
+                    image_cleanup_task,
+                    diff_archiver_task,
+                    anomaly_scheduler_task,
+                )
+            finally:
+                close_attribution_service = getattr(attribution_service, "close", None)
+                if close_attribution_service is not None:
+                    close_attribution_service()
+            logger.info("Telemetry Server 已停止", extra={"event": "service.stopped"})
+
+    app = FastAPI(
+        title="AAW Telemetry Server",
+        version="0.1.0",
+        docs_url="/docs",
+        redoc_url=None,
+        lifespan=lifespan,
+    )
+    app.state.settings = settings
+    app.state.log_directory = log_directory
+    app.state.engine = engine
+    app.state.projects = projects
+    app.state.attribution_service = attribution_service
+    app.state.attribution_scheduler = attribution_scheduler
+    app.state.issue_image_janitor = issue_image_janitor
+    app.state.diff_archiver = diff_archiver
+    app.state.anomaly_scheduler = anomaly_scheduler
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=settings.max_request_bytes,
+        max_object_bytes=settings.max_patch_bytes,
+        max_issue_image_bytes=settings.issue_image_max_bytes,
+    )
+    app.add_middleware(RequestContextMiddleware)
+    app.include_router(build_telemetry_router(get_session, projects, settings))
+    app.include_router(build_dashboard_router(get_session, projects))
+    app.include_router(build_ai_masters_router(get_session, projects))
+    app.include_router(build_testing_telemetry_router(get_session, projects, settings))
+    app.include_router(
+        build_dashboard_router(
+            get_session, projects, prefix="/api/v1/testing", workflow_kind="testing"
+        )
+    )
+    app.include_router(build_issues_router(get_session, settings))
+    app.include_router(
+        build_objects_router(
+            get_session,
+            settings,
+            attribution_scheduler.notify,
+        )
+    )
+    app.include_router(
+        build_objects_router(
+            get_session,
+            settings,
+            attribution_scheduler.notify,
+            prefix="/api/v1/testing/objects",
+            workflow_kind="testing",
+            diff_path="/code-changes/{message_id}",
+        )
+    )
+    app.include_router(build_releases_router(settings))
+    app.include_router(build_anomalies_router(get_session, settings, projects))
+    app.include_router(
+        build_admin_router(
+            get_session,
+            settings,
+            projects,
+            attribution_scheduler,
+            log_directory,
+        )
+    )
+    logger.info(
+        "服务配置加载完成",
+        extra={"event": "service.configured", "log_directory": str(log_directory)},
+    )
+
+    @app.get("/health/live", include_in_schema=False)
+    def liveness():
+        return {"status": "ok"}
+
+    @app.get("/admin", include_in_schema=False)
+    def admin_page():
+        return FileResponse(
+            Path(__file__).with_name("static") / "admin.html",
+            media_type="text/html; charset=utf-8",
+        )
+
+    @app.get("/health/ready", include_in_schema=False)
+    def readiness():
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            return {"status": "ok"}
+        except Exception as exc:
+            logger.error(
+                "数据库连接不可用，服务暂未就绪",
+                extra={"event": "health.database_unavailable"},
+                exc_info=exc,
+            )
+            return JSONResponse(status_code=503, content={"status": "unavailable"})
+
+    @app.get("/self-test", include_in_schema=False)
+    def self_test_page():
+        return FileResponse(
+            Path(__file__).with_name("static") / "index.html",
+            media_type="text/html; charset=utf-8",
+        )
+
+    @app.exception_handler(ApiError)
+    async def api_error_handler(_: Request, exc: ApiError):
+        level = logging.ERROR if exc.status_code >= 500 else logging.WARNING
+        logger.log(
+            level,
+            "接口请求未能完成，已返回业务错误",
+            extra={
+                "event": "http.api_error",
+                "status_code": exc.status_code,
+                "error_code": exc.code,
+                "retryable": exc.retryable,
+            },
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "request_id": request_id_var.get(),
+                "code": exc.code,
+                "message": exc.message,
+                "retryable": exc.retryable,
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError):
+        code = "INVALID_FILTER" if "/dashboard/" in request.url.path else "INVALID_REQUEST"
+        details = []
+        for item in exc.errors():
+            location = ".".join(str(part) for part in item["loc"])
+            details.append(f"{location}: {item['msg']}")
+        logger.warning(
+            "接口参数校验失败，已拒绝请求",
+            extra={
+                "event": "http.validation_failed",
+                "path": request.url.path,
+                "error_code": code,
+                "error_count": len(details),
+            },
+        )
+        return JSONResponse(
+            status_code=400,
+            content={
+                "request_id": request_id_var.get(),
+                "code": code,
+                "message": "; ".join(details)[:1000],
+                "retryable": False,
+            },
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(_: Request, exc: Exception):
+        logger.exception(
+            "处理接口请求时发生未预期异常",
+            extra={"event": "http.unhandled_error"},
+            exc_info=exc,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "request_id": request_id_var.get(),
+                "code": "INTERNAL_ERROR",
+                "message": "unexpected service error",
+                "retryable": True,
+            },
+        )
+
+    return app
+
+
+def __getattr__(name: str):
+    # 生产 compose 以 aaw_telemetry.main:app 作为 uvicorn 入口；改为惰性构建，
+    # 其余场景（测试、local_demo 等）import 本模块时不再多建一个默认实例。
+    if name == "app":
+        return create_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

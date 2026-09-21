@@ -1,0 +1,261 @@
+version: 3
+
+entrypoints:
+  sr:
+    start: sr-init
+    vars: [SR]
+  ar:
+    start: ar-init
+    vars: [SR, AR, 描述]
+  dev:
+    start: dev-init
+    vars: [SR]
+
+edges:
+  sr-init:
+    kind: direct
+    to: sr-design
+    user_confirm: skip
+
+  sr-design:
+    kind: direct
+    to: sr-design-gate
+    user_confirm: skip
+
+  sr-design-gate:
+    kind: choice
+    choices:
+      - when: data.gate_result == 'pass'
+        to: ar-split
+        user_confirm: skip
+    reject:
+      - when: data.gate_result == 'fail'
+        message: "SR 设计门禁不通过，不能进入 ar-split；请根据门禁结果修正 SR-design.md 后重新执行 sr-design-gate。不要自动 rollback。"
+      - when: data.gate_result == 'blocked'
+        message: "SR 设计门禁阻塞，不能进入 ar-split；请补齐门禁结果中列出的必要输入或用户决策后重新执行。不要自动 rollback。"
+    data_schema:
+      description: "提交 SR 设计门禁结论；只有 gate_result=pass 会进入 ar-split。"
+      fields:
+        gate_result:
+          description: "通过填 pass；不通过填 fail；阻塞填 blocked。"
+          example: pass
+        recommendation:
+          description: "门禁建议。"
+          example: "可进入 AR 拆分"
+        report:
+          description: "门禁结果文件路径；每轮检查都必须生成或更新报告，不得填 null。"
+          example: ".sdd/SR-001/SR-design-gate.md"
+        summary:
+          description: "门禁紧凑统计；必须与本轮报告和最终结论一致。"
+          example:
+            unqualified_dimensions: 0
+            p0_conflicts: 0
+            p1_conflicts: 0
+            p2_findings: 0
+            pending_questions: 0
+            blocking_issues: 0
+
+  ar-init:
+    kind: direct
+    to: ar-clarify
+    user_confirm: skip
+
+  ar-split:
+    kind: choice
+    choices:
+      - when: data.ars
+        to: ar-clarify
+        user_confirm: skip
+        foreach: data.ars
+        vars:
+          AR: "{item.id}"
+          描述: "{item.title}"
+      - when: data.mode == 'no_split'
+        to: module-boundary-design
+        user_confirm: skip
+        vars:
+          AR: "ALL"
+          描述: "SR整体"
+    data_schema:
+      description: "询问用户是否拆分 AR，两种方式二选一"
+      fields:
+        ars:
+          description: "拆分 AR 时使用。id 是稳定目录标识，title 是可读标题。"
+          example: [{id: AR-001, title: 用户管理}]
+        mode:
+          description: "不拆分时使用，固定填 no_split。"
+          example: no_split
+
+  ar-clarify:
+    kind: direct
+    to: module-boundary-design
+    user_confirm: must
+
+  module-boundary-design:
+    kind: direct
+    to: module-detail-design-split
+    user_confirm: skip
+
+  module-detail-design-split:
+    kind: foreach
+    to: module-asis-analysis
+    user_confirm: skip
+    foreach: data.module_groups
+    item_validation:
+      field: name
+      required: true
+      type: string
+      max_length: 40
+      path_component: true
+      match_pattern: "模块(组)?$"
+      unique: true
+      message: "模块或模块组目录名必须唯一、长度不超过 40 个字符，且不能包含路径非法字符、首尾空格、尾部句点或 Windows 保留名。"
+    vars:
+      模块组名: "{item.name}"
+      需求短名: "{item.requirement}"
+    data_schema:
+      description: "根据 boundary-design 分析结果，将受影响模块划分为若干组"
+      fields:
+        module_groups:
+          description: "模块分组列表。每组 2-4 个模块，一起做详细设计；name 是同一 AR 内唯一的模块或模块组目录名，使用中文短名并以“模块”或“模块组”结尾，最长 40 个字符。"
+          example:
+            - name: "用户与权限模块组"
+              modules: ["模块A", "模块B"]
+              requirement: "用户管理"
+
+  module-asis-analysis:
+    kind: direct
+    to: module-tobe-design
+    user_confirm: skip
+
+  module-tobe-design:
+    kind: direct
+    to: module-test-design
+    user_confirm: skip
+
+  module-test-design:
+    kind: direct
+    to: module-design-gate
+    user_confirm: skip
+
+  module-design-gate:
+    kind: choice
+    choices:
+      - when: data.gate_result == 'pass'
+        to: task-split
+        user_confirm: skip
+    reject:
+      - when: data.gate_result == 'fail'
+        message: "门禁不通过，不能进入 task-split；请根据门禁结果原地修正 ASIS/TOBE/测试设计后重新执行 gate。只有用户明确要求重走上游节点，或已生成需要废弃的下游 step 时，才执行 rollback。"
+      - when: data.gate_result == 'blocked'
+        message: "门禁阻塞，不能进入 task-split；请补齐门禁结果中列出的必要输入后重新执行 gate。不要自动 rollback。"
+    data_schema:
+      description: "提交模块设计门禁结论；只有 gate_result=pass 会推进到 task-split。"
+      fields:
+        gate_result:
+          description: "门禁结论。通过填 pass；不通过填 fail；阻塞填 blocked。"
+          example: pass
+        recommendation:
+          description: "门禁建议，例如 可进入 AICoding / 回 TOBE 补设计后重试 / 阻塞，缺少必要输入。"
+          example: "可进入 AICoding"
+        report:
+          description: "门禁结果摘要或门禁结果文件路径。"
+          example: ".sdd/SR-001/AR-001/用户模块/.context/模块设计门禁结果.md"
+
+  task-split:
+    kind: foreach
+    to: task-dev
+    scheduling: serial
+    user_confirm: must
+    foreach: data.tasks
+    item_validation:
+      reject_pattern: "^T\\d+-"
+      message: "tasks 列表项不要包含 T1-/T2- 前缀，只填写任务标题。"
+    vars:
+      序号: "{index}"
+      任务标题: "{item}"
+    data_schema:
+      description: "从 task-split 生成的 tasks-overview.md 任务计划表中提取任务列表"
+      fields:
+        tasks:
+          description: "任务标题列表，每个任务对应一个独立开发单元；不要包含 T1-/T2- 前缀或 .md 后缀。"
+          example: ["用户CRUD", "权限校验"]
+
+  task-dev:
+    kind: terminal
+    user_confirm: skip
+
+  # ---------------------------------------------------------------------------
+  # dev 入口（个人开发者轻量链路）
+  # dev-init -> dev-design -> dev-test-design -> dev-design-gate -> dev-task-split -> dev-task-dev
+  # 与 sr/ar 入口完全并行，成果物扁平落在 .sdd/{SR}/ 下，产出
+  # dev-design.md、test-design.md、tasks-overview.md 三份主文档 + .context/ 下的门禁审计。
+  # ---------------------------------------------------------------------------
+
+  dev-init:
+    kind: direct
+    to: dev-design
+    user_confirm: skip
+
+  dev-design:
+    kind: direct
+    to: dev-test-design
+    user_confirm: skip
+
+  dev-test-design:
+    kind: direct
+    to: dev-design-gate
+    user_confirm: skip
+
+  dev-design-gate:
+    kind: choice
+    choices:
+      - when: data.gate_result == 'pass'
+        to: dev-task-split
+        user_confirm: skip
+    reject:
+      - when: data.gate_result == 'fail'
+        message: "轻量设计门禁不通过，不能进入 dev-task-split；请按门禁结果修正 dev-design.md 或 test-design.md 后重新执行 dev-design-gate。不要自动 rollback。"
+      - when: data.gate_result == 'blocked'
+        message: "轻量设计门禁阻塞，不能进入 dev-task-split；请补齐门禁结果中列出的必要输入或用户决策后重新执行。不要自动 rollback。"
+    data_schema:
+      description: "提交轻量设计门禁结论；只有 gate_result=pass 会进入 dev-task-split。"
+      fields:
+        gate_result:
+          description: "通过填 pass；不通过填 fail；阻塞填 blocked。"
+          example: pass
+        recommendation:
+          description: "门禁建议。"
+          example: "可进入任务拆分"
+        report:
+          description: "门禁结果文件路径；每轮检查都必须生成或更新报告，不得填 null。"
+          example: ".sdd/SR-001/.context/dev-design-gate.md"
+        summary:
+          description: "门禁紧凑统计；必须与本轮报告和最终结论一致。"
+          example:
+            unqualified_items: 0
+            blocking_issues: 0
+            pending_questions: 0
+
+  dev-task-split:
+    kind: foreach
+    to: dev-task-dev
+    scheduling: serial
+    user_confirm: must
+    foreach: data.tasks
+    item_validation:
+      reject_pattern: "^T\\d+-"
+      message: "tasks 列表项不要包含 T1-/T2- 前缀，只填写任务标题。"
+    vars:
+      序号: "{index}"
+      任务标题: "{item}"
+    data_schema:
+      description: "从 dev-task-split 生成的 tasks-overview.md 任务计划表中提取任务列表"
+      fields:
+        tasks:
+          description: "任务标题列表，每个任务对应一个独立开发单元；不要包含 T1-/T2- 前缀或 .md 后缀。"
+          example: ["用户CRUD", "权限校验"]
+
+  dev-task-dev:
+    kind: terminal
+    user_confirm: skip

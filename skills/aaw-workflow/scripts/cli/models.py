@@ -1,0 +1,257 @@
+"""Workflow data models and generic --data parsing."""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+def normalize_io_item(item: Any, default_kind: str = "input") -> dict[str, Any]:
+    """Normalize legacy string IO and structured IO into one dict shape."""
+    if isinstance(item, dict):
+        result = dict(item)
+    else:
+        value = str(item)
+        if default_kind == "output" or value.startswith(".sdd"):
+            result = {"path": value}
+        else:
+            result = {"value": value}
+
+    if "path" in result:
+        result.setdefault("required", True)
+    return result
+
+
+def normalize_io(items: list[Any] | None, default_kind: str = "input") -> list[dict[str, Any]]:
+    return [normalize_io_item(item, default_kind) for item in (items or [])]
+
+
+def normalize_skill(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+# ---------------------------------------------------------------------------
+# Step
+# ---------------------------------------------------------------------------
+
+# Fields persisted for every step.  Everything else on ``Step`` is derived
+# from the node template plus ``vars`` and is rehydrated on load, so the state
+# file records what happened at runtime rather than a copy of the definition.
+#
+# ``vars`` stays persisted because it captures runtime values that came from
+# ``--data`` (a foreach item title, its index, ...) and cannot be re-derived.
+# ``output`` and ``data_schema`` stay persisted because rollback deletes the
+# artifacts recorded on a step and ``done`` validates against the schema the
+# step was created with; deriving those from a changed definition would alter
+# which files get deleted and which payloads are accepted.
+_PERSISTED_STEP_FIELDS = (
+    "id",
+    "type",
+    "finished",
+    "execution_status",
+    "attempt",
+    "started_at",
+    "ended_at",
+    "output",
+    "data_schema",
+    "vars",
+    "depends_on",
+    "next",
+    "result_data",
+)
+
+
+@dataclass
+class Step:
+    id: int
+    type: str
+    name: str
+    finished: bool = False
+    execution_status: str = "ready"
+    attempt: int = 1
+    started_at: str | None = None
+    ended_at: str | None = None
+    execution: str = "noop"
+    session: str = "inherit"
+    skill: list[str] = field(default_factory=list)
+    prompt: dict[str, Any] | None = None
+    data_prompt: dict[str, Any] | None = None
+    input: list[dict[str, Any]] = field(default_factory=list)
+    output: list[dict[str, Any]] = field(default_factory=list)
+    available_next: list[str] = field(default_factory=list)
+    data_schema: dict[str, Any] | None = None
+    vars: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[int] = field(default_factory=list)
+    next: list[int] = field(default_factory=list)
+    result_data: dict[str, Any] | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Step":
+        """Read a step from disk.
+
+        Lenient by design: a slim state file omits every template-derived
+        field (the manager rehydrates them after load), and an older file
+        still carries them.  Both must read without error.
+        """
+        skill = normalize_skill(data.get("skill"))
+        prompt = data.get("prompt")
+        if isinstance(prompt, str):
+            prompt = {"inline": prompt, "rendered": prompt}
+        execution = data.get("execution") or _infer_execution(skill, prompt)
+        return cls(
+            id=data["id"],
+            type=data["type"],
+            name=data.get("name") or data["type"],
+            finished=data.get("finished", False),
+            execution_status=data.get("execution_status", "completed" if data.get("finished", False) else "ready"),
+            attempt=data.get("attempt", 1),
+            started_at=data.get("started_at"),
+            ended_at=data.get("ended_at"),
+            execution=execution,
+            session=data.get("session", "inherit"),
+            skill=skill,
+            prompt=prompt,
+            data_prompt=data.get("data_prompt"),
+            input=normalize_io(data.get("input"), "input"),
+            output=normalize_io(data.get("output"), "output"),
+            available_next=data.get("available_next", []),
+            data_schema=data.get("data_schema"),
+            vars=data.get("vars", {}),
+            depends_on=data.get("depends_on", []),
+            next=data.get("next", []),
+            result_data=data.get("result_data"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize only what runtime produced; the rest is rehydrated from
+        the node template on load (see ``_PERSISTED_STEP_FIELDS``)."""
+        data: dict[str, Any] = {"id": self.id, "type": self.type}
+        for name in _PERSISTED_STEP_FIELDS:
+            if name in ("id", "type"):
+                continue
+            value = getattr(self, name)
+            if value is None or value is False or value == [] or value == {}:
+                continue
+            data[name] = value
+        return data
+
+
+def _infer_execution(skill: list[str], prompt: dict[str, Any] | None) -> str:
+    if skill:
+        return "skill"
+    if prompt:
+        return "prompt"
+    return "noop"
+
+
+# ---------------------------------------------------------------------------
+# Workflow (workflow.yaml)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Workflow:
+    sr: str
+    workflow_id: str = ""
+    entry: str = "sr"
+    status: str = "in_progress"
+    created_at: str = ""
+    vars: dict[str, Any] = field(default_factory=dict)
+    steps: list[Step] = field(default_factory=list)
+    pending_user_confirm: dict[str, Any] | None = None
+    # Definition version this workflow was created against.  ``None`` marks a
+    # file written before version binding existed, where drift is unknowable.
+    definition_version: int | None = None
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> "Workflow":
+        data = yaml.safe_load(path.read_text("utf-8")) or {}
+        steps = [Step.from_dict(s) for s in data.get("steps", [])]
+        vars_ = data.get("vars") or {}
+        vars_.setdefault("SR", data["sr"])
+        return cls(
+            sr=data["sr"],
+            workflow_id=data.get("workflow_id", ""),
+            entry=data.get("entry", "sr"),
+            status=data.get("status", "in_progress"),
+            created_at=data.get("created_at", ""),
+            vars=vars_,
+            steps=steps,
+            pending_user_confirm=data.get("pending_user_confirm"),
+            definition_version=data.get("definition_version"),
+        )
+
+    def to_yaml(self, path: Path) -> None:
+        d: dict[str, Any] = {
+            "sr": self.sr,
+            "workflow_id": self.workflow_id,
+            "entry": self.entry,
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+        if self.definition_version is not None:
+            d["definition_version"] = self.definition_version
+        d["vars"] = self.vars
+        d["steps"] = [s.to_dict() for s in self.steps]
+        if self.pending_user_confirm is not None:
+            d["pending_user_confirm"] = self.pending_user_confirm
+        # Atomic write: an interrupted save must never leave a truncated
+        # workflow.yaml behind.  Matches the tmp+replace discipline already used
+        # by task_dev.py, update.py and runtime_logging.py.
+        text = yaml.dump(d, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + f".tmp-{os.getpid()}")
+        try:
+            temporary.write_text(text, "utf-8")
+            os.replace(temporary, path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    def get_step(self, step_id: int) -> Step | None:
+        for s in self.steps:
+            if s.id == step_id:
+                return s
+        return None
+
+    def _max_id(self) -> int:
+        return max((s.id for s in self.steps), default=0)
+
+    def next_id(self) -> int:
+        return self._max_id() + 1
+
+    def all_finished(self) -> bool:
+        return all(s.finished for s in self.steps)
+
+
+# ---------------------------------------------------------------------------
+# --data parsing
+# ---------------------------------------------------------------------------
+
+def parse_data(raw: str | None) -> dict[str, Any]:
+    """Parse --data JSON string. Raises on missing or malformed input."""
+    if not raw:
+        raise DataError("缺少 --data 参数")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise DataError(f"--data JSON 解析失败: {e}")
+    if not isinstance(data, dict):
+        raise DataError("--data 必须是 JSON object")
+    return data
+
+
+class DataError(Exception):
+    pass
+
+
+class WorkflowError(Exception):
+    pass

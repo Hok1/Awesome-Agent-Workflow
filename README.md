@@ -1,6 +1,6 @@
 # Awesome-Agent-Workflow (AAW)
 
-**AAW** 是一套**基于 AI Agent 的软件研发工作流体系**，将 AI 编码助手的能力通过 10 个严格阶段化技能串联成一条可追溯、可审查、可落地的完整研发管道——从需求设计到任务拆分再到代码实现，每一个决策都有据可查，每一个变更都有章可循。
+**AAW** 是一套**基于 AI Agent 的软件研发工具集**：以阶段化技能串联从需求设计到代码实现的完整研发管道，并提供深度研究、Mermaid 绘图和正式文档写作三个独立通用 Skill。
 
 ## 核心理念
 
@@ -54,13 +54,24 @@ flowchart TD
 | 1 | `sr-design` | 通过决策树式问答引导用户完成系统需求设计 | `SR-design.md` |
 | 2 | `ar-clarify` | 从 SR 提取单个 AR 的需求范围，结合代码实际做差距分析 | `AR-clarify.md` |
 | 3 | `module-boundary-design` | 识别受影响模块，定义模块边界、职责、交互序列，对抗审查 | 模块边界设计文档 |
-| 4 | `module-detail-design-split` | 将受影响模块按耦合度拆分为设计组 (2-4 个模块/组) | 修订 `workflow.md` |
-| 5 | `module-asis-analysis` | 逆向分析现有代码，建立事实索引 (E1, E2...)，仅写入 `.context.md` | 上下文分析文档 |
+| 4 | `module-detail-design-split` | 将受影响模块按耦合度拆分为设计组 (2-4 个模块/组) | 设计组划分 |
+| 5 | `module-asis-analysis` | 逆向分析现有代码，建立事实索引 (E1, E2...)，仅写入模块目录下的 `.context/详细设计上下文.md` | 上下文分析文档 |
 | 6 | `module-tobe-design` | **唯一可编辑正式规格文档的阶段**，基于 AS-IS 证据进行目标态设计 | 9 章模块详细设计 |
 | 7 | `module-test-design` | 按「最小充分验证集」理念设计测试用例 (P0/P1/P2) | 独立测试设计文档 |
 | 8 | `module-design-gate` | 7 维度严格质量评审：证据充分性、边界清晰度、决策终局性等 | Pass / Fail / Blocked |
-| 9 | `task-split` | 将已通过评审的 TO-BE 设计拆分为有序任务文件 (T1, T2, T3...) | `tasks/` 目录 + `overview.md` |
-| 10 | `task-dev` | 按序实现每个任务，执行测试用例，验证 DoD 检查清单 | 代码实现 + 任务总结 |
+| 9 | `task-split` | 将已通过评审的设计组织为薄任务计划；T1/T2 只作为调度标识 | `<模块或模块组>/tasks-overview.md` |
+| 10 | `task-dev` | 按计划逐任务读取权威详细设计和测试设计，完成实现、验证与执行记录 | 代码实现 + `tasks-overview.md` 执行记录 |
+
+## 独立通用 Skill
+
+以下 Skill 不参与工作流编排，可单独使用：
+
+| Skill | 用途 |
+|---|---|
+| `module-deep-research` | 对代码库或技术问题执行独立的深度研究 |
+| `code-check` | 调用配套 CLI 检查代码，修复低风险问题并升级高影响决策 |
+| `mermaid-diagram` | 选择并编写最小必要 Mermaid 图，通过内置编译器离线检查 `.mmd` 或 Markdown 中的图 |
+| `effective-document-writing` | 控制主线、术语和信息密度，清除黑话、空话、重复内容及对话过程痕迹 |
 
 ## 五大质量链条
 
@@ -104,7 +115,7 @@ flowchart TD
 
 3. **逐步推进**
 
-   每个阶段完成后，Agent 会更新 `workflow.md` 中的进度勾选框（✅/❌），你可以随时中断和恢复。
+   每个阶段完成后，Agent 通过 `aaw status / next / done` 推进流程，进度记录在 `.sdd/{SR}/workflow.yaml` 中，你可以随时中断和恢复。
 
 4. **质量门禁通过后编码**
 
@@ -118,6 +129,10 @@ Awesome-Agent-Workflow/
 ├── README.md
 └── skills/
     ├── aaw-workflow/            # 工作流编排器（主入口）
+    ├── module-deep-research/    # 独立深度研究
+    ├── code-check/              # 独立 CodeCheck 检查
+    ├── mermaid-diagram/         # 独立 Mermaid 绘图与编译验证
+    ├── effective-document-writing/  # 独立正式文档写作指导
     ├── repo-init/               # 仓库初始化
     ├── sr-design/               # 系统需求设计 + MCP 问答服务
     ├── ar-clarify/              # AR 需求范围澄清

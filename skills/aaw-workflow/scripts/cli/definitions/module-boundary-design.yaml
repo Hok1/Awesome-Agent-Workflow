@@ -1,0 +1,9 @@
+name: module-boundary-design
+execution: skill
+skill: [module-boundary-design]
+input:
+  - path: ".sdd/{SR}/SR-design.md"
+    required: false
+output:
+  - path: ".sdd/{SR}/{AR}/module-boundary-design.md"
+    required: true

@@ -1,8 +1,25 @@
 ---
 name: module-boundary-design
 description: 模块边界设计。基于已完成的功能设计（SR-design），识别受影响模块，逐模块定义边界（职责、上游依赖、下游暴露），绘制模块交互时序，并通过对抗式审查发现边界冲突（职责泄漏、循环依赖、边界破坏、重复能力）。输出 module-boundary-design.md。用于AAW工作流步骤3。Use when the user asks for 模块边界设计、module-boundary-design。
-version: 2.0
+version: "2.3.2.1"
 ---
+
+## 前置操作：工作流编排检查
+
+若本 skill 是由 aaw-workflow 的工作单调用的，跳过本节，直接执行正文。
+
+否则，在执行正文之前，先向用户发起一次二选一确认：
+
+> 是否回到 aaw-workflow 工作流中执行？
+> - 是，回到工作流（推荐）——进度会被跟踪和上报
+> - 否，单独执行本 skill——本次执行将不纳入流程跟踪
+
+- 用户选“是” → 加载 `aaw-workflow` skill，按其流程执行（其入口意图判定会引导继续已有工作流或新建），不再单独执行本 skill 正文。
+- 用户选“否” → 继续执行本 skill 正文，之后不再提及工作流。
+
+本节最多询问一次，不得重复打扰。
+
+若工作单输出已存在，仍按当前要求完整执行：先读取并评估已有成果，复用仍有效的信息和已确认答案，可局部修改或整体重写，并写回原路径。
 
 # Module Boundary Design
 
@@ -18,13 +35,44 @@ version: 2.0
 
 ## 问题管理工具
 
-你可使用以下 MCP 工具辅助管理问题状态：
+本 Skill 依赖 question-tracker MCP Server。可用工具：
 
-- `add_questions` – 批量添加待确认问题
-- `answer_question` – 记录用户答案，并返回是否需要分析新问题的指示
-- `update_answer` – 修改已记录问题的答案，用于用户纠正或补充
-- `get_status` – 查看所有问题及状态（含已回答问题的答案），用于回顾已知信息
-- `finalize_questions` – 检查所有问题是否已回答，并返回问答摘要
+| 工具 | session | 作用 |
+|---|---|---|
+| `create_session` | 必填 | 新建问题池（唯一建池入口；同名池已存在时幂等返回） |
+| `add_questions` | 必填 | 批量添加问题；池须已存在（先 `create_session` 建池） |
+| `answer_question` | 必填 | 记录用户答案 |
+| `update_answer` | 必填 | 修改已记录问题的答案 |
+| `get_status` | 必填 | 查看所有问题及状态（含已答答案） |
+| `finalize_questions` | 必填 | 闭环确认；ready 后该池自动归档 |
+| `reset_questions` | 必填 | 重置问题池 |
+| `list_sessions` | 不需要 | 列出当前项目下所有问题池（发现与审计入口） |
+| `reopen_session` | 必填 | 将已归档的池重开回活跃区 |
+| `delete_session` | 必填 | 删除活跃池（需 confirm: true） |
+| `cleanup_sessions` | 不需要 | 归档池受控清理（默认只列不删） |
+
+**MCP 错误处理**（任何错误都不得成为跳过问题池跟踪的理由）：
+
+| 错误类型 | 判定方式 | 处置 |
+|---|---|---|
+| 选池指引（非错误） | 结果含 `"action_required": "select_session"`（`reason` 为 `missing_session` 或 `session_not_found`） | 本次调用未执行。按 `guidance` 行动：能从 `available_sessions`/`archived_sessions` 确定目标 → 用正确池名重试；不能确定 → 将列表展示给用户，请用户选择使用哪个池、或决定用 `create_session` 新建。这是正常引导不是失败，不计入连续失败次数 |
+| 基础设施故障 | 工具不存在、未注册或连接失败 | 暂停流程，提示用户参照 `skills/question-tracker-mcp/INSTALL.md` 完成注册/修复并重启后重试；用户无法或不修复时，此类失败同样计入连续失败次数，满 3 次按下方「连续失败降级」执行 |
+| `invalid_session` | 工具结果含 `"error": "invalid_session"` | 宿主参数封装异常（session 不是字符串），与"池不存在"无关——**不得新建池**，原样重试；仍失败则提示用户在 MCP 配置 env 中设 `QUESTION_TRACKER_DEBUG=1` 并重启宿主取证（日志位置见 INSTALL.md §4.1）。计入连续失败次数 |
+| 参数校验错误 | 工具结果含其他 `"error"` 文案（如池名含 `:`、`/`） | 按错误文案修正参数后重试；反复失败计入连续失败次数 |
+
+工具返回 `isError` 或结果中含 `"error"` 字段即视为失败调用，含 `"action_required"` 为选池指引：两者都必须先按上表处置，严禁静默跳过问题池、退化为纯对话提问。
+
+**连续失败降级**：任意 MCP 调用（含上表所有错误类型）按上表处置后仍连续失败满 3 次，停止重试，向用户明确声明一次："问题池 MCP 持续不可用（连续失败 {N} 次），本次改为在对话上下文中维护问题清单，不再写入问题池。"此后按既有提问流程继续：问题、答案与矛盾比对均基于对话上下文维护。降级生效后不再调用任何问题池工具——包括取问题用的 `get_status`、收尾的一致性校验与 `finalize_questions`——收尾改为对话内输出完整问答汇总供用户核对。降级必须显式声明、每个会话只声明一次——未声明即脱离问题池仍属违规。注意：上下文压缩可能丢失早期问答细节，生成文档前应就关键决策请用户复核。
+
+### 问题池调用纪律
+
+1. **session 必填**：所有池操作必须传 session。忘记池名时先 `list_sessions`，不得随意起名另开新池。
+2. **命名规范**：`<工作单元编号>-<语义关键词>`。编号精确索引（如 `sr001`、`sr001-ar002`），关键词帮助失忆后的 AI 从列表中联想找回。
+3. **list-first**：启动时先 `list_sessions` 检查目标池是否存在，存在则续用，不存在再 `create_session` 新建。
+4. **无法确定时问人**：任何时刻凭语义无法唯一确定目标池——启动选池、收到选池指引后的恢复、上下文压缩后池名不确定——不得猜测，必须将 `list_sessions` 的结果展示给用户，请用户指定。
+5. **池名不含敏感信息**：同一 project 下池名对所有调用方可见，不得包含密码、密钥、个人隐私。
+
+本 Skill 的问题池使用与本 AR 的 ar-clarify **完全相同的 session 名**（`{SR编号}-{AR编号}-<语义关键词>`）。同 AR 的澄清决策与边界冲突问题记录在同一池中，该 AR 的全部决策轨迹集中可追溯。
 
 ## 工作流执行流程
 
@@ -36,12 +84,33 @@ version: 2.0
 
 1. 明确当前工作目录
 2. 确认 `SR-design.md` 存在（必须。上一步 SR 设计已保证）
-3. 确认 `AR-clarify.md` 是否存在（可选，存在时优先以其为准）
+3. 确认 `AR-clarify.md` 是否存在：
+   - **存在** → 当前为 **AR 模式**，输出路径为 `./.sdd/{SR}/{AR}/module-boundary-design.md`（与 AR-clarify.md 同目录），功能设计以 AR-clarify.md 为准
+   - **不存在** → 当前为 **SR 模式（免拆分）**，功能设计以 SR-design.md 为准；若由 `aaw-workflow` 编排调用，输出路径以工作单 `output` 为准，当前临时约定为 `./.sdd/{SR}/ALL/module-boundary-design.md`
 4. 确认 `.sdd/software_architecture.md` 存在（必须，获取模块定义和现有依赖关系）
 
 向用户确认以当前工作目录继续，告知用户将基于以下文档：
-- 功能设计：`SR-design.md`（或 `AR-clarify.md`，如果存在）
+- 功能设计：`SR-design.md`（SR 模式）或 `AR-clarify.md`（AR 模式）
 - 架构参考：`.sdd/software_architecture.md`
+
+---
+
+### 步骤 1.5: 问题池准备
+
+根据输入模式确定问题池并使其处于活跃状态：
+
+**AR 模式（经过 ar-clarify）**：
+
+1. 池名前缀：`{SR编号}-{AR编号}-`（ar-clarify 建池时追加的语义关键词由它自行归纳，本 skill 不得假设一致）。
+2. 调用 `list_sessions`（`include_archived: true`），按该**前缀**（非全名精确匹配）定位本 AR 的池：
+   - **唯一命中且在归档区**（`{前缀}<关键词>-<日期后缀>`，说明 ar-clarify 已 finalize）→ 调用 `reopen_session`（`session: <含日期后缀的归档名>`）将池重开回活跃区，该 AR 的澄清决策全部恢复可见（reopen 返回的 `reopened` 字段即为后续使用的活跃池名）；
+   - **唯一命中且在活跃区**（说明 ar-clarify 异常中断、未 finalize）→ 直接使用，调用 `get_status`（`session: <池名>`）加载既有内容；
+   - **多个候选命中** → 将候选列表展示给用户，请用户指定，不得自行猜测；
+   - **无命中**（ar-clarify 未执行过）→ 调用 `create_session`（`session: {SR编号}-{AR编号}-<语义关键词>`）建池并确认成功返回，否则不得开始提问。
+
+**SR 模式（免拆分，AR=ALL，不经过 ar-clarify）**：
+
+- 池名：`{SR编号}-ALL-<语义关键词>`；无需 reopen，调用 `create_session` 建池（幂等，`created:false` 即续用）并确认成功返回，否则不得开始提问。
 
 ---
 
@@ -51,7 +120,8 @@ version: 2.0
 
 ```
 **拷贝模板：**
-拷贝`<skill-dir>/references/module-boundary-design-template.md` 到 `<当前工作目录>/module-boundary-design.md`
+- AR 模式：拷贝`<skill-dir>/references/module-boundary-design-template.md` 到 `./.sdd/{SR}/{AR}/module-boundary-design.md`
+- SR 模式（免拆分）：若由 `aaw-workflow` 编排调用，拷贝到工作单 `output` 指定路径，当前临时约定为 `./.sdd/{SR}/ALL/module-boundary-design.md`；非编排场景可使用 `./.sdd/{SR}/module-boundary-design.md`
 
 请读取以下文件完成模块边界设计：
 
@@ -220,14 +290,14 @@ version: 2.0
 - 假设原始文档完全错误，需重新验证每一个结论
 - 必须探索代码实现来验证边界定义的准确性
 - 审查后不能包含`可能、有概率、应该`等不明确的语言
-- 请使用问题管理工具`add_question`添加问题
+- 请使用问题管理工具 `add_questions` 添加问题（`session` 必须使用步骤 1.5 确定的池名——主 agent 在派发本提示词时将其填入此处：<池名>）
 ```
 
 ---
 
 ### 步骤 4: 使用问题管理工具闭环问题
 
-使用**问题管理工具**逐个引导用户回答步骤 3 中发现的所有问题，并闭环问题刷新文档。
+使用**问题管理工具**逐个引导用户回答步骤 3 中发现的所有问题，并闭环问题刷新文档。闭环过程中的所有问题管理工具调用（`add_questions` / `answer_question` / `update_answer` / `get_status` / `finalize_questions`）均携带步骤 1.5 确定的 `session` 参数。`finalize_questions` 返回 ready 后问题池自动归档至 `.archive/`；若后续需修改已归档的答案，使用 `reopen_session` 重开该池后再 `update_answer`。
 
 问题闭环后，汇总关键发现：
 
@@ -255,4 +325,15 @@ version: 2.0
 
 向用户展示最终的 `module-boundary-design.md` 内容，请用户确认。
 
-判断当前工作目录下是否存在 `workflow.md`，若存在，则询问用户是否标记工作目录下模块边界设计为完成。
+## 完成后回调
+
+> 若不处于 aaw-workflow 编排中，请忽略此节。
+
+本 skill 由 `aaw-workflow` 编排调用。交付件生成后：
+
+1. 返回 aaw-workflow 流程
+2. 执行 `aaw next --sr <SR号> --json` 查看进度
+3. 若返回 `deliverables_exist: true` → 直接 `aaw done --sr <SR> <id>`
+4. 否则 → 停止；是否放行下一步由 `aaw-workflow` 的 `user_confirm` 策略控制
+
+不记得 SR 号 → 先 `aaw status --json`

@@ -1,0 +1,639 @@
+/* ═══════════════════════════════════════════════════════════
+   mock-data.js
+   Contract-faithful mock backend for the dashboard.
+   产出与 RealApi 相同的页面内部形状 { code:0, data:{ summary,
+   byComponent, byPerson, trend } }，用于 useMock=true 的本地预览。
+   Deterministic (seeded) so numbers stay stable across renders
+   yet respond to component / person / timeRange filters.
+   ═══════════════════════════════════════════════════════════ */
+(function (global) {
+  "use strict";
+
+  // 头部组件用真实感名称，其余批量生成 —— 用于模拟 100+ 组件的真实规模。
+  const COMPONENT_SEEDS = [
+    "代码生成服务", "智能补全", "代码评审助手", "单元测试生成", "重构建议",
+    "注释与文档", "缺陷定位",
+  ];
+  const COMPONENT_DOMAINS = ["订单", "支付", "库存", "风控", "网关", "消息", "结算", "用户", "搜索", "推荐", "日志", "调度"];
+  const COMPONENT_KINDS = ["服务", "中台", "引擎", "适配层", "控制台", "SDK", "代理", "面板"];
+  const COMPONENTS = [
+    ...COMPONENT_SEEDS.map((name, i) => ({ id: `comp-${String(i + 1).padStart(2, "0")}`, name })),
+    ...Array.from({ length: 110 }, (_, i) => ({
+      id: `comp-${String(i + 8).padStart(3, "0")}`,
+      name: `${COMPONENT_DOMAINS[i % COMPONENT_DOMAINS.length]}${COMPONENT_KINDS[Math.floor(i / COMPONENT_DOMAINS.length) % COMPONENT_KINDS.length]}-${String(i + 1).padStart(2, "0")}`,
+    })),
+  ];
+
+  const PERSONS = [
+    { id: "user-001", name: "张三" },
+    { id: "user-002", name: "李四" },
+    { id: "user-003", name: "王五" },
+    { id: "user-004", name: "赵六" },
+    { id: "user-005", name: "钱七" },
+    { id: "user-006", name: "孙八" },
+    { id: "user-007", name: "周九" },
+    { id: "user-008", name: "吴十" },
+  ];
+
+  const TIME_RANGES = [
+    { value: "1d",   label: "1天" },
+    { value: "3d",   label: "3天" },
+    { value: "7d",   label: "7天" },
+    { value: "30d",  label: "30天" },
+    { value: "60d",  label: "60天" },
+    { value: "90d",  label: "90天" },
+    { value: "180d", label: "半年" },
+    { value: "365d", label: "一年" },
+  ];
+
+  const RANGE_DAYS = { "1d":1, "3d":3, "7d":7, "30d":30, "60d":60, "90d":90, "180d":180, "365d":365 };
+
+  // AAW 工作流步骤目录 — 与 skills/aaw-workflow/scripts/cli/definitions/ 下的
+  // 节点 yaml（step_type = 文件名）及 flow.yaml 的边顺序保持一致。
+  // 展示名直接使用 step_type 原始值，与真实后端契约一致（后端不返回显示名）。
+  // sr-design-gate 与 module-design-gate 均为 choice 门禁；fail/blocked 原地拒绝。
+  // flow = 到达量相对每周 SR 流入的量级系数，按"上游完成量 ≥ 下游到达量"逐级递推。
+  // 工作流不是单调漏斗：ar-split(foreach ars)、module-detail-design-split(foreach
+  // module_groups)、task-split(foreach tasks) 三条 foreach 边会放大下游步骤数。
+  const STEP_TYPES = [
+    { key: "sr-init",                    flow: 1.0,  isGate: false },
+    { key: "sr-design",                  flow: 0.9,  isGate: false },
+    { key: "sr-design-gate",             flow: 0.85, isGate: true  },
+    { key: "ar-split",                   flow: 0.72, isGate: false }, // SR Gate 卡掉一部分
+    { key: "ar-init",                    flow: 0.35, isGate: false }, // 独立 AR 入口，量较少
+    { key: "ar-clarify",                 flow: 2.5,  isGate: false }, // ar-split×3(foreach ars) + ar-init 汇入
+    { key: "module-boundary-design",     flow: 2.25, isGate: false },
+    { key: "module-detail-design-split", flow: 2.0,  isGate: false },
+    { key: "module-asis-analysis",       flow: 3.6,  isGate: false }, // ×2(foreach module_groups)
+    { key: "module-tobe-design",         flow: 3.25, isGate: false },
+    { key: "module-test-design",         flow: 2.9,  isGate: false },
+    { key: "module-design-gate",         flow: 2.6,  isGate: true  },
+    { key: "task-split",                 flow: 1.85, isGate: false }, // 门禁 fail/blocked 卡掉一部分
+    { key: "task-dev",                   flow: 6.7,  isGate: false }, // ×4(foreach tasks)
+  ];
+  // 工作流当前状态 → 活跃态映射，供明细列表使用。
+  const WF_STATES = ["active", "stalled", "completed"];
+
+  // deterministic hash → [0,1)
+  function seed(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+  const round = (n) => Math.round(n);
+  const rate  = (num, den) => den ? +(num / den).toFixed(3) : 0;
+
+  // per-entity baseline "throughput" per day, scaled by a stable factor.
+  // pop 取五次幂 → 重尾分布：少数头部组件贡献大部分产出，贴近真实遥测。
+  function dailyFor(entityId, kind) {
+    const pop = Math.pow(seed(entityId + kind), 5);
+    const base = 2 + Math.floor(pop * 2400);                        // usage/day
+    const linesPerUse = 24 + Math.floor(seed(entityId + "lp") * 30);
+    const quality80 = 0.62 + seed(entityId + "q80") * 0.20;         // 0.62–0.82
+    const quality60 = Math.max(quality80, 0.78 + seed(entityId + "q60") * 0.16);
+    const quality90 = quality80 - (0.06 + seed(entityId + "q90") * 0.08);
+    return { base, linesPerUse, quality60, quality80, quality90 };
+  }
+
+  function metricsFor(entityId, days, dayJitter) {
+    const p = dailyFor(entityId, "e");
+    const usage = round(p.base * days * dayJitter);
+    const generated = round(usage * p.linesPerUse);
+    const m60 = round(generated * p.quality60);
+    const m80 = round(generated * p.quality80);
+    const m90 = round(generated * p.quality90);
+    const mrCommit = Math.max(m60, round(generated * (1.08 + seed(entityId + "mr") * 0.22)));
+    return {
+      usageCount: usage,
+      generatedLines: generated,
+      mrCommitLines: mrCommit,
+      mergedLines60: m60,
+      mergedLines80: m80,
+      mergedLines90: m90,
+      adoptionRate60: rate(m60, mrCommit),
+      adoptionRate80: rate(m80, generated),
+      adoptionRate90: rate(m90, generated),
+    };
+  }
+
+  function accumulate(target, m) {
+    target.usageCount     += m.usageCount;
+    target.generatedLines += m.generatedLines;
+    target.mrCommitLines  += m.mrCommitLines;
+    target.mergedLines60  += m.mergedLines60;
+    target.mergedLines80  += m.mergedLines80;
+    target.mergedLines90  += m.mergedLines90;
+  }
+  function finalizeRates(t) {
+    t.adoptionRate60 = rate(t.mergedLines60, t.mrCommitLines);
+    t.adoptionRate80 = rate(t.mergedLines80, t.generatedLines);
+    t.adoptionRate90 = rate(t.mergedLines90, t.generatedLines);
+    return t;
+  }
+
+  function resolve(ids, all) {
+    if (!ids || !ids.length) return all;
+    const set = new Set(ids);
+    return all.filter((x) => set.has(x.id));
+  }
+
+  function paginate(items, page, pageSize) {
+    const size = Math.max(1, Number(pageSize) || 10);
+    const current = Math.max(1, Number(page) || 1);
+    const start = (current - 1) * size;
+    return {
+      items: items.slice(start, start + size),
+      total: items.length,
+      page: current,
+      pageSize: size,
+    };
+  }
+
+  function granularityFor(timeRange, requested) {
+    if (requested && requested !== "auto") return requested;
+    // 契约只有 day / week 两档：长周期用 week，其余 day。
+    return ["180d","365d"].includes(timeRange) ? "week" : "day";
+  }
+
+  function trendPoints(entities, timeRange, granularity) {
+    const days = RANGE_DAYS[timeRange];
+    let buckets, spanDays;
+    if (granularity === "week") { buckets = Math.max(4, Math.round(days / 7)); spanDays = 7; }
+    else { buckets = days; spanDays = 1; }               // day
+    buckets = Math.min(buckets, 90);
+
+    const now = new Date("2026-07-14T00:00:00");
+    const points = [];
+    for (let i = buckets - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i * (granularity === "week" ? 7 : 1));
+
+      const label = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+      const acc = { usageCount:0, generatedLines:0, mrCommitLines:0, mergedLines60:0, mergedLines80:0, mergedLines90:0 };
+      const jitter = 0.72 + seed(label + timeRange) * 0.56;   // 0.72–1.28 daily wobble
+      entities.forEach((e) => accumulate(acc, metricsFor(e.id, spanDays, jitter)));
+      finalizeRates(acc);
+      points.push({ date: label, ...acc });
+    }
+    return points;
+  }
+
+  // ── AI Master mock state ──────────────────────────────
+  // 内存里维护名单与归属，使增删改在 mock 模式下行为一致。
+  const AI_MASTERS = [
+    { id: "am-001", name: "张轶勃" },
+    { id: "am-002", name: "徐哲威" },
+    { id: "am-003", name: "宋东方" },
+  ];
+  const COMPONENT_MASTER_MAP = {};   // componentId -> masterId
+  // 预置若干组件归属，让 mock 运营视图有可看的内容。
+  COMPONENT_MASTER_MAP["comp-01"] = "am-001";
+  COMPONENT_MASTER_MAP["comp-02"] = "am-001";
+  COMPONENT_MASTER_MAP["comp-03"] = "am-001";
+  COMPONENT_MASTER_MAP["comp-04"] = "am-002";
+  COMPONENT_MASTER_MAP["comp-05"] = "am-002";
+  COMPONENT_MASTER_MAP["comp-06"] = "am-003";
+
+  // mock endpoints ────────────────────────────────────
+  const MockApi = {
+    filterOptions() {
+      return Promise.resolve({
+        code: 0, message: "ok",
+        data: { components: COMPONENTS, persons: PERSONS, timeRanges: TIME_RANGES },
+      });
+    },
+
+    statistics(params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const days = RANGE_DAYS[timeRange] || 7;
+      const comps = resolve(params.components, COMPONENTS);
+      const statisticsComps = comps.filter((c) => c.id !== "comp-03");
+      const persons = resolve(params.persons, PERSONS);
+      const granularity = granularityFor(timeRange, params.granularity);
+
+      // component distribution: split each component's total across selected persons
+      const personWeight = persons.reduce((s, p) => s + (0.5 + seed(p.id + "w")), 0);
+      const jitter = 1;
+
+      const byComponent = comps.map((c) => {
+        // component total scaled by how many persons are in scope
+        const share = personWeight / PERSONS.reduce((s,p)=>s+(0.5+seed(p.id+"w")),0);
+        const m = metricsFor(c.id, days, jitter);
+        const scaled = {
+          componentId: c.id, componentName: c.name,
+          usageCount: round(m.usageCount * share),
+          generatedLines: round(m.generatedLines * share),
+          mrCommitLines: round(m.mrCommitLines * share),
+          mergedLines60: round(m.mergedLines60 * share),
+          mergedLines80: round(m.mergedLines80 * share),
+          mergedLines90: round(m.mergedLines90 * share),
+        };
+        const row = finalizeRates(Object.assign(scaled, {
+          adoptionRate60: rate(scaled.mergedLines60, scaled.mrCommitLines),
+          adoptionRate80: rate(scaled.mergedLines80, scaled.generatedLines),
+          adoptionRate90: rate(scaled.mergedLines90, scaled.generatedLines),
+        }));
+        row.includedInStatistics = c.id !== "comp-03";
+        if (!row.includedInStatistics) {
+          row.adoptionRate60 = null;
+          row.adoptionRate80 = null;
+          row.adoptionRate90 = null;
+        }
+        return row;
+      });
+
+      const compWeight = statisticsComps.reduce((s,c)=>s+(0.5+seed(c.id+"cw")),0) /
+                         COMPONENTS.reduce((s,c)=>s+(0.5+seed(c.id+"cw")),0);
+      const byPerson = persons.map((p) => {
+        const m = metricsFor(p.id, days, jitter);
+        const scaled = {
+          personId: p.id, personName: p.name,
+          usageCount: round(m.usageCount * compWeight),
+          generatedLines: round(m.generatedLines * compWeight),
+          mrCommitLines: round(m.mrCommitLines * compWeight),
+          mergedLines60: round(m.mergedLines60 * compWeight),
+          mergedLines80: round(m.mergedLines80 * compWeight),
+          mergedLines90: round(m.mergedLines90 * compWeight),
+        };
+        return Object.assign(scaled, {
+          adoptionRate60: rate(scaled.mergedLines60, scaled.mrCommitLines),
+          adoptionRate80: rate(scaled.mergedLines80, scaled.generatedLines),
+          adoptionRate90: rate(scaled.mergedLines90, scaled.generatedLines),
+        });
+      });
+
+      const summary = { usageCount:0, generatedLines:0, mrCommitLines:0, mergedLines60:0, mergedLines80:0, mergedLines90:0 };
+      summary.usageCount = byComponent.reduce((sum, row) => sum + row.usageCount, 0);
+      byComponent.filter((row) => row.includedInStatistics).forEach((row) => {
+        summary.generatedLines += row.generatedLines;
+        summary.mrCommitLines += row.mrCommitLines;
+        summary.mergedLines60 += row.mergedLines60;
+        summary.mergedLines80 += row.mergedLines80;
+        summary.mergedLines90 += row.mergedLines90;
+      });
+      finalizeRates(summary);
+
+      // 组件构成：按生成代码量取 TOP 7，其余折叠（与 bright.js 的 TOP_COMPONENTS 对应）。
+      const ranked = byComponent
+        .filter((row) => row.includedInStatistics)
+        .sort((a, b) => b.generatedLines - a.generatedLines);
+      const topRows = ranked.slice(0, 7);
+      const composition = {
+        top: topRows,
+        totalCount: ranked.length,
+        othersCount: Math.max(0, ranked.length - topRows.length),
+        othersGenerated: ranked.slice(7).reduce((s, r) => s + r.generatedLines, 0),
+      };
+
+      const trend = trendPoints(statisticsComps, timeRange, granularity)
+        .map(({ date, ...rest }) => ({ date, ...rest }));
+
+      // 实时运营块：契约 overview 的 current + period 未展示字段。
+      const totalUsage = summary.usageCount || 1;
+      const completedWorkflows = round(totalUsage * (0.68 + seed(timeRange + "cw") * 0.22));
+      const devRuns = round(totalUsage * (1.2 + seed(timeRange + "dr") * 0.4));
+      const activeWorkflows = round(6 + seed(timeRange + comps.length + "aw") * 26);
+      const stalledWorkflows = round(seed(timeRange + comps.length + "sw") * 9);
+      const arEntryWorkflows = totalUsage
+        ? round(totalUsage * (0.24 + seed(timeRange + "ar-entry") * 0.18))
+        : 0;
+      const realtime = {
+        activeWorkflows,
+        stalledWorkflows,
+        activityThresholdHours: 24,
+        workflowRuns: summary.usageCount,
+        arEntryWorkflows,
+        srEntryWorkflows: Math.max(0, totalUsage - arEntryWorkflows),
+        completedWorkflows,
+        workflowCompletionRate: rate(completedWorkflows, summary.usageCount),
+        devRuns,
+        pendingAttributionDevRuns: round(devRuns * (0.04 + seed(timeRange + "pa") * 0.08)),
+        activeUsers: persons.length,
+        activeProjects: comps.length,
+      };
+      const componentPagination = paginate(byComponent, params.componentPage, params.componentPageSize);
+      const personPagination = paginate(byPerson, params.personPage, params.personPageSize);
+
+      return Promise.resolve({
+        code: 0, message: "ok",
+        data: {
+          summary,
+          byComponent: componentPagination.items,
+          byPerson: personPagination.items,
+          trend,
+          realtime,
+          composition,
+          componentPagination,
+          personPagination,
+        },
+      });
+    },
+
+    // 步骤汇总：固定按 step_type 聚合。
+    steps(params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const catalog = STEP_TYPES;
+      const days = RANGE_DAYS[timeRange] || 7;
+      const comps = resolve(params.components, COMPONENTS);
+      const scale = 0.6 + comps.length / COMPONENTS.length * 0.4;
+
+      // 抖动整条链共享：各步骤相对比例严格由 flow 系数决定，避免直连边上
+      // 出现"下游到达量 > 上游到达量"的倒挂。
+      const jitter = 0.85 + seed("steps" + timeRange) * 0.3;
+
+      const items = catalog.map((s) => {
+        // 到达量 = 每周 SR 流入基数 × 步骤量级系数（含 foreach 放大，见 STEP_TYPES 注释）。
+        const reached = round(40 * s.flow * (days / 7) * scale * jitter);
+        // 门禁按 choice 边原地拒绝，fail/blocked 显著高于普通步骤。
+        const failRate = s.isGate ? 0.05 + seed(s.key + "f") * 0.07 : 0.02 + seed(s.key + "f") * 0.04;
+        const blockRate = s.isGate ? 0.08 + seed(s.key + "b") * 0.08 : 0.01 + seed(s.key + "b") * 0.02;
+        const failed = round(reached * failRate);
+        const blocked = round(reached * blockRate);
+        const completed = Math.max(0, reached - failed - blocked);
+        const median = round(120 + seed(s.key + "md") * 640);
+        return {
+          key: s.key,
+          displayName: s.key,
+          reached,
+          completed,
+          failed,
+          blocked,
+          completionRate: rate(completed, reached),
+          medianDurationSeconds: median,
+          p90DurationSeconds: round(median * (1.8 + seed(s.key + "p9") * 1.2)),
+        };
+      });
+
+      const pagination = paginate(items, params.page, params.pageSize);
+      return Promise.resolve({ code: 0, message: "ok", data: pagination });
+    },
+
+    // 工作流明细列表（契约 §7.6）。state: active|stalled|completed。
+    workflows(params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const wantState = WF_STATES.includes(params.state) ? params.state : "active";
+      const comps = resolve(params.components, COMPONENTS);
+      const persons = resolve(params.persons, PERSONS);
+      const count = wantState === "completed" ? 24 : wantState === "stalled" ? 6 : 14;
+
+      const items = [];
+      for (let i = 0; i < count; i++) {
+        const c = comps[i % comps.length];
+        const p = persons[i % persons.length];
+        const s = seed(wantState + timeRange + i);
+        const step = STEP_TYPES[Math.min(STEP_TYPES.length - 1, Math.floor(s * STEP_TYPES.length))];
+        const gen = round(200 + seed("g" + i + timeRange) * 1400);
+        const isDone = wantState === "completed";
+        const started = new Date("2026-07-14T09:00:00");
+        started.setHours(started.getHours() - round(s * (isDone ? 240 : 60)) - i);
+        const lastAct = new Date(started);
+        lastAct.setHours(lastAct.getHours() + round(seed("la" + i) * (isDone ? 20 : 40)));
+        const rate80 = 0.5 + seed("r" + i) * 0.3;
+        items.push({
+          workflowRunId: `wf-${timeRange}-${wantState}-${String(i).padStart(3, "0")}`,
+          projectKey: c.id,
+          projectDisplayName: c.name,
+          gitUserEmail: p.id.includes("@") ? p.id : `${p.id}@company.com`,
+          gitUserName: p.name,
+          sr: `SR-${1000 + round(s * 8000)}`,
+          ar: `AR-${100 + round(seed("ar" + i) * 900)}`,
+          workflowType: i % 5 === 0 ? "unknown" : (i % 2 ? "ar" : "sr"),
+          status: isDone ? "completed" : "in_progress",
+          activityState: wantState,
+          furthestStepType: step.key,
+          furthestStepName: step.key,
+          startedAt: started.toISOString(),
+          lastActivityAt: lastAct.toISOString(),
+          devEffectiveLines: gen,
+          attributedLines80: round(gen * rate80),
+          attributedLines90: round(gen * (rate80 - 0.1)),
+        });
+      }
+      const pagination = paginate(items, params.page, params.pageSize);
+      return Promise.resolve({
+        code: 0,
+        message: "ok",
+        data: { state: wantState, ...pagination },
+      });
+    },
+
+    // 组件使用情况：全量组件 + 是否使用 AAW。约 55–60% 组件已使用，
+    // 未使用的生成代码量为 0、采纳率为 null；末尾恒定一条未归类行。
+    components(params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const comps = resolve(params.components, COMPONENTS);
+      const days = RANGE_DAYS[timeRange] || 7;
+      const sePool = ["张轶勃", "徐哲威", "宋东方", "张立肖", "孙杨宇鑫"];
+
+      const items = comps.map((c, i) => {
+        const used = seed("used" + c.id + timeRange) < 0.56;
+        const se = used ? sePool[i % sePool.length] : null;
+        let effectiveLines = 0;
+        let attributionRate80 = null;
+        if (used) {
+          effectiveLines = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+          attributionRate80 = rate(round(effectiveLines * 0.62), effectiveLines) + seed("ar" + c.id) * 0.2;
+        }
+        return {
+          componentId: c.id,
+          componentName: c.name,
+          se,
+          usedAaw: used,
+          effectiveLines,
+          attributionRate80,
+        };
+      });
+
+      items.push({
+        componentId: "__unassigned__",
+        componentName: "未归类组件",
+        se: null,
+        usedAaw: true,
+        effectiveLines: 430,
+        attributionRate80: 0,
+      });
+
+      const usedComponents = items.filter((r) => r.usedAaw).length;
+      return Promise.resolve({
+        code: 0,
+        message: "ok",
+        data: {
+          totalComponents: items.length,
+          usedComponents,
+          unassignedId: "__unassigned__",
+          items,
+        },
+      });
+    },
+
+    // ── AI Master 运营 ───────────────────────────────
+    aiMasters() {
+      return Promise.resolve({
+        code: 0,
+        message: "ok",
+        data: {
+          items: AI_MASTERS.map((m) => ({
+            id: m.id,
+            name: m.name,
+            componentCount: Object.values(COMPONENT_MASTER_MAP).filter((id) => id === m.id).length,
+          })),
+        },
+      });
+    },
+
+    assignments() {
+      return Promise.resolve({
+        code: 0,
+        message: "ok",
+        data: { assignments: Object.assign({}, COMPONENT_MASTER_MAP) },
+      });
+    },
+
+    // 档位：>=0.65 无要求；0.50~0.65 需3；<0.50 需5；null 无数据。
+    aiMasterOperations(params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const comps = resolve(params.components, COMPONENTS);
+      const days = RANGE_DAYS[timeRange] || 7;
+      const cards = AI_MASTERS.map((m) => {
+        const owned = comps.filter((c) => COMPONENT_MASTER_MAP[c.id] === m.id);
+        const counts = { none: 0, three: 0, five: 0, no_data: 0 };
+        const required = [];
+        owned.forEach((c) => {
+          const used = seed("used" + c.id + timeRange) < 0.56;
+          let val = null;
+          if (used) {
+            const effective = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+            val = rate(round(effective * 0.62), effective) + seed("ar" + c.id) * 0.2;
+          }
+          if (val == null) counts.no_data += 1;
+          else if (val >= 0.65) counts.none += 1;
+          else if (val >= 0.5) { counts.three += 1; required.push(val); }
+          else { counts.five += 1; required.push(val); }
+        });
+        return {
+          aiMasterId: m.id,
+          name: m.name,
+          totalComponents: owned.length,
+          tierCounts: counts,
+          lowestRequiredRate: required.length ? Math.min(...required) : null,
+        };
+      });
+      // 未分配卡
+      const unassigned = comps.filter((c) => !COMPONENT_MASTER_MAP[c.id]);
+      const uCounts = { none: 0, three: 0, five: 0, no_data: 0 };
+      unassigned.forEach((c) => {
+        const used = seed("used" + c.id + timeRange) < 0.56;
+        let val = null;
+        if (used) {
+          const effective = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+          val = rate(round(effective * 0.62), effective) + seed("ar" + c.id) * 0.2;
+        }
+        if (val == null) uCounts.no_data += 1;
+        else if (val >= 0.65) uCounts.none += 1;
+        else if (val >= 0.5) uCounts.three += 1;
+        else uCounts.five += 1;
+      });
+      if (unassigned.length) {
+        cards.push({
+          aiMasterId: null,
+          name: "未分配",
+          totalComponents: unassigned.length,
+          tierCounts: uCounts,
+          lowestRequiredRate: null,
+        });
+      }
+      return Promise.resolve({ code: 0, message: "ok", data: { items: cards } });
+    },
+
+    aiMasterDetail(id, params = {}) {
+      const timeRange = params.timeRange || "7d";
+      const name = (AI_MASTERS.find((m) => m.id === id) || {}).name || "";
+      const comps = resolve(params.components, COMPONENTS);
+      const days = RANGE_DAYS[timeRange] || 7;
+      const items = comps
+        .filter((c) => COMPONENT_MASTER_MAP[c.id] === id)
+        .map((c) => {
+          const used = seed("used" + c.id + timeRange) < 0.56;
+          let effective = 0;
+          let val = null;
+          if (used) {
+            effective = round(1200 + metricsFor(c.id, days, 1).generatedLines);
+            val = rate(round(effective * 0.62), effective) + seed("ar" + c.id) * 0.2;
+          }
+          const tier = val == null ? "no_data"
+            : val >= 0.65 ? "none"
+            : val >= 0.5 ? "three"
+            : "five";
+          return {
+            componentId: c.id,
+            componentName: c.name,
+            se: used ? (["张轶勃", "徐哲威", "宋东方", "张立肖", "孙杨宇鑫"][Math.abs(c.id.length) % 5]) : null,
+            usedAaw: used,
+            effectiveLines: effective,
+            attributionRate80: val,
+            tier,
+          };
+        });
+      return Promise.resolve({
+        code: 0, message: "ok",
+        data: { aiMasterId: id, name, items },
+      });
+    },
+
+    aiMasterCreate(name) {
+      const id = "am-" + String(AI_MASTERS.length + 1).padStart(3, "0");
+      AI_MASTERS.push({ id, name });
+      return Promise.resolve({ code: 0, message: "ok", data: { id, name } });
+    },
+
+    aiMasterRename(id, name) {
+      const m = AI_MASTERS.find((x) => x.id === id);
+      if (m) m.name = name;
+      return Promise.resolve({ code: 0, message: "ok", data: { id, name } });
+    },
+
+    aiMasterDelete(id) {
+      const idx = AI_MASTERS.findIndex((m) => m.id === id);
+      if (idx >= 0) AI_MASTERS.splice(idx, 1);
+      Object.keys(COMPONENT_MASTER_MAP).forEach((cid) => {
+        if (COMPONENT_MASTER_MAP[cid] === id) delete COMPONENT_MASTER_MAP[cid];
+      });
+      return Promise.resolve({ code: 0, message: "ok", data: { id, deleted: true } });
+    },
+
+    assignComponent(componentId, aiMasterId) {
+      if (aiMasterId) COMPONENT_MASTER_MAP[componentId] = aiMasterId;
+      else delete COMPONENT_MASTER_MAP[componentId];
+      return Promise.resolve({
+        code: 0, message: "ok",
+        data: { component_id: componentId, ai_master_id: aiMasterId },
+      });
+    },
+  };
+
+  // simulate network latency so the loading choreography is visible
+  function withLatency(fn) {
+    return (...args) => new Promise((res) =>
+      setTimeout(() => fn(...args).then(res), 260 + Math.random() * 220));
+  }
+
+  global.MockApi = {
+    filterOptions: withLatency(MockApi.filterOptions),
+    statistics: withLatency(MockApi.statistics),
+    steps: withLatency(MockApi.steps),
+    workflows: withLatency(MockApi.workflows),
+    components: withLatency(MockApi.components),
+    aiMasters: withLatency(MockApi.aiMasters),
+    assignments: withLatency(MockApi.assignments),
+    aiMasterOperations: withLatency(MockApi.aiMasterOperations),
+    aiMasterDetail: withLatency(MockApi.aiMasterDetail),
+    aiMasterCreate: withLatency(MockApi.aiMasterCreate),
+    aiMasterRename: withLatency(MockApi.aiMasterRename),
+    aiMasterDelete: withLatency(MockApi.aiMasterDelete),
+    assignComponent: withLatency(MockApi.assignComponent),
+  };
+})(window);

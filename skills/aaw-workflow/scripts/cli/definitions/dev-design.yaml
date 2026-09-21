@@ -1,0 +1,13 @@
+name: dev-design
+execution: skill
+skill: [dev-design]
+input:
+  - path: ".sdd/{SR}/requirement.md"
+    required: false
+  - path: ".sdd/software_architecture.md"
+    required: false
+output:
+  - path: ".sdd/{SR}/dev-design.md"
+    required: true
+data_prompt:
+  description: "个人开发者轻量设计：一份 dev-design.md 覆盖需求、现状摘要（可选短节）、方案、契约变更、影响面和验收标准。问人与问代码是同一个问题池循环的两个出口：代码问题攒批取证（优先委托只读 SubAgent，无宿主支持时主进程按清单只读批量取证），用户问题按设计树轮次提问（一轮抛全部前沿、各带推荐）。不设现状附录，代码论断在方案/契约变更/影响面处内联 file:line 引用。验收标准只写需求侧口径，工程用例由下游 dev-test-design 承接。无需提交额外数据，交付件写好即可 done。"
