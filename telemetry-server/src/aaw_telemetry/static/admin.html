@@ -3481,9 +3481,10 @@ async function loadAnomalyMasterBoard() {
     }
     const masterName = (id) => {
       const found = masters.items.find((m) => m.id === id);
-      return found ? found.name : null;
+      // 名字里可能带「· AI Master」后缀（历史演示数据），表头已说明身份，去掉
+      return found ? found.name.replace(/\s*·\s*AI Master\s*$/, "") : null;
     };
-    const labelFor = (id) => id === "__none__" ? "未归属（系统级 / 未认领仓库）" : (masterName(id) ?? "未知 AI Master");
+    const labelFor = (id) => id === "__none__" ? "未归属" : (masterName(id) ?? "未知");
     const counts = (items) => {
       const cats = { component: 0, workflow: 0, attribution: 0, version: 0 };
       for (const item of items) cats[item.category] += 1;
