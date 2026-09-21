@@ -119,7 +119,7 @@
     section.tab.is-active { display: block; animation: rise .3s ease; }
     @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-    /* ── 页头：每个 tab 一个（分组眉标 + 页面名 + 一句话），总览右侧再挂查看控件 ── */
+    /* ── 页头：每个 tab 一个（分组眉标 + 页面名 + 一句话） ── */
     .page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     .page-head__title { font-family: var(--disp); font-size: 20px; font-weight: 700; line-height: 1.25; }
     .page-head__eyebrow {
@@ -130,93 +130,6 @@
       display: block; margin-top: 4px; font-family: var(--body); font-size: 13.5px;
       font-weight: 500; color: var(--ink-soft); letter-spacing: 0;
     }
-
-    /* ── 总览：右上角视角切换 + 等高指标带 ── */
-    /* 查看控件：与门户（采纳看板）同款——触发按钮 + 可选搜索的下拉面板 */
-    .multi {
-      position: relative; margin-left: auto;
-      min-width: 180px; max-width: 240px; min-height: 40px;
-      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
-      padding: 5px 10px; background: var(--paper-2);
-      border: 1.5px solid var(--edge-2); border-radius: var(--radius-sm);
-      cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease;
-    }
-    .multi:hover { border-color: #cfc7b8; }
-    .multi.is-open, .multi:focus-visible {
-      border-color: var(--iris); box-shadow: 0 0 0 4px rgba(75, 63, 228, .12); outline: none;
-    }
-    .multi.is-scoped { border-color: var(--iris); }
-    .multi__trigger {
-      width: 100%; min-width: 0; min-height: 24px; display: flex; align-items: center; gap: 6px;
-      padding: 0; border: 0; background: transparent; color: inherit; font: inherit;
-      text-align: left; cursor: pointer;
-    }
-    .multi__trigger:focus-visible { outline: none; }
-    .multi__ph { color: var(--ink-mute); font-size: 14.5px; }
-    .pop {
-      position: absolute; top: calc(100% + 8px); right: 0; left: auto;
-      width: max(280px, 100%); max-width: min(340px, calc(100vw - 24px));
-      overflow: hidden; background: var(--paper-2);
-      border: 1px solid var(--edge-2); border-radius: var(--radius-sm);
-      box-shadow: var(--sh-card); z-index: 1000;
-    }
-    .pop__search-wrap {
-      display: flex; align-items: center; gap: 8px; padding: 9px;
-      background: color-mix(in srgb, var(--paper-2) 94%, var(--iris) 6%);
-      border-bottom: 1px solid var(--edge);
-    }
-    .pop__search {
-      width: 100%; min-width: 0; height: 32px; padding: 0 9px;
-      border: 1px solid var(--edge-2); border-radius: 8px; outline: none;
-      color: var(--ink); background: var(--paper-2); font: 14px var(--body);
-    }
-    .pop__search::placeholder { color: var(--ink-mute); }
-    .pop__search:focus { border-color: var(--iris); box-shadow: 0 0 0 3px rgba(75, 63, 228, .1); }
-    .pop__list {
-      max-height: 380px; overflow-y: auto; overscroll-behavior: contain; padding: 6px;
-      scrollbar-width: thin; scrollbar-color: var(--edge-2) transparent;
-    }
-    .pop__group {
-      padding: 8px 10px 4px; font-family: var(--mono); font-size: 12px;
-      font-weight: 500; letter-spacing: .08em; color: var(--ink-mute);
-    }
-    .pop__group[hidden] { display: none; }
-    .pop__opt {
-      width: 100%; border: 0; background: transparent; color: inherit; text-align: left;
-      display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 11px;
-      border-radius: 9px; cursor: pointer; font-size: 14.5px;
-    }
-    .pop__opt[hidden] { display: none; }
-    .pop__opt:hover { background: rgba(75, 63, 228, .07); }
-    .pop__opt .box {
-      width: 17px; height: 17px; flex: none; position: relative;
-      border: 1.5px solid var(--edge-2); border-radius: 6px;
-    }
-    .pop__opt[aria-selected="true"] .box { background: var(--iris); border-color: var(--iris); }
-    .pop__opt[aria-selected="true"] .box::after {
-      content: ""; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px;
-      border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(42deg);
-    }
-    .pop__opt .count { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-mute); }
-    .pop__empty { min-height: 80px; display: grid; place-items: center; padding: 18px; color: var(--ink-mute); font-size: 14px; }
-    .pop__empty[hidden] { display: none; }
-
-    .ov-band + .ov-band { margin-top: 18px; padding-top: 18px; border-top: 1px dashed var(--edge-2); }
-    .ov-band__head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 11px; }
-    .ov-band__head h2 { margin: 0; font-size: 14.5px; }
-    .ov-band__body { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 16px; align-items: start; }
-    .ov-band__body > .ov-band__aside:empty { display: none; }
-    .ov-band__aside dl.kv { font-size: 14px; gap: 6px 12px; }
-    .ov-band__stones { display: grid; gap: 10px; }
-    .ov-band__group { display: grid; gap: 7px; align-content: start; }
-    /* 分组之间拉一条竖线：只靠间距时，上一组最后一颗石子容易被读成下一组的 */
-    .ov-band__group + .ov-band__group { border-left: 1px solid var(--edge); padding-left: 12px; }
-    .ov-band__group > em {
-      font-family: var(--body); font-size: 12.5px; font-weight: 600;
-      font-style: normal; color: var(--ink-mute); letter-spacing: .02em;
-    }
-    .ov-band__scale { grid-column: 1 / -1; font-size: 12.5px; color: var(--ink-mute); }
-    @media (max-width: 1100px) { .ov-band__body { grid-template-columns: 1fr; } }
 
     .card {
       background: var(--paper-2); border: 1px solid var(--edge);
@@ -583,12 +496,8 @@
 
   <nav class="portal-nav" aria-label="管理台导航">
     <div class="side-nav__group">
-      <span class="side-nav__label">概览</span>
-      <button data-tab="overview" class="is-active">总览</button>
-      <button data-tab="anomalies">异常</button>
-    </div>
-    <div class="side-nav__group">
       <span class="side-nav__label">使用与质量</span>
+      <button data-tab="anomalies" class="is-active">异常</button>
       <button data-tab="components">组件</button>
       <button data-tab="workflows">工作流</button>
       <button data-tab="attribution">归因</button>
@@ -615,66 +524,6 @@
 </aside>
 
 <main class="stage">
-
-  <!-- ============================== 总览 ============================== -->
-  <section class="tab is-active" id="tab-overview">
-    <!-- 页级唯一开关：看全部，或看某位 SE / AI Master（顶部两行与下方表格一起跟着切） -->
-    <div class="page-head">
-      <div class="page-head__title">
-        <span class="page-head__eyebrow">概览</span>
-        总览
-        <small id="ovHeadHint">看全部组件，或看某位 SE / AI Master 名下的组件与仓库</small>
-      </div>
-      <!-- 与门户同款：按钮 + 可选搜索的下拉面板（原生 select 包在 label 里会被连点两次） -->
-      <div class="multi" id="ownerView" data-placeholder="全部组件与仓库"></div>
-      <button class="btn" id="btnOwnerRefresh">刷新</button>
-    </div>
-
-    <div class="card" id="ovStrip">
-      <div class="ov-band">
-        <div class="ov-band__head">
-          <h2><span id="stripLabelL">归因调度</span> <span class="count" id="stripCountL">调度器与队列健康</span></h2>
-        </div>
-        <div class="ov-band__body">
-          <div class="ov-band__aside"><dl class="kv" id="asideL"></dl></div>
-          <div class="ov-band__stones" id="stonesL"></div>
-        </div>
-      </div>
-      <div class="ov-band">
-        <div class="ov-band__head">
-          <h2><span id="stripLabelR">数据资产</span> <span class="count" id="stripCountR">注册表 / 工作流 / 日志</span></h2>
-        </div>
-        <div class="ov-band__body">
-          <div class="ov-band__aside"><dl class="kv" id="asideR"></dl></div>
-          <div class="ov-band__stones" id="stonesR"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2><span id="ownerTableTitle">组件健康</span> <span class="count" id="ownerMeta">近 30 天 · 待归因与停滞多者在前</span></h2>
-      <div class="toolbar">
-        <label>搜索 <input id="ownerSearch" size="18" placeholder="名称 / SE / AI Master / 人员" autocomplete="off"></label>
-      </div>
-      <div class="table-wrap" style="overflow-x:auto;">
-        <table>
-          <thead id="ownerHead"></thead>
-          <tbody id="ownerBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- 人员表：所选 SE / AI Master 名下这批仓库上的人（到人） -->
-    <div class="card" id="peopleCard" hidden>
-      <h2><span id="peopleTitle">人员</span> <span class="count" id="peopleMeta"></span></h2>
-      <div class="table-wrap" style="overflow-x:auto;">
-        <table>
-          <thead id="peopleHead"></thead>
-          <tbody id="peopleBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
 
   <!-- ============================== 组件使用情况 ============================== -->
   <section class="tab" id="tab-components">
@@ -1023,10 +872,10 @@
   </section>
 
   <!-- ============================== 异常 ============================== -->
-  <section class="tab" id="tab-anomalies">
+  <section class="tab is-active" id="tab-anomalies">
     <div class="page-head">
       <div class="page-head__title">
-        <span class="page-head__eyebrow">问题管理</span>
+        <span class="page-head__eyebrow">使用与质量</span>
         异常
         <small>只呈现需要关注的问题；查看清晰的异常详情，并直接定位到对应业务内容</small>
       </div>
@@ -1272,18 +1121,6 @@ const fmtShort = (iso) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
-// 服务端时间戳是 UTC ISO，直接贴出来会被读成本地时间（如"8 小时前扫过"），
-// 所以绝对时间统一走 fmtShort，另配一个相对时长让人一眼判断新鲜度。
-const fmtAgo = (iso) => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const minutes = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.round(minutes / 60);
-  return hours < 24 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
-};
 
 const STATUS_LABELS = {
   pending: "待处理", running: "执行中", retry_pending: "退避重试", failed: "失败",
@@ -1373,7 +1210,6 @@ document.querySelector(".portal-nav").addEventListener("click", (event) => {
   document.querySelectorAll("section.tab").forEach((s) => s.classList.toggle("is-active", s.id === `tab-${button.dataset.tab}`));
   // 切页回到顶部（站内跳转随后会用 smooth 滚到目标卡片）
   window.scrollTo({ top: 0, behavior: "auto" });
-  if (button.dataset.tab === "overview") loadOverview();
   if (button.dataset.tab === "workflows") loadWorkflows();
   if (button.dataset.tab === "attribution") { loadHealth(); recPage = 1; loadRecords(); }
   if (button.dataset.tab === "components") loadComponents();
@@ -1384,604 +1220,11 @@ document.querySelector(".portal-nav").addEventListener("click", (event) => {
   if (button.dataset.tab === "logs") loadLogs();
 });
 
-/* -------------------------------- Overview --------------------------------
-   下拉 = 全部 + 所有 SE + 所有 AI Master（没有别的维度视图）。
-   选了人，整页只讲这个人：两行指标 + 结构表（SE 看组件 / AI Master 看仓库）+ 人员表。
-   选择写在 URL 上（?se=张三 / ?ai_master=周宁），不做本机记忆。
+/* ------------------------------ 共用格式化 ------------------------------
+   fmtInt / fmtRate 原属总览页，组件、AI Master 等表格仍在使用，保留在此。
 -------------------------------------------------------------------------- */
-let overviewData = null;
-let ownersData = null;
-let ownerView = { kind: "all" };
-let peopleData = null;
 const fmtInt = (n) => (n ?? 0).toLocaleString("en-US");
 const fmtRate = (rate) => (rate == null ? "—" : (rate * 100).toFixed(1) + "%");
-// 总览窗口是 UTC 日粒度（后端 make_filters），下钻要填同一个起点才会与卡片数字相等
-const utcDay = (offsetDays) => {
-  const d = new Date(Date.now() + offsetDays * 86400000);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${mm}-${dd}`;
-};
-
-const DIM_LABEL = { se: "SE", ai_master: "AI Master" };
-const BUCKET_LABEL = { se: "未指定 SE", ai_master: "未认领 AI Master" };
-// URL 参数：SE 用 ?se=，AI Master 用 ?ai_master=（* 表示未指定/未认领那一桶）
-const DIM_PARAM = { se: "se", ai_master: "ai_master" };
-
-const viewAll = () => ({ kind: "all" });
-const viewPerson = (dim, name, isDefault = false) => ({ kind: "person", dim, name, isDefault });
-const isPersonView = (view = ownerView) => view.kind === "person";
-
-function parseView(search) {
-  const params = new URLSearchParams(search ?? location.search);
-  for (const dim of ["se", "ai_master"]) {
-    const raw = params.get(DIM_PARAM[dim]);
-    if (raw === null) continue;
-    if (raw === "") return viewAll();  // 空值视为没选
-    return viewPerson(dim, raw === "*" ? "" : raw, raw === "*");
-  }
-  return viewAll();
-}
-
-function applyViewToUrl(view) {
-  const url = new URL(location.href);
-  for (const dim of ["se", "ai_master"]) url.searchParams.delete(DIM_PARAM[dim]);
-  if (view.kind === "person") {
-    url.searchParams.set(DIM_PARAM[view.dim], view.isDefault ? "*" : view.name);
-  }
-  history.replaceState(null, "", url);
-}
-
-function displayName(view = ownerView) {
-  if (view.isDefault) return BUCKET_LABEL[view.dim];
-  return view.name;
-}
-
-function setOwnerView(next) {
-  ownerView = next;
-  peopleData = null;
-  applyViewToUrl(next);
-  renderOwnerViewSelect();
-  renderOwnerView();
-}
-
-/* 可选列表：全部 + 全部 SE + 全部 AI Master（未指定/未认领各占一项） */
-function pickerOptions() {
-  const rows = (dim) =>
-    (dim === "se" ? ownersData.by_se : ownersData.by_master).map((row) => ({
-      value: `${dim}:${row.is_default ? "*" : row.name}`,
-      name: row.is_default ? BUCKET_LABEL[dim] : row.name,
-      count: dim === "se" ? `${row.components} 组件` : `${row.repos} 仓库`,
-    }));
-  return {
-    all: { value: "all", name: "全部", count: `${ownersData.components.length} 组件` },
-    se: rows("se"),
-    ai_master: rows("ai_master"),
-  };
-}
-
-function closeOwnerPop() {
-  const mount = document.getElementById("ownerView");
-  if (!mount) return;
-  const pop = mount.querySelector(".pop");
-  if (pop) pop.remove();
-  mount.classList.remove("is-open");
-  const trigger = mount.querySelector(".multi__trigger");
-  if (trigger) {
-    trigger.setAttribute("aria-expanded", "false");
-    trigger.removeAttribute("aria-controls");
-  }
-}
-
-function renderOwnerViewSelect() {
-  const mount = document.getElementById("ownerView");
-  if (!mount || !ownersData) return;
-  closeOwnerPop();
-  const options = pickerOptions();
-  const current = isPersonView()
-    ? `${ownerView.dim}:${ownerView.isDefault ? "*" : ownerView.name}`
-    : "all";
-  const known = [options.all, ...options.se, ...options.ai_master].some(
-    (item) => item.value === current,
-  );
-
-  const trigger = document.createElement("button");
-  trigger.type = "button";
-  trigger.className = "multi__trigger";
-  trigger.setAttribute("aria-haspopup", "listbox");
-  trigger.setAttribute("aria-expanded", "false");
-  if (isPersonView()) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${DIM_LABEL[ownerView.dim]}｜${displayName()}`;
-    trigger.appendChild(chip);
-  } else {
-    const ph = document.createElement("span");
-    ph.className = "multi__ph";
-    ph.textContent = mount.dataset.placeholder || "全部";
-    trigger.appendChild(ph);
-  }
-  mount.replaceChildren(trigger);
-  mount.classList.toggle("is-scoped", isPersonView());
-
-  trigger.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (mount.classList.contains("is-open")) closeOwnerPop();
-    else openOwnerPop(mount, current, known);
-  });
-  trigger.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeOwnerPop();
-  });
-}
-
-function openOwnerPop(mount, current, known) {
-  closeOwnerPop();
-  const options = pickerOptions();
-  const pop = document.createElement("div");
-  pop.className = "pop";
-  pop.innerHTML = `
-    <div class="pop__search-wrap"><input type="search" class="pop__search" placeholder="搜索 SE / AI Master" aria-label="搜索 SE 或 AI Master" autocomplete="off"></div>
-    <div class="pop__list" role="listbox" id="ownerView-options"></div>`;
-  const list = pop.querySelector(".pop__list");
-  const search = pop.querySelector(".pop__search");
-
-  const addOption = (item, group) => {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "pop__opt";
-    el.dataset.search = `${item.name} ${item.value}`.toLowerCase();
-    el.setAttribute("role", "option");
-    if (group) el.dataset.group = group;
-    el.setAttribute("aria-selected", String(item.value === current));
-    el.innerHTML = `<span class="box"></span><span>${esc(item.name)}</span><span class="count">${esc(item.count)}</span>`;
-    el.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (item.value === "all") setOwnerView(viewAll());
-      else {
-        const [dim, name] = item.value.split(":");
-        setOwnerView(viewPerson(dim, name === "*" ? "" : name, name === "*"));
-      }
-      closeOwnerPop();
-    });
-    list.appendChild(el);
-  };
-  if (known) addOption(options.all, null);
-  else addOption({ value: current, name: displayName(), count: "当前窗口无数据" }, null);
-  for (const [dim, label, rows] of [
-    ["se", "SE", options.se],
-    ["ai_master", "AI Master", options.ai_master],
-  ]) {
-    const head = document.createElement("div");
-    head.className = "pop__group";
-    head.textContent = label;
-    head.dataset.group = dim;
-    list.appendChild(head);
-    rows.forEach((item) => addOption(item, dim));
-  }
-  const empty = document.createElement("div");
-  empty.className = "pop__empty";
-  empty.textContent = "没有匹配的 SE / AI Master";
-  empty.hidden = true;
-  list.appendChild(empty);
-
-  search.addEventListener("input", () => {
-    const query = search.value.trim().toLowerCase();
-    let matches = 0;
-    list.querySelectorAll(".pop__opt[data-group]").forEach((el) => {
-      const visible = !query || el.dataset.search.includes(query);
-      el.hidden = !visible;
-      if (visible) matches += 1;
-    });
-    // 搜索时把空掉的分组标题一起收起来；"全部 / 当前选择"在有搜索词时隐藏
-    list.querySelectorAll(".pop__group").forEach((head) => {
-      const group = head.dataset.group;
-      const visible = [...list.querySelectorAll(`.pop__opt[data-group="${group}"]`)].some(
-        (el) => !el.hidden,
-      );
-      head.hidden = Boolean(query) && !visible;
-    });
-    list.querySelectorAll(".pop__opt:not([data-group])").forEach((el) => { el.hidden = Boolean(query); });
-    empty.hidden = matches > 0;
-    list.scrollTop = 0;
-  });
-  search.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") { event.stopPropagation(); closeOwnerPop(); }
-  });
-
-  mount.appendChild(pop);
-  mount.classList.add("is-open");
-  const trigger = mount.querySelector(".multi__trigger");
-  trigger.setAttribute("aria-expanded", "true");
-  trigger.setAttribute("aria-controls", "ownerView-options");
-  requestAnimationFrame(() => search.focus());
-}
-
-async function loadOverview() {
-  try {
-    overviewData = await api("/api/v1/admin/overview");
-    markSync(true);
-    ownersData = overviewData.owners;
-    peopleData = null;
-    renderOwnerViewSelect();
-    renderOwnerView();
-  } catch (error) { markSync(false); toast(`总览加载失败：${error.message}`, true); }
-}
-
-/* ------------------------------- 顶部两行 ------------------------------- */
-
-// 一个数字只有三种声音：calm=统计与累计、good=达成、alert=>0 才报警
-const toneOf = (value, alertOnPositive = false) =>
-  alertOnPositive && value > 0 ? "alert" : "calm";
-
-function stonesRow(items) {
-  const cells = items.map((item) => {
-    const jumpAttrs = item.jumpTo
-      ? ` data-jump-to="${esc(item.jumpTo)}"` +
-        (item.jumpRepos ? ` data-jump-repos="${esc(item.jumpRepos)}"` : "") +
-        (item.jumpState ? ` data-jump-state="${esc(item.jumpState)}"` : "") +
-        (item.jumpStatus ? ` data-jump-status="${esc(item.jumpStatus)}"` : "") +
-        (item.jumpKind ? ` data-jump-kind="${esc(item.jumpKind)}"` : "") +
-        (item.jumpPending ? ' data-jump-pending="1"' : "") +
-        (item.jumpWindow ? ' data-jump-window="1"' : "") +
-        ' tabindex="0" role="button"'
-      : "";
-    const hint = item.hint ? `<span class="stone__hint">${esc(item.hint)}</span>` : "";
-    const empty = item.value === "—" ? " stone--empty" : "";
-    return `<div class="stone stone--${item.tone}${empty}"${jumpAttrs}${item.title ? ` title="${esc(item.title)}"` : ""}>
-        <small>${esc(item.label)}</small><strong>${item.value}</strong>${hint}
-      </div>`;
-  }).join("");
-  return `<div class="stones" style="grid-template-columns:repeat(${items.length}, minmax(0, 1fr));">${cells}</div>`;
-}
-
-function renderStrip() {
-  if (!overviewData) return;
-  if (ownerView.kind === "all") renderGlobalStrip();
-  else renderPersonStrip(ownerView);
-}
-
-// 队列此刻 = 瞬时深度；归因终态 = 累计结果。两种时间口径分开摆，不混在一行里。
-// 只有"该有人去看"的数字才报警色：失败 / 退避重试；正常排队与等待补丁用中性色。
-const QUEUE_STONES = [
-  { kind: "pending", label: "待处理", alert: false },
-  { kind: "running", label: "执行中", alert: false },
-  { kind: "retry_pending", label: "退避重试", alert: true },
-  { kind: "not_queued", label: "未入队", alert: false },
-  { kind: "failed", label: "失败", alert: true },
-];
-
-/* 全部：调度器与队列 + 数据资产 */
-function renderGlobalStrip() {
-  const d = overviewData;
-  const s = d.scheduler;
-  $("#stripLabelL").textContent = "归因调度";
-  $("#stripCountL").textContent = "调度器与队列健康";
-  $("#stripLabelR").textContent = "数据资产";
-  $("#stripCountR").textContent = "注册表 / 工作流 / 日志";
-  const stopped = s.paused || !s.running;
-  $("#asideL").innerHTML = `
-    <dt>运行状态</dt><dd>${stopped
-      ? `<span class="badge badge--failed">${s.paused ? "已自暂停" : "未运行"}</span>`
-      : '<span class="badge badge--finalized_match">运行中</span>'}</dd>
-    <dt>上次扫描</dt><dd>${fmtShort(s.last_scan_at)} <span class="muted">· ${fmtAgo(s.last_scan_at)}</span>${s.last_scan_processed !== null ? `<div class="muted" style="font-size:12.5px;">处理 ${s.last_scan_processed} 条</div>` : ""}</dd>
-    <dt>连续失败</dt><dd>${s.consecutive_failures}</dd>
-    <dt>间隔/重试窗</dt><dd>${Math.round(s.scan_interval_seconds / 60)} 分 / ${Math.round(s.retry_window_seconds / 86400)} 天</dd>`;
-
-  const by = d.attribution.by_status;
-  const queue = QUEUE_STONES.map((item) => {
-    const value = by[item.kind] ?? 0;
-    const notQueued = item.kind === "not_queued";
-    return {
-      ...item,
-      value,
-      tone: item.alert ? toneOf(value, true) : "calm",
-      jumpTo: "records",
-      jumpKind: notQueued ? "not_queued" : "",
-      jumpStatus: notQueued ? "" : item.kind,
-      title: `点击查看${item.label}的归因记录`,
-    };
-  });
-  const terminal = [
-    { kind: "finalized_match", label: "已匹配", tone: "good" },
-    { kind: "finalized_no_match", label: "未匹配", tone: "calm" },
-  ].map((item) => ({
-    ...item,
-    value: by[item.kind] ?? 0,
-    jumpTo: "records",
-    jumpStatus: item.kind,
-    title: `点击查看${item.label}的归因记录`,
-  }));
-  const stonesL = $("#stonesL");
-  stonesL.style.gridTemplateColumns = `${queue.length}fr ${terminal.length}fr`;
-  stonesL.innerHTML =
-    `<div class="ov-band__group"><em>队列此刻</em>${stonesRow(queue)}</div>` +
-    `<div class="ov-band__group"><em>归因终态 · 累计</em>${stonesRow(terminal)}</div>`;
-
-  const deleted = (d.workflows ?? {}).deleted ?? 0;
-  const assets = [
-    { label: "组件 / 仓库", value: `${d.registry.components} / ${d.registry.repos}`, tone: "calm" },
-    {
-      label: "工作流（未删除）", value: (d.workflows ?? {}).active ?? 0, tone: "calm",
-      jumpTo: "workflows", jumpState: "all", title: "点击查看未删除工作流",
-    },
-    ...(deleted ? [{
-      label: "已删除工作流", value: deleted, tone: "alert", jumpTo: "archive",
-      title: "点击查看已删除工作流（归档，可恢复）",
-    }] : []),
-    {
-      label: "日志文件", value: d.logs.length, tone: "calm", jumpTo: "logs",
-      title: "查看服务日志",
-    },
-  ];
-  const stonesR = $("#stonesR");
-  stonesR.style.gridTemplateColumns = "minmax(0, 1fr)";
-  stonesR.innerHTML = stonesRow(assets);
-  $("#asideR").innerHTML = `
-    <dt>统计窗口</dt><dd>近 ${ownersData.window_days} 天</dd>
-    <dt>删除数据</dt><dd>全程不计入统计<div class="muted" style="font-size:12.5px;">删除只打标记，可恢复</div></dd>`;
-}
-
-/* 选了某个 SE / AI Master：只讲这个人的名下属组件（或仓库） */
-function personSummary() {
-  const rows = ownerView.dim === "se" ? ownersData.by_se : ownersData.by_master;
-  return rows.find((row) =>
-    ownerView.isDefault ? row.is_default : row.name === ownerView.name) ?? null;
-}
-
-function personComponents() {
-  if (ownerView.dim !== "se") return [];
-  return ownersData.components.filter((c) =>
-    ownerView.isDefault ? !c.se : c.se === ownerView.name);
-}
-
-function personRepos() {
-  if (ownerView.dim === "ai_master") {
-    return ownersData.repos.filter((r) =>
-      ownerView.isDefault ? !r.ai_master : r.ai_master === ownerView.name);
-  }
-  return ownersData.repos.filter((r) =>
-    personComponents().some((c) => c.repo_keys.includes(r.repo_key)));
-}
-
-function renderPersonStrip(view) {
-  const summary = personSummary();
-  const name = displayName(view);
-  const isSe = view.dim === "se";
-  const unit = isSe ? "组件" : "仓库";
-  $("#stripLabelL").textContent = `${name} · 汇总`;
-  $("#stripCountL").textContent = `近 ${ownersData.window_days} 天`;
-  $("#stripLabelR").textContent = "问题量与覆盖";
-  $("#stripCountR").textContent = "色块即入口";
-  if (!summary) {
-    $("#asideL").innerHTML = `<dt>${DIM_LABEL[view.dim]}</dt><dd>${esc(name)}</dd>
-      <dt>当前窗口</dt><dd class="muted">名下没有内容</dd>`;
-    $("#asideR").innerHTML = "";
-    $("#stonesL").innerHTML = "";
-    $("#stonesR").innerHTML = "";
-    return;
-  }
-  const repos = summary.repo_keys || [];
-  $("#asideL").innerHTML = `
-    <dt>${DIM_LABEL[view.dim]}</dt><dd>${esc(name)}</dd>
-    <dt>覆盖仓库</dt><dd>${repos.length} 个${repos.length ? `<div class="muted" style="font-size:12.5px;">${esc(repos.join("、"))}</div>` : ""}</dd>
-    <dt>统计窗口</dt><dd>近 ${ownersData.window_days} 天</dd>
-    <dt>停滞阈值</dt><dd>超过 ${ownersData.stalled_hours}h 无活动</dd>`;
-  const headline = [
-    { label: unit, value: isSe ? summary.components : summary.repos },
-    { label: "近30天工作流", value: fmtInt(summary.workflows_30d) },
-    { label: "生成行数", value: fmtInt(summary.effective_lines) },
-    { label: "采纳率·80%", value: fmtRate(summary.attribution_rate_80), tone: "good" },
-    {
-      label: `已用 AAW ${unit}`,
-      value: isSe
-        ? `${summary.used_components} / ${summary.components}`
-        : `${summary.used_repos} / ${summary.repos}`,
-    },
-  ].map((item) => ({ tone: "calm", ...item }));
-  const stonesL = $("#stonesL");
-  stonesL.style.gridTemplateColumns = "minmax(0, 1fr)";
-  stonesL.innerHTML = stonesRow(headline);
-
-  const repoArg = repos.join(",");
-  const notIncluded = isSe ? summary.components_not_included : summary.not_included;
-  const issues = [
-    {
-      label: "待归因", value: summary.pending_attribution,
-      tone: toneOf(summary.pending_attribution, true),
-      jumpTo: "records", jumpRepos: repoArg, jumpPending: true,
-      title: "点击查看这些没有归因结果的产出（列表条数与本卡片一致）",
-    },
-    {
-      label: "停滞", value: summary.stalled_30d, tone: toneOf(summary.stalled_30d, true),
-      jumpTo: "workflows", jumpRepos: repoArg, jumpState: "stalled", jumpWindow: true,
-      title: `点击查看近 ${ownersData.window_days} 天停滞工作流（列表条数与本卡片一致）`,
-    },
-    {
-      label: "未纳入统计", value: notIncluded, tone: toneOf(notIncluded, true),
-      hint: "未登记仓库的组件不进统计",
-    },
-    { label: "覆盖仓库", value: repos.length, tone: "calm" },
-  ];
-  const stonesR = $("#stonesR");
-  stonesR.style.gridTemplateColumns = "minmax(0, 1fr)";
-  stonesR.innerHTML = stonesRow(issues);
-  $("#asideR").innerHTML = `
-    <dt>待归因</dt><dd>上报的 dev 产出还没有归因结果<div class="muted" style="font-size:12.5px;">近 30 天内没有任何归因行</div></dd>
-    <dt>停滞</dt><dd>进行中且超 ${ownersData.stalled_hours}h 未动</dd>
-    <dt>下钻</dt><dd>待归因 → 归因记录<div>停滞 → 工作流</div></dd>`;
-}
-
-/* ------------------------------- 表格 ------------------------------- */
-
-function pendingStalledCell(count, cls) {
-  return count ? `<span class="badge ${cls}">${count}</span>` : '<span class="muted">0</span>';
-}
-
-/* 组件级明细行 */
-function componentRowHtml(c) {
-  const owners = c.ai_masters && c.ai_masters.length
-    ? (c.split_ownership
-      ? `<span class="badge badge--none">多人分管（${c.ai_masters.length}）</span>`
-      : esc(c.ai_masters[0]))
-    : '<span class="badge badge--none">未认领</span>';
-  return `
-      <tr>
-        <td><b>${esc(c.name)}</b>${c.included ? "" : ' <span class="badge badge--none">未纳入</span>'}</td>
-        <td>${esc(c.se ?? "—")}</td>
-        <td>${owners}</td>
-        <td class="mono">${c.repos}</td>
-        <td>${c.used_aaw ? '<span class="badge badge--finalized_match">使用</span>' : '<span class="badge badge--not_queued">未使用</span>'}</td>
-        <td class="mono">${fmtInt(c.effective_lines)}</td>
-        <td class="mono">${fmtRate(c.attribution_rate_80)}</td>
-        <td>${pendingStalledCell(c.pending_attribution, "badge--failed")}</td>
-        <td>${pendingStalledCell(c.stalled_30d, "badge--running")}</td>
-        <td style="white-space:nowrap;">${c.repo_keys && c.repo_keys.length
-          ? `<button class="btn btn--small" data-owner-jump="${esc(c.repo_keys.join(","))}">查工作流</button>`
-          : '<span class="muted">—</span>'}</td>
-      </tr>`;
-}
-
-/* 仓库级明细行（选了 AI Master 时看） */
-function repoRowHtml(r) {
-  return `
-      <tr>
-        <td><b class="mono">${esc(r.repo_key)}</b>${r.included ? "" : ' <span class="badge badge--none">未纳入统计</span>'}</td>
-        <td>${esc(r.component_name ?? "—")}</td>
-        <td>${esc(r.se ?? "—")}</td>
-        <td>${r.used_aaw ? '<span class="badge badge--finalized_match">使用</span>' : '<span class="badge badge--not_queued">未使用</span>'}</td>
-        <td class="mono">${r.active_users}</td>
-        <td class="mono">${r.workflows_30d}</td>
-        <td class="mono">${fmtInt(r.effective_lines)}</td>
-        <td class="mono">${fmtRate(r.attribution_rate_80)}</td>
-        <td>${pendingStalledCell(r.pending_attribution, "badge--failed")}</td>
-        <td>${pendingStalledCell(r.stalled_30d, "badge--running")}</td>
-        <td style="white-space:nowrap;"><button class="btn btn--small" data-owner-jump="${esc(r.repo_key)}">查工作流</button></td>
-      </tr>`;
-}
-
-const COMPONENT_HEADS =
-  "<tr><th>组件</th><th>SE</th><th>AI Master</th><th>仓库</th><th>使用 AAW</th><th>生成行数</th><th>采纳率·80%</th><th>待归因</th><th>停滞</th><th>操作</th></tr>";
-const REPO_HEADS =
-  "<tr><th>仓库</th><th>组件</th><th>SE</th><th>使用 AAW</th><th>活跃人数</th><th>近 30 天工作流</th><th>生成行数</th><th>采纳率·80%</th><th>待归因</th><th>停滞</th><th>操作</th></tr>";
-
-function renderOwnerView() {
-  if (!ownersData) return;
-  renderStrip();
-  const term = ($("#ownerSearch").value || "").trim().toLowerCase();
-  const hit = (text) => !term || text.toLowerCase().includes(term);
-  if (ownerView.kind === "all") {
-    hidePeopleCard();
-    $("#ownerTableTitle").textContent = "组件健康";
-    $("#ownerMeta").textContent =
-      `近 ${ownersData.window_days} 天 · 停滞=超过 ${ownersData.stalled_hours}h 无活动 · 待归因与停滞多者在前`;
-    $("#ownerHead").innerHTML = COMPONENT_HEADS;
-    $("#ownerBody").innerHTML =
-      ownersData.components.filter((c) => hit([c.name, c.se ?? "", ...(c.ai_masters || [])].join("\n")))
-        .map(componentRowHtml).join("") ||
-      '<tr><td colspan="10" class="muted">没有数据</td></tr>';
-    return;
-  }
-  renderPersonTables(hit);
-}
-
-/* 选了人：结构表（SE 看组件 / AI Master 看仓库）+ 人员表 */
-function renderPersonTables(hit) {
-  const name = displayName();
-  const isSe = ownerView.dim === "se";
-  if (isSe) {
-    const mine = personComponents();
-    $("#ownerTableTitle").textContent = `${name} · 组件`;
-    $("#ownerMeta").textContent =
-      `${mine.length} 个组件 · 近 ${ownersData.window_days} 天 · 待归因与停滞多者在前`;
-    $("#ownerHead").innerHTML = COMPONENT_HEADS;
-    $("#ownerBody").innerHTML =
-      mine.filter((c) => hit([c.name, c.se ?? "", ...(c.ai_masters || [])].join("\n")))
-        .map(componentRowHtml).join("") ||
-      '<tr><td colspan="10" class="muted">这位 SE 当前窗口内没有组件</td></tr>';
-  } else {
-    const mine = personRepos();
-    $("#ownerTableTitle").textContent = `${name} · 仓库`;
-    $("#ownerMeta").textContent =
-      `${mine.length} 个仓库 · 近 ${ownersData.window_days} 天 · 待归因与停滞多者在前`;
-    $("#ownerHead").innerHTML = REPO_HEADS;
-    $("#ownerBody").innerHTML =
-      mine.filter((r) => hit([r.repo_key, r.component_name ?? "", r.se ?? ""].join("\n")))
-        .map(repoRowHtml).join("") ||
-      '<tr><td colspan="11" class="muted">这位 AI Master 当前窗口内没有仓库</td></tr>';
-  }
-  loadPeople(hit);
-}
-
-/* 人员表：这批仓库上都有谁在用、什么版本、落后几版、产出与采纳如何 */
-function hidePeopleCard() {
-  $("#peopleCard").hidden = true;
-  peopleData = null;
-}
-
-async function loadPeople(hit) {
-  const repos = personRepos().map((r) => r.repo_key);
-  const key = repos.join(",");
-  $("#peopleCard").hidden = false;
-  if (peopleData && peopleData.key === key) { renderPeopleRows(hit); return; }
-  $("#peopleTitle").textContent = `${displayName()} · 人员`;
-  $("#peopleMeta").textContent = "加载中…";
-  $("#peopleBody").innerHTML = '<tr><td colspan="11" class="muted">加载人员名单…</td></tr>';
-  try {
-    const params = repos.map((repo) => `repository=${encodeURIComponent(repo)}`).join("&");
-    const data = await api(`/api/v1/admin/people${params ? "?" + params : ""}`);
-    peopleData = { ...data, key };
-    renderPeopleRows(hit);
-  } catch (error) {
-    $("#peopleMeta").textContent = "";
-    $("#peopleBody").innerHTML =
-      `<tr><td colspan="11" class="muted">人员名单加载失败：${esc(error.message)}</td></tr>`;
-  }
-}
-
-function renderPeopleRows(hit) {
-  const data = peopleData;
-  if (!data) return;
-  $("#peopleTitle").textContent = `${displayName()} · 人员`;
-  $("#peopleMeta").textContent =
-    `${data.total} 人在此活动 · 近 ${data.window_days} 天 · 名单来自这批仓库的上报记录`;
-  $("#peopleHead").innerHTML =
-    "<tr><th>姓名</th><th>邮箱</th><th>活动仓库</th><th>AAW 版本</th><th>最近上报</th><th>上报条数</th><th>工作流</th><th>产出条数</th><th>生成行数</th><th>采纳率·80%</th><th>待归因</th></tr>";
-  $("#peopleBody").innerHTML =
-    (data.items || [])
-      .filter((p) => hit([p.user_name ?? "", p.user_email ?? "", ...(p.repo_keys || [])].join("\n")))
-      .map(personRowHtml).join("") ||
-    '<tr><td colspan="11" class="muted">这批仓库在窗口内没有上报记录</td></tr>';
-}
-
-function versionCell(p) {
-  if (p.non_release_version) {
-    return `<span class="badge badge--not_queued">非发布版</span> <span class="mono">${esc(p.version ?? "—")}</span>`;
-  }
-  if (p.on_latest) {
-    return `<span class="badge badge--finalized_match">最新</span> <span class="mono">${esc(p.version ?? "—")}</span>`;
-  }
-  if (p.behind) {
-    return `<span class="badge badge--failed">落后 ${p.behind} 版</span> <span class="mono">${esc(p.version ?? "—")}</span>`;
-  }
-  return `<span class="muted">—</span>`;
-}
-
-function personRowHtml(p) {
-  return `
-      <tr>
-        <td><b>${esc(p.user_name ?? "—")}</b></td>
-        <td class="mono">${esc(p.user_email ?? "—")}</td>
-        <td class="mono">${esc((p.repo_keys || []).join("、") || "—")}</td>
-        <td>${versionCell(p)}</td>
-        <td class="mono">${esc(fmtShort(p.last_report_at))} <span class="muted">${esc(fmtAgo(p.last_report_at))}</span></td>
-        <td class="mono">${p.report_count}</td>
-        <td class="mono">${p.workflow_runs}</td>
-        <td class="mono">${p.dev_runs}</td>
-        <td class="mono">${fmtInt(p.effective_lines)}</td>
-        <td class="mono">${fmtRate(p.attribution_rate_80)}</td>
-        <td>${pendingStalledCell(p.pending_attribution, "badge--failed")}</td>
-      </tr>`;
-}
 
 /* ------------------------------- 交互 ------------------------------- */
 
@@ -1995,71 +1238,6 @@ function flashCard(selector) {
   void card.offsetWidth;
   card.classList.add("flash");
 }
-
-/* 顶部每个数字都是入口：色块 → 对应 tab + 预置筛选 */
-function overviewJump(to, opts = {}) {
-  if (to === "logs") { clickTab("logs"); return; }
-  if (to === "workflows" || to === "archive") {
-    // 「停滞」卡片的数字取自近 N 天窗口（按工作流最近活动），下钻要带上同一个窗口，
-    // 否则列表会把窗口外、同样"停滞"的老工作流一并算进来，条数大于卡片。
-    const days = (ownersData && ownersData.window_days) || 30;
-    $("#awUser").value = "";
-    $("#awFrom").value = opts.overviewWindow ? utcDay(-(days - 1)) : "";
-    $("#awTo").value = "";
-    $("#awRepo").value = opts.repos || "";
-    $("#awState").value = to === "archive" ? "all" : (opts.state || "all");
-    $("#awLifecycle").value = to === "archive" ? "deleted" : "active";
-    awPage = 1;
-    clickTab("workflows");
-    return;
-  }
-  if (to === "records") {
-    $("#fRepo").value = opts.repos || "";
-    $("#fUser").value = "";
-    $("#fKind").value = "";
-    // 只有「待归因」卡片带 pending 口径（与卡片数字同一集合）；队列体检等跳转都是全量
-    recPending = opts.pending === true;
-    recRecordKind = opts.kind || "all";
-    $("#fStatus").value = opts.kind === "not_queued" ? "" : (opts.status || "");
-    recPage = 1;
-    clickTab("attribution");  // 切 tab 会带新筛选重新查询
-    flashCard("#cardRecords");
-  }
-}
-
-document.getElementById("tab-overview").addEventListener("click", (event) => {
-  const stone = event.target.closest("[data-jump-to]");
-  if (!stone) return;
-  overviewJump(stone.dataset.jumpTo, {
-    repos: stone.dataset.jumpRepos || "",
-    state: stone.dataset.jumpState || "",
-    status: stone.dataset.jumpStatus || "",
-    kind: stone.dataset.jumpKind || "",
-    pending: stone.dataset.jumpPending === "1",
-    overviewWindow: stone.dataset.jumpWindow === "1",
-  });
-});
-
-document.getElementById("tab-overview").addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  const stone = event.target.closest("[data-jump-to]");
-  if (!stone) return;
-  event.preventDefault();
-  stone.click();
-});
-
-$("#ownerBody").addEventListener("click", (event) => {
-  const jump = event.target.closest("button[data-owner-jump]");
-  if (jump) overviewJump("workflows", { repos: jump.dataset.ownerJump, state: "all" });
-});
-
-// 点面板外面收起（与门户一致）
-document.addEventListener("click", (event) => {
-  if (!event.target.closest("#ownerView")) closeOwnerPop();
-});
-
-$("#ownerSearch").addEventListener("input", renderOwnerView);
-$("#btnOwnerRefresh").addEventListener("click", loadOverview);
 
 async function triggerScan() {
   const result = await api("/api/v1/admin/attribution/scan", { method: "POST" });
@@ -2751,10 +1929,9 @@ $("#amAssignBody").addEventListener("change", async (event) => {
   } catch (error) { toast(`归属更新失败：${error.message}`, true); loadAiMaster(); }
 });
 
-/* 归属会同时影响组件页、AI Master 汇总与总览，改完顺手刷新在场的那几个 */
+/* 归属会同时影响组件页与 AI Master 汇总，改完顺手刷新在场的那几个 */
 function reloadAfterOwnershipChange() {
   if (document.querySelector("#tab-components.is-active")) loadComponents();
-  if (document.querySelector("#tab-overview.is-active")) loadOverview();
 }
 
 $("#amOpsCards").addEventListener("click", async (event) => {
@@ -4075,17 +3252,9 @@ $("#anEvaluate").addEventListener("click", async () => {
   } catch (error) { toast(`检测失败：${error.message}`, true); }
 });
 
-// 首屏只看 URL：?se=张三 / ?ai_master=周宁（带 * 表示未指定/未认领那一桶），没有参数就是全部
-ownerView = parseView(location.search);
-// 早期版本把"我是谁"记在本机、或把范围写在 ?view= 上，都已废弃，顺手清掉
-try { localStorage.removeItem("aaw.admin.ownerScope"); } catch { /* 无痕模式忽略 */ }
-{
-  const url = new URL(location.href);
-  url.searchParams.delete("view");
-  url.searchParams.delete("owner");
-  history.replaceState(null, "", url);
-}
-loadOverview();
+/* 首屏落地：默认停在异常中心；带 ?tab= 的深链（看板「管理」入口、异常事件定位）
+   由上面的 applyWorkflowDeepLink / applyGenericTabDeepLink 负责切过去。 */
+loadAnomalyModule();
 </script>
 </body>
 </html>
