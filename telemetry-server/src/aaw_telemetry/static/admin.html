@@ -3339,7 +3339,7 @@ async function requestAnomalyArchive(id) {
   if (!requestedBy) return;
   const reason = await askDialog({
     title: "屏蔽理由",
-    message: "屏蔽只针对这条异常事件，对应业务数据的统计不会自动变化；如需一并处理，请在管理员通过后于对应业务页删除或屏蔽相关数据，否则统计仍会包含它。",
+    message: "屏蔽只针对这条异常事件，对应业务数据的统计不会自动变化。建议先在对应业务页处理数据（删除或屏蔽），数据出清后事件会在下一轮检测中自动消失，再无需单独屏蔽。",
     placeholder: "必填",
   });
   if (!reason) return;
