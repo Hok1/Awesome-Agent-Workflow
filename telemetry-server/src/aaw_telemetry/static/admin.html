@@ -119,8 +119,8 @@
     section.tab.is-active { display: block; animation: rise .3s ease; }
     @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-    /* ── 页头：每个 tab 一个（分组眉标 + 页面名 + 一句话） ── */
-    .page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    /* ── 页头：每个 tab 一个（分组眉标 + 页面名 + 一句话）；右侧控件整体贴右 ── */
+    .page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     .page-head__title { font-family: var(--disp); font-size: 20px; font-weight: 700; line-height: 1.25; }
     .page-head__eyebrow {
       display: block; margin-bottom: 3px; font-family: var(--body); font-size: 12px;
@@ -130,6 +130,10 @@
       display: block; margin-top: 4px; font-family: var(--body); font-size: 13.5px;
       font-weight: 500; color: var(--ink-soft); letter-spacing: 0;
     }
+    /* 页头控件（筛选/按钮）统一推到行尾，与标题垂直居中，不再挤在标题旁边 */
+    .page-head > .btn, .page-head > .an-scope-label { margin-left: auto; }
+    .page-head > .btn + .an-scope-label, .page-head > .an-scope-label + .btn { margin-left: 16px; }
+    .page-head > .an-scope-label + .btn { margin-left: 0; }
 
     .card {
       background: var(--paper-2); border: 1px solid var(--edge);
@@ -368,7 +372,7 @@
     .an-event-table th { white-space: nowrap; }
 
     .an-scope-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
-    .an-scope-label > .multi { min-width: 150px; max-width: 220px; }
+    .an-scope-label > .multi { min-width: 150px; max-width: 220px; margin: 0; }
     /* ── 可搜索下拉（与门户采纳看板同款）：触发按钮 + 带搜索框的浮层 ── */
     .multi {
       position: relative; min-width: 170px; max-width: 240px; min-height: 40px;
