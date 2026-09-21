@@ -360,6 +360,79 @@
     .an-sentence-mini { margin-top: 4px; line-height: 1.9; color: var(--ink-soft); }
     .an-sentence-mini .an-tune { display: inline-block; padding: 0 5px; border-radius: 5px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
     .an-event-table th { white-space: nowrap; }
+
+    .an-scope-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+    .an-scope-label > .multi { min-width: 150px; max-width: 220px; }
+    /* ── 可搜索下拉（与门户采纳看板同款）：触发按钮 + 带搜索框的浮层 ── */
+    .multi {
+      position: relative; min-width: 170px; max-width: 240px; min-height: 40px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      padding: 5px 10px; background: var(--paper-2);
+      border: 1.5px solid var(--edge-2); border-radius: var(--radius-sm);
+      cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .multi:hover { border-color: #cfc7b8; }
+    .multi.is-open, .multi:focus-visible {
+      border-color: var(--iris); box-shadow: 0 0 0 4px rgba(75, 63, 228, .12); outline: none;
+    }
+    .multi__trigger {
+      width: 100%; min-width: 0; min-height: 24px; display: flex; align-items: center; gap: 6px;
+      padding: 0; border: 0; background: transparent; color: inherit; font: inherit;
+      text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden;
+    }
+    .multi__trigger:focus-visible { outline: none; }
+    .multi__trigger .caret { margin-left: auto; flex: none; color: var(--ink-mute); font-size: 11px; }
+    .multi__ph { color: var(--ink-mute); font-size: 13.5px; }
+    .multi__val { display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+      padding: 2px 8px; font-size: 12.5px; font-weight: 600; color: var(--iris);
+      background: rgba(75, 63, 228, .09); border-radius: 8px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pop {
+      position: absolute; top: calc(100% + 8px); right: 0; left: auto;
+      width: max(280px, 100%); max-width: min(340px, calc(100vw - 24px));
+      overflow: hidden; background: var(--paper-2);
+      border: 1px solid var(--edge-2); border-radius: var(--radius-sm);
+      box-shadow: var(--sh-card); z-index: 1000;
+    }
+    .pop__search-wrap {
+      display: flex; align-items: center; gap: 8px; padding: 9px;
+      background: color-mix(in srgb, var(--paper-2) 94%, var(--iris) 6%);
+      border-bottom: 1px solid var(--edge);
+    }
+    .pop__search-icon {
+      width: 14px; height: 14px; flex: none; position: relative;
+      border: 1.7px solid var(--ink-mute); border-radius: 50%; opacity: .8;
+    }
+    .pop__search-icon::after {
+      content: ""; position: absolute; right: -4px; bottom: -2px; width: 6px; height: 1.7px;
+      border-radius: 2px; background: var(--ink-mute); transform: rotate(45deg);
+    }
+    .pop__search {
+      width: 100%; min-width: 0; height: 32px; padding: 0 9px;
+      border: 1px solid var(--edge-2); border-radius: 8px; outline: none;
+      color: var(--ink); background: var(--paper-2); font: 13px var(--body);
+    }
+    .pop__search::placeholder { color: var(--ink-mute); }
+    .pop__search:focus { border-color: var(--iris); box-shadow: 0 0 0 3px rgba(75, 63, 228, .1); }
+    .pop__list {
+      max-height: 340px; overflow-y: auto; overscroll-behavior: contain; padding: 6px;
+      scrollbar-width: thin; scrollbar-color: var(--edge-2) transparent;
+    }
+    .pop__list::-webkit-scrollbar { width: 7px; }
+    .pop__list::-webkit-scrollbar-thumb {
+      background: var(--edge-2); border: 2px solid transparent; border-radius: 8px; background-clip: padding-box;
+    }
+    .pop__opt {
+      width: 100%; border: 0; background: transparent; color: inherit; text-align: left;
+      display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 11px;
+      border-radius: 9px; cursor: pointer; font-size: 14px;
+    }
+    .pop__opt[hidden] { display: none; }
+    .pop__opt:hover { background: rgba(75, 63, 228, .07); }
+    .pop__opt[aria-selected="true"] { background: rgba(75, 63, 228, .09); color: var(--iris); font-weight: 600; }
+    .pop__opt .count { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-mute); }
+    .pop__empty { min-height: 80px; display: grid; place-items: center; padding: 18px; color: var(--ink-mute); font-size: 13px; }
+    .pop__empty[hidden] { display: none; }
     .an-problem-line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
     .an-problem-line .an-problem { font-weight: 700; color: var(--ink); white-space: nowrap; }
     .an-cond { position: static; display: inline-flex; align-items: center; }
@@ -909,9 +982,7 @@
         异常
         <small>只呈现需要关注的问题；查看清晰的异常详情，并直接定位到对应业务内容</small>
       </div>
-      <label style="margin-left:auto; font-size:13px; font-weight:600;">查看范围
-        <select id="anMaster"><option value="">选择 AI Master</option></select>
-      </label>
+      <div class="an-scope-label">查看范围 <div class="multi" id="anMaster" data-placeholder="选择 AI Master"></div></div>
       <button class="btn" id="anRefresh">刷新</button>
     </div>
 
@@ -931,9 +1002,7 @@
       </div>
       <div class="card">
         <div class="toolbar">
-          <label>异常类型
-            <select id="anCategory"><option value="">全部</option><option value="component">组件统计</option><option value="workflow">工作流</option><option value="attribution">归因处理</option><option value="version">版本使用</option></select>
-          </label>
+          <div class="an-scope-label">异常类型 <div class="multi" id="anCategory" data-placeholder="全部"></div></div>
         </div>
         <div class="table-wrap" style="overflow-x:auto;">
           <table class="an-event-table"><thead><tr><th>问题<span class="an-th-help" role="note" tabindex="0" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
@@ -2924,15 +2993,176 @@ const anomalyWrite = (path, options = {}) => api(path, {
 async function loadAnomalyModule() {
   if (!anMastersLoaded) {
     const data = await api("/api/v1/ai-masters");
-    $("#anMaster").innerHTML = '<option value="">选择 AI Master</option><option value="__admin__">组织全局（管理员）</option>'
-      + data.items.map((item) => `<option value="${item.id}">${esc(item.name)} · ${item.repo_count} 仓库</option>`).join("");
-    if (data.items.length) $("#anMaster").value = data.items[0].id;
+    anMasterSelect.setOptions([
+      { id: "__admin__", name: "组织全局（管理员）" },
+      ...data.items.map((item) => ({ id: item.id, name: item.name, count: `${item.repo_count} 仓库` })),
+    ]);
+    if (data.items.length && !anMasterSelect.value) anMasterSelect.value = data.items[0].id;
     anMastersLoaded = true;
   }
   if (anCurrentView === "overview") await loadAnomalyEvents();
   if (anCurrentView === "rules") await loadAnomalyRules();
   if (anCurrentView === "reviews") await loadAnomalyReviews();
 }
+
+/* 可搜索单选下拉：与门户采纳看板同款交互（触发按钮 + 搜索浮层），替代原生 select。
+   挂载点保持原 id；读 .value、赋 .value 与监听 "change" 的旧代码全部继续工作。 */
+function buildSearchSelect(mountId, options, { placeholder = "请选择", searchLabel = "选项" } = {}) {
+  const mount = document.getElementById(mountId);
+  const state = { value: mount.dataset.value || "", listeners: new Set() };
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "multi__trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  mount.replaceChildren(trigger);
+  let pop = null;
+
+  const labelOf = (v) => options.find((o) => o.id === v)?.name;
+
+  function renderTrigger() {
+    const name = labelOf(state.value);
+    trigger.innerHTML = "";
+    if (!name) {
+      const ph = document.createElement("span");
+      ph.className = "multi__ph";
+      ph.textContent = placeholder;
+      trigger.appendChild(ph);
+    } else {
+      const val = document.createElement("span");
+      val.className = "multi__val";
+      val.textContent = name;
+      trigger.appendChild(val);
+    }
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "▾";
+    trigger.appendChild(caret);
+  }
+
+  function closePop() {
+    if (pop) { pop.remove(); pop = null; }
+    mount.classList.remove("is-open");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.removeAttribute("aria-controls");
+  }
+  mount._close = closePop;
+
+  function setValue(v, notify = true) {
+    if (state.value === v) return;
+    state.value = v;
+    renderTrigger();
+    if (notify) state.listeners.forEach((fn) => fn());
+  }
+
+  function openPop() {
+    document.querySelectorAll(".multi").forEach((m) => m !== mount && m._close && m._close());
+    pop = document.createElement("div");
+    pop.className = "pop";
+    const listId = `${mountId}-options`;
+
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "pop__search-wrap";
+    const icon = document.createElement("span");
+    icon.className = "pop__search-icon";
+    icon.setAttribute("aria-hidden", "true");
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "pop__search";
+    search.placeholder = `搜索${searchLabel}`;
+    search.setAttribute("aria-label", `搜索${searchLabel}`);
+    search.setAttribute("autocomplete", "off");
+    search.setAttribute("spellcheck", "false");
+    searchWrap.append(icon, search);
+
+    const list = document.createElement("div");
+    list.className = "pop__list";
+    list.id = listId;
+    list.setAttribute("role", "listbox");
+    trigger.setAttribute("aria-controls", listId);
+
+    const empty = document.createElement("div");
+    empty.className = "pop__empty";
+    empty.textContent = `没有匹配的${searchLabel}`;
+    empty.hidden = true;
+
+    options.forEach((o) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "pop__opt";
+      el.dataset.id = o.id;
+      el.dataset.search = `${o.name} ${o.id}`.toLowerCase();
+      el.setAttribute("role", "option");
+      el.setAttribute("aria-selected", String(state.value === o.id));
+      const label = document.createElement("span");
+      label.textContent = o.name;
+      el.appendChild(label);
+      if (o.count !== undefined) {
+        const count = document.createElement("span");
+        count.className = "count";
+        count.textContent = o.count;
+        el.appendChild(count);
+      }
+      el.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setValue(o.id);
+        closePop();
+        trigger.focus();
+      });
+      list.appendChild(el);
+    });
+    list.appendChild(empty);
+
+    search.addEventListener("input", () => {
+      const query = search.value.trim().toLowerCase();
+      let matches = 0;
+      list.querySelectorAll(".pop__opt").forEach((el) => {
+        const visible = !query || el.dataset.search.includes(query);
+        el.hidden = !visible;
+        if (visible) matches += 1;
+      });
+      empty.hidden = matches > 0;
+      list.scrollTop = 0;
+    });
+    search.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.stopPropagation(); closePop(); trigger.focus(); }
+    });
+
+    pop.append(searchWrap, list);
+    mount.appendChild(pop);
+    mount.classList.add("is-open");
+    trigger.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => search.focus());
+  }
+
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    mount.classList.contains("is-open") ? closePop() : openPop();
+  });
+  trigger.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closePop();
+  });
+
+  renderTrigger();
+  return {
+    get value() { return state.value; },
+    set value(v) { setValue(v, false); },
+    setOptions(next) {
+      options = next;
+      if (!labelOf(state.value)) { state.value = ""; renderTrigger(); }
+    },
+    addEventListener(type, fn) { if (type === "change") state.listeners.add(fn); },
+  };
+}
+
+const anMasterSelect = buildSearchSelect("anMaster", [{ id: "__admin__", name: "组织全局（管理员）" }], { placeholder: "选择 AI Master", searchLabel: "AI Master" });
+const anCategorySelect = buildSearchSelect("anCategory", [
+  { id: "", name: "全部" },
+  { id: "component", name: "组件统计" },
+  { id: "workflow", name: "工作流" },
+  { id: "attribution", name: "归因处理" },
+  { id: "version", name: "版本使用" },
+], { placeholder: "全部", searchLabel: "类型" });
 
 // 悬浮气泡跟随 ？ 图标：fixed 定位挂在图标正下方（左对齐图标），右侧越界时左移。
 function positionAnomalyPops() {
@@ -2959,7 +3189,7 @@ function anDuration(iso) {
 }
 
 async function loadAnomalyEvents() {
-  const master = $("#anMaster").value;
+  const master = anMasterSelect.value;
   if (!master) {
     $("#anEventBody").innerHTML = "";
     $("#anEventEmpty").hidden = false;
@@ -2968,7 +3198,7 @@ async function loadAnomalyEvents() {
   const isAdmin = master === "__admin__";
   if (isAdmin && !await ensureAnomalyAdmin()) return;
   const query = new URLSearchParams(isAdmin ? { admin_view: "true" } : { ai_master_id: master });
-  if ($("#anCategory").value) query.set("category", $("#anCategory").value);
+  if (anCategorySelect.value) query.set("category", anCategorySelect.value);
   await loadAnomalyCatalog();  // 判定句模板来自检测器目录，先取目录再渲染
   try {
     const [events, summary] = await Promise.all([
@@ -3258,8 +3488,8 @@ document.querySelector(".an-mode").addEventListener("click", async (event) => {
   if (anCurrentView === "reviews") loadAnomalyReviews();
 });
 
-$("#anMaster").addEventListener("change", loadAnomalyEvents);
-$("#anCategory").addEventListener("change", loadAnomalyEvents);
+anMasterSelect.addEventListener("change", loadAnomalyEvents);
+anCategorySelect.addEventListener("change", loadAnomalyEvents);
 $("#anRefresh").addEventListener("click", loadAnomalyModule);
 $("#anEventBody").addEventListener("click", (event) => {
   const detail = event.target.closest("[data-an-detail]"); if (detail) showAnomalyEvent(detail.dataset.anDetail);
