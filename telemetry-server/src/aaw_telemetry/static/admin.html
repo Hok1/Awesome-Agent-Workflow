@@ -261,6 +261,12 @@
     .fail-groups { display: flex; flex-wrap: wrap; gap: 6px; }
     .fail-groups .chip { cursor: pointer; padding: 4px 10px; font-size: 12px; }
     .fail-groups .chip:hover { background: rgba(255,61,139,.12); color: #BE1356; }
+    .fail-groups:empty { display: none; }
+    /* 体检状态带：调度器关键数字一行排开，失败 chips 跟在后面，扫描按钮收尾 */
+    .health-band { align-items: center; gap: 18px; }
+    .health-band > span#healthSchedulerKv { display: inline-flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .health-band__item { font-size: 13.5px; color: var(--ink-mute); white-space: nowrap; }
+    .health-band__item b { color: var(--ink); font-weight: 700; }
 
     /* ── Collapsible blocks ── */
     details.more-filters, details.trend-more { display: block; }
@@ -788,46 +794,30 @@
       </div>
     </div>
 
-    <!-- ① 体检：积压四分类 + 调度器 + 失败分组 + 趋势 -->
+    <!-- ① 体检：积压四分类 + 调度器状态带 + 趋势/算法折叠 -->
     <div class="card">
       <h2>积压体检 <span class="count">非终态记录四分类 · 点击色块可跳转筛选</span></h2>
       <div class="stones" id="backlogStones"></div>
-      <div class="grid halves" style="margin-top:18px;">
-        <div>
-          <dl class="kv" id="healthSchedulerKv"></dl>
-          <div class="toolbar" style="margin:14px 0 0;">
-            <button class="btn btn--primary" id="btnScanHealth">立即扫描</button>
-            <span class="mono muted" id="scanResultHealth"></span>
-          </div>
-        </div>
-        <div>
-          <h2 style="font-size:14px;">失败原因分组 <span class="count">点击按原因圈定</span></h2>
-          <div class="fail-groups" id="failGroups"><span class="muted">—</span></div>
-        </div>
+      <div class="toolbar health-band" style="margin:16px 0 0;">
+        <span id="healthSchedulerKv"></span>
+        <span class="fail-groups" id="failGroups"></span>
+        <span class="mono muted" id="scanResultHealth" style="margin-left:auto;"></span>
+        <button class="btn btn--primary" id="btnScanHealth">立即扫描</button>
       </div>
-      <div class="grid halves" style="margin-top:18px;">
-        <div>
-          <h2 style="font-size:14px;">处理趋势 <span class="count">最近 3 天 · 明细可展开</span></h2>
-          <table>
-            <thead><tr><th>日期</th><th>匹配</th><th>未匹配</th><th>失败</th><th>置信度</th></tr></thead>
-            <tbody id="trendBody"></tbody>
-          </table>
-          <details class="trend-more" style="margin-top:10px;">
-            <summary>展开近 14 天</summary>
-            <table style="margin-top:8px;">
-              <thead><tr><th>日期</th><th>匹配</th><th>未匹配</th><th>失败</th><th>置信度</th></tr></thead>
-              <tbody id="trendBodyFull"></tbody>
-            </table>
-          </details>
-        </div>
-        <div>
-          <h2 style="font-size:14px;">算法版本构成 <span class="count">暴露新旧算法结果并存</span></h2>
-          <table>
-            <thead><tr><th>算法版本</th><th>结果</th><th>数量</th></tr></thead>
-            <tbody id="algoBody"></tbody>
-          </table>
-        </div>
-      </div>
+      <details class="trend-more" style="margin-top:14px;">
+        <summary>处理趋势 <span class="count">近 14 天</span></summary>
+        <table style="margin-top:8px;">
+          <thead><tr><th>日期</th><th>匹配</th><th>未匹配</th><th>失败</th><th>置信度</th></tr></thead>
+          <tbody id="trendBody"></tbody>
+        </table>
+      </details>
+      <details class="trend-more" style="margin-top:8px;">
+        <summary>算法版本构成 <span class="count">暴露新旧算法结果并存</span></summary>
+        <table style="margin-top:8px;">
+          <thead><tr><th>算法版本</th><th>结果</th><th>数量</th></tr></thead>
+          <tbody id="algoBody"></tbody>
+        </table>
+      </details>
     </div>
 
     <!-- ② 定位与处理：组合检索 + 记录列表 + 批量 -->
@@ -2159,23 +2149,21 @@ async function loadHealth() {
       </div>`).join("");
     const s = data.scheduler;
     const pausedOrStopped = s.paused || !s.running;
-    $("#healthSchedulerKv").innerHTML = `
-      <dt>运行状态</dt><dd>${pausedOrStopped
-        ? '<span class="badge badge--failed">' + (s.paused ? "已自暂停" : "未运行") + "</span>"
-        : '<span class="badge badge--finalized_match">运行中</span>'}</dd>
-      <dt>上次扫描</dt><dd>${esc(s.last_scan_at ?? "—")}${s.last_scan_processed !== null ? ` · 处理 ${s.last_scan_processed} 条` : ""}</dd>
-      <dt>连续失败</dt><dd>${s.consecutive_failures}</dd>
-      <dt>扫描间隔</dt><dd>${Math.round(s.scan_interval_seconds / 60)} 分钟 · 重试窗口 ${Math.round(s.retry_window_seconds / 86400)} 天</dd>`;
+    $("#healthSchedulerKv").innerHTML = `${pausedOrStopped
+      ? '<span class="badge badge--failed">' + (s.paused ? "已自暂停" : "未运行") + "</span>"
+      : '<span class="badge badge--finalized_match">运行中</span>'}
+      <span class="health-band__item">上次扫描 <b class="mono">${s.last_scan_at ? fmtShort(s.last_scan_at) : "—"}</b>${s.last_scan_processed !== null ? ` · 处理 ${s.last_scan_processed} 条` : ""}</span>
+      <span class="health-band__item">连续失败 <b class="mono">${s.consecutive_failures}</b></span>
+      <span class="health-band__item">扫描间隔 <b class="mono">${Math.round(s.scan_interval_seconds / 60)} 分钟</b> · 重试窗口 <b class="mono">${Math.round(s.retry_window_seconds / 86400)} 天</b></span>`;
     $("#failGroups").innerHTML = (data.failures || []).length
       ? data.failures.map((g) => `<span class="chip chip--warn" data-failflag="${esc(g.reason)}" title="点击按此原因圈定记录">${esc(REASON_LABELS[g.reason] ?? g.reason)} × ${g.count}</span>`).join("")
-      : '<span class="muted">当前无失败记录</span>';
+      : "";
     const trendRow = (p) => `
       <tr><td class="mono">${esc(p.date.slice(5))}</td><td class="mono">${p.matched}</td>
       <td class="mono">${p.no_match}</td><td class="mono">${p.failed}</td>
       <td class="mono">${p.avg_confidence === null ? "—" : (p.avg_confidence * 100).toFixed(0) + "%"}</td></tr>`;
     const trend = data.trend || [];
-    $("#trendBody").innerHTML = trend.slice(-3).map(trendRow).join("") || '<tr><td colspan="5" class="muted">暂无数据</td></tr>';
-    $("#trendBodyFull").innerHTML = trend.map(trendRow).join("");
+    $("#trendBody").innerHTML = trend.map(trendRow).join("") || '<tr><td colspan="5" class="muted">暂无数据</td></tr>';
     $("#algoBody").innerHTML = data.algorithms.map((a) => `
       <tr><td class="mono">${esc(a.algorithm_version)}</td>
       <td><span class="badge badge--${esc(a.result_status)}">${esc(STATUS_LABELS[a.result_status] ?? a.result_status)}</span></td>
