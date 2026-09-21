@@ -362,7 +362,7 @@
     .an-event-table th { white-space: nowrap; }
     .an-problem-line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
     .an-problem-line .an-problem { font-weight: 700; color: var(--ink); white-space: nowrap; }
-    .an-cond { position: relative; display: inline-flex; align-items: center; }
+    .an-cond { position: static; display: inline-flex; align-items: center; }
     .an-cond-icon {
       display: inline-flex; align-items: center; justify-content: center;
       width: 15px; height: 15px; border: 1px solid var(--edge-2); border-radius: 50%;
@@ -370,11 +370,12 @@
     }
     .an-cond-icon:hover, .an-cond-icon:focus-visible { border-color: var(--iris); color: var(--iris); outline: none; }
     .an-cond-pop {
-      position: absolute; left: 0; top: calc(100% + 7px); z-index: 6;
+      position: fixed; z-index: 2000;
       background: var(--paper-2); border: 1px solid var(--edge-2); border-radius: 8px;
-      box-shadow: var(--sh-card); padding: 8px 12px; max-width: 420px;
+      box-shadow: var(--sh-card); padding: 9px 13px; width: max-content; max-width: 460px;
       font-size: 12.5px; line-height: 1.9; color: var(--ink-soft);
       opacity: 0; visibility: hidden; transition: opacity .12s ease;
+      pointer-events: none;
     }
     .an-cond:hover .an-cond-pop, .an-cond:focus-within .an-cond-pop { opacity: 1; visibility: visible; }
 
@@ -2933,6 +2934,25 @@ async function loadAnomalyModule() {
   if (anCurrentView === "reviews") await loadAnomalyReviews();
 }
 
+// 悬浮气泡跟随 ？ 图标：fixed 定位挂在图标正下方（左对齐图标），右侧越界时左移。
+function positionAnomalyPops() {
+  document.querySelectorAll(".an-cond").forEach((cond) => {
+    const icon = cond.querySelector(".an-cond-icon");
+    const pop = cond.querySelector(".an-cond-pop");
+    if (!icon || !pop) return;
+    const place = () => {
+      const r = icon.getBoundingClientRect();
+      const w = pop.offsetWidth, h = pop.offsetHeight;  // CSS 默认 visibility:hidden，测量不会闪
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 16));
+      const top = Math.max(8, Math.min(r.bottom + 8, window.innerHeight - h - 8));
+      pop.style.left = `${left}px`;
+      pop.style.top = `${top}px`;
+    };
+    icon.addEventListener("mouseenter", () => requestAnimationFrame(place));
+    icon.addEventListener("focus", () => requestAnimationFrame(place));
+  });
+}
+
 function anDuration(iso) {
   const hours = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 36e5));
   return hours < 24 ? `${hours} 小时` : `${Math.floor(hours / 24)} 天`;
@@ -2969,6 +2989,7 @@ async function loadAnomalyEvents() {
       <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
     </tr>`).join("");
     $("#anEventEmpty").hidden = events.items.length > 0;
+    positionAnomalyPops();
     markSync(true);
   } catch (error) {
     markSync(false);
