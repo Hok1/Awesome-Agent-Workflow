@@ -357,6 +357,9 @@
     .an-wide-aside .an-aside-desc { margin: 0 0 16px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
     /* 判定一句话：可调参数带底色突出，点开编辑时同一句话在表单里逐项对应 */
     .an-sentence { margin: 0 0 18px; color: var(--ink); font-size: 13.5px; line-height: 2; }
+    .an-sentence-mini { margin-top: 4px; line-height: 1.9; color: var(--ink-soft); }
+    .an-sentence-mini .an-tune { display: inline-block; padding: 0 5px; border-radius: 5px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .an-th-hint { cursor: help; border-bottom: 1px dotted var(--ink-mute); }
     .an-sentence .an-tune { display: inline-block; padding: 1px 7px; border-radius: 6px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
     .an-sentence-note { margin: -12px 0 18px; color: var(--ink-mute); font-size: 11.5px; }
     .an-next-hint { margin: 0 0 4px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.7; }
@@ -906,7 +909,7 @@
           </label>
         </div>
         <div class="table-wrap" style="overflow-x:auto;">
-          <table><thead><tr><th>问题</th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
+          <table><thead><tr><th><span class="an-th-hint" title="问题由启用的检测规则判定；下方说明即该规则的判定条件，带底色的数值是当前生效的参数。">问题 ?</span></th><th>用户</th><th>仓库</th><th>持续时间</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
         </div>
         <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
       </div>
@@ -2920,6 +2923,7 @@ async function loadAnomalyEvents() {
   if (isAdmin && !await ensureAnomalyAdmin()) return;
   const query = new URLSearchParams(isAdmin ? { admin_view: "true" } : { ai_master_id: master });
   if ($("#anCategory").value) query.set("category", $("#anCategory").value);
+  await loadAnomalyCatalog();  // 判定句模板来自检测器目录，先取目录再渲染
   try {
     const [events, summary] = await Promise.all([
       api(`/api/v1/anomalies/events?${query}`),
@@ -2932,7 +2936,7 @@ async function loadAnomalyEvents() {
     }
     const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
     $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
-      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div><div class="an-sub">${esc(item.summary)}</div></td>
+      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div><div class="an-sub an-sentence-mini">${anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary)}</div></td>
       <td>${esc(item.user_email || "—")}</td>
       <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
       <td>${anDuration(item.first_detected_at)}</td>
