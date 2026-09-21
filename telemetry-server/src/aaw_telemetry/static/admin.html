@@ -402,6 +402,56 @@
     .console .line--warn  { color: #FFC46B; }
     .console mark { background: rgba(75, 63, 228, .6); color: #fff; border-radius: 3px; padding: 0 1px; }
 
+    /* ── 异常：沿用管理台卡片和表格，只补充异常领域的少量语义 ── */
+    .an-mode { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 16px; background: rgba(75,63,228,.06); border: 1px solid var(--edge); border-radius: 12px; }
+    .an-mode .btn { border: 0; background: transparent; }
+    .an-mode .btn.is-active { color: #fff; background: var(--iris); box-shadow: var(--sh-iris); }
+    .an-view[hidden] { display: none; }
+    .an-summary { display: grid; grid-template-columns: 1.2fr repeat(4,1fr); gap: 12px; margin-bottom: 18px; }
+    .an-summary .stone:first-child { color: #fff; background: #20212A; border-color: #20212A; }
+    .an-summary .stone:first-child small { color: #C7C9D2; }
+    .an-summary .stone:first-child strong { color: #FFE073; }
+    .an-problem { font-weight: 700; color: var(--ink); }
+    .an-sub { margin-top: 3px; color: var(--ink-mute); font-size: 12.5px; }
+    .an-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .an-issue-shortcut { width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; color: var(--ink-mute); background: transparent; border-color: transparent; }
+    .an-issue-shortcut:hover { color: var(--iris); background: rgba(75,63,228,.07); border-color: rgba(75,63,228,.18); }
+    .an-issue-shortcut svg { width: 15px; height: 15px; }
+    .an-rule-table th, .an-rule-table td { padding-top: 8px; padding-bottom: 8px; vertical-align: middle; }
+    .an-rule-table .an-problem { line-height: 1.25; }
+    .an-rule-table .an-sub { margin-top: 2px; line-height: 1.25; }
+    .an-rule-table .an-actions { flex-wrap: nowrap; justify-content: flex-end; }
+    .an-rule-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .an-rule-status::before { width: 7px; height: 7px; border-radius: 50%; background: #A4A7B4; content: ""; }
+    .an-rule-status.is-enabled::before { background: #23A66F; box-shadow: 0 0 0 3px rgba(35,166,111,.12); }
+    .an-rule-intro { margin: -2px 0 16px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: 10px; background: #FAFAFD; }
+    .an-rule-intro strong { display: block; margin-bottom: 4px; font-size: 15px; }
+    .an-rule-params { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; grid-column: 1 / -1; }
+    .an-field-note { color: var(--ink-mute); font-size: 11.5px; line-height: 1.4; }
+    .an-unit-input { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; }
+    .an-unit-input span { color: var(--ink-mute); font-size: 12px; }
+    .an-preview { margin-top: 12px; padding: 11px 13px; border-radius: 10px; background: rgba(75,63,228,.07); color: var(--ink-soft); }
+    .an-preview[hidden] { display: none; }
+    .an-empty { padding: 38px 16px; text-align: center; color: var(--ink-mute); }
+    .an-empty[hidden] { display: none; }
+    .an-empty strong { display: block; margin-bottom: 4px; color: var(--ink); }
+    .an-detail-modal { width: min(720px, 94vw); max-height: 88vh; overflow: auto; }
+    .an-detail-lead { margin: 0 0 16px; padding: 12px 14px; color: var(--ink-soft); background: rgba(75,63,228,.05); border-left: 3px solid var(--iris); border-radius: 0 10px 10px 0; }
+    .an-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 16px; }
+    .an-fact { min-width: 0; padding: 11px 12px; border: 1px solid var(--edge); border-radius: 10px; }
+    .an-fact dt { margin-bottom: 4px; color: var(--ink-mute); font-size: 12px; font-weight: 600; }
+    .an-fact dd { margin: 0; color: var(--ink); font-size: 13.5px; overflow-wrap: anywhere; }
+    .an-detail-section { margin: 16px 0 8px; font: 700 13.5px var(--disp); }
+    .an-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .an-field { display: grid; gap: 5px; }
+    .an-field.wide { grid-column: 1 / -1; }
+    .an-field label { color: var(--ink-mute); font-size: 12.5px; font-weight: 600; }
+    .an-field textarea { min-height: 110px; resize: vertical; padding: 9px 11px; border: 1.5px solid var(--edge-2); border-radius: 9px; font: 13px/1.5 var(--mono); }
+    .an-field select, .an-field input { width: 100%; }
+    .an-audit { padding: 10px 0; border-bottom: 1px solid var(--edge); }
+    @media (max-width: 900px) { .an-summary { grid-template-columns: 1fr 1fr; } .an-summary .stone:first-child { grid-column: 1/-1; } }
+    @media (max-width: 620px) { .an-form, .an-facts, .an-rule-params { grid-template-columns: 1fr; } .an-field.wide { grid-column: auto; } }
+
     /* ── Patch viewer（补丁文件查看器弹窗）── */
     .patch-mask {
       position: fixed; inset: 0; z-index: 320; display: grid; place-items: center;
@@ -517,6 +567,7 @@
     <div class="side-nav__group">
       <span class="side-nav__label">概览</span>
       <button data-tab="overview" class="is-active">总览</button>
+      <button data-tab="anomalies">异常</button>
     </div>
     <div class="side-nav__group">
       <span class="side-nav__label">使用与质量</span>
@@ -953,6 +1004,66 @@
     </div>
   </section>
 
+  <!-- ============================== 异常 ============================== -->
+  <section class="tab" id="tab-anomalies">
+    <div class="page-head">
+      <div class="page-head__title">
+        <span class="page-head__eyebrow">问题管理</span>
+        异常
+        <small>只呈现需要关注的问题；查看清晰的异常详情，并直接定位到对应业务内容</small>
+      </div>
+      <label style="margin-left:auto; font-size:13px; font-weight:600;">查看范围
+        <select id="anMaster"><option value="">选择 AI Master</option></select>
+      </label>
+      <button class="btn" id="anRefresh">刷新</button>
+    </div>
+
+    <div class="an-mode" role="tablist" aria-label="异常功能">
+      <button class="btn is-active" data-an-view="overview">问题总览</button>
+      <button class="btn" data-an-view="rules">规则管理</button>
+      <button class="btn" data-an-view="reviews">屏蔽审核</button>
+    </div>
+
+    <div class="an-view" id="an-view-overview">
+      <div class="an-summary">
+        <div class="stone"><small>当前开放异常</small><strong id="anSumOpen">0</strong></div>
+        <div class="stone stone--tangerine"><small>组件统计</small><strong id="anSumComponent">0</strong></div>
+        <div class="stone stone--magenta"><small>工作流</small><strong id="anSumWorkflow">0</strong></div>
+        <div class="stone stone--sky"><small>归因处理</small><strong id="anSumAttribution">0</strong></div>
+        <div class="stone stone--iris"><small>版本使用</small><strong id="anSumVersion">0</strong></div>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <label>异常类型
+            <select id="anCategory"><option value="">全部</option><option value="component">组件统计</option><option value="workflow">工作流</option><option value="attribution">归因处理</option><option value="version">版本使用</option></select>
+          </label>
+        </div>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table><thead><tr><th>问题</th><th>影响范围</th><th>异常依据</th><th>持续</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
+        </div>
+        <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围没有开放异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
+      </div>
+    </div>
+
+    <div class="an-view" id="an-view-rules" hidden>
+      <div class="card">
+        <div class="toolbar"><button class="btn" id="anEvaluate">立即检测</button><span class="muted" id="anRuleCount"></span><span class="muted">检测类型由系统统一提供，管理员只需配置并启停。</span></div>
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table class="an-rule-table"><thead><tr><th>检测规则</th><th>判定条件</th><th>生效范围</th><th>允许屏蔽</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead><tbody id="anRuleList"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <div class="an-view" id="an-view-reviews" hidden>
+      <div class="card">
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table><thead><tr><th>申请</th><th>数据对象</th><th>理由与影响</th><th>状态</th><th>审核</th></tr></thead><tbody id="anReviewBody"></tbody></table>
+        </div>
+        <div class="an-empty" id="anReviewEmpty" hidden><strong>暂无屏蔽申请</strong>AI Master 提交的异常数据屏蔽申请会出现在这里。</div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============================== 日志 ============================== -->
   <section class="tab" id="tab-logs">
     <div class="page-head">
@@ -1075,6 +1186,34 @@
       <button class="btn" id="deleteCancel">取消</button>
       <button class="btn btn--danger" id="deleteOk">确认删除</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="anRuleMask" hidden>
+  <div class="modal an-detail-modal" role="dialog" aria-modal="true" aria-labelledby="anRuleTitle">
+    <h2 id="anRuleTitle">编辑检测规则</h2>
+    <div class="an-rule-intro" id="anRuleSummary"></div>
+    <input id="anRuleName" type="hidden"><input id="anRuleDetector" type="hidden">
+    <div class="an-form">
+      <div class="an-field"><label>规则状态</label><select id="anRuleStatus"><option value="enabled">启用检测</option><option value="disabled">暂停检测</option></select><span class="an-field-note">停用后不再产生新异常，现有开放异常会自动结束。</span></div>
+      <div class="an-field"><label>允许 AI Master 申请屏蔽</label><select id="anRuleAllowArchive"><option value="true">允许</option><option value="false">不允许</option></select><span class="an-field-note">关闭后，这类异常不显示“申请屏蔽”。</span></div>
+      <div class="an-field"><label>生效范围</label><select id="anRuleScope"><option value="platform">全平台</option><option value="component">指定组件</option><option value="repository">指定仓库</option></select></div>
+      <div class="an-field" id="anRuleScopeValueField"><label id="anRuleScopeValueLabel">范围名称</label><input id="anRuleScopeValue" placeholder="填写组件或仓库名称"></div>
+      <div class="an-rule-params" id="anRuleParams"></div>
+      <div class="an-field wide"><label>变更原因</label><input id="anRuleReason" placeholder="例如：近期误报较多，将等待时间由 24 小时调整为 48 小时"></div>
+    </div>
+    <div class="an-preview" id="anRulePreview" hidden></div>
+    <div class="toolbar" style="margin:16px 0 0; justify-content:flex-end;">
+      <button class="btn" id="anRuleCancel">取消</button><button class="btn" id="anRulePreviewBtn">试算影响</button><button class="btn btn--primary" id="anRuleSave">保存规则</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="anDetailMask" hidden>
+  <div class="modal an-detail-modal" role="dialog" aria-modal="true" aria-labelledby="anDetailTitle">
+    <h2 id="anDetailTitle">异常详情</h2>
+    <div id="anDetailContent"></div>
+    <div class="toolbar" style="margin:16px 0 0; justify-content:flex-end;"><button class="btn btn--primary" id="anDetailClose">关闭</button></div>
   </div>
 </div>
 
@@ -1219,6 +1358,7 @@ document.querySelector(".portal-nav").addEventListener("click", (event) => {
   if (button.dataset.tab === "aimaster") loadAiMaster();
   if (button.dataset.tab === "versions") loadVersions();
   if (button.dataset.tab === "registry") loadRegistry();
+  if (button.dataset.tab === "anomalies") loadAnomalyModule();
   if (button.dataset.tab === "logs") loadLogs();
 });
 
@@ -1991,6 +2131,12 @@ async function loadWorkflows() {
       const anchor = document.querySelector(`tr[data-wf="${id}"]`);
       if (anchor) expandWf(id, anchor, false);
     }
+    const focusId = new URLSearchParams(location.search).get("workflow_id");
+    const focusRow = focusId ? document.querySelector(`tr[data-wf="${CSS.escape(focusId)}"]`) : null;
+    if (focusRow) {
+      focusRow.classList.add("row-fresh");
+      focusRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   } catch (error) { markSync(false); toast(`工作流加载失败：${error.message}`, true); }
 }
 
@@ -2296,8 +2442,30 @@ let awTypeTimer = null;
     const value = params.get(key);
     if (value) $("#" + inputId).value = value;
   }
+  const workflowId = params.get("workflow_id");
+  if (workflowId) awOpen.add(workflowId);
   const button = document.querySelector('.portal-nav button[data-tab="workflows"]');
   if (button) button.click();
+})();
+
+/* 异常中心可把排查入口带到对应业务页；工作流页继续使用上面的精确筛选。 */
+(function applyGenericTabDeepLink() {
+  const params = new URLSearchParams(location.search);
+  const tab = params.get("tab");
+  if (!tab || tab === "workflows") return;
+  const button = document.querySelector(`.portal-nav button[data-tab="${CSS.escape(tab)}"]`);
+  // 页签对应模块的 let 状态在脚本后部初始化；放到当前脚本执行完后再触发，避免 TDZ。
+  if (button) queueMicrotask(() => {
+    const repository = params.get("repository") || "";
+    if (tab === "components" && repository) $("#compSearch").value = repository;
+    if (tab === "registry" && repository) $("#regSearch").value = repository;
+    if (tab === "attribution") {
+      if (repository) $("#fRepo").value = repository;
+      const devRunId = params.get("dev_run_id");
+      if (devRunId) openDetails.add(devRunId);
+    }
+    button.click();
+  });
 })();
 
 /* --------------------------- Components view --------------------------- */
@@ -2362,7 +2530,8 @@ function renderCompRows() {
       const owners = componentOwners(c);
       if (masterFilter && !owners.names.includes(masterFilter)) return false;
       if (!term) return true;
-      return [c.name, c.se ?? "", owners.names.join("、")].join("\n").toLowerCase().includes(term);
+      return [c.name, c.se ?? "", owners.names.join("、"), ...componentRepoKeys(c)]
+        .join("\n").toLowerCase().includes(term);
     })
     .sort((a, b) => (b.effective_lines ?? 0) - (a.effective_lines ?? 0));
   $("#compMeta").textContent = `近 30 天窗口 · 共 ${compData.length} 个组件 · 显示 ${rows.length}`;
@@ -2761,6 +2930,12 @@ async function loadRecords() {
       const anchor = document.querySelector(`tr[data-dev="${id}"]`);
       if (anchor) expandDetail(id, anchor, false);
     }
+    const focusId = new URLSearchParams(location.search).get("dev_run_id");
+    const focusRow = focusId ? document.querySelector(`tr[data-dev="${CSS.escape(focusId)}"]`) : null;
+    if (focusRow) {
+      focusRow.classList.add("row-fresh");
+      focusRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   } catch (error) { markSync(false); toast(`记录加载失败：${error.message}`, true); }
 }
 
@@ -3055,7 +3230,7 @@ async function loadVersions() {
     $("#verNonReleaseCount").textContent =
       roster.non_release.length ? `· ${roster.non_release.length} 个（冒烟/联调，不入名单）` : "· 无";
     $("#verNonRelease").innerHTML = roster.non_release.map((row) => `
-      <tr><td>${esc(row.user_name)}</td><td class="mono">${esc(row.user_email)}</td>
+      <tr data-email="${esc(row.user_email)}"><td>${esc(row.user_name)}</td><td class="mono">${esc(row.user_email)}</td>
       <td class="mono">${esc(row.version)}</td><td class="mono">${esc(fmtShort(row.last_report_at))}</td></tr>`).join("")
       || '<tr><td colspan="4" class="muted">无</td></tr>';
     $("#verDistStones").innerHTML = dist.items.map((item) => `
@@ -3063,6 +3238,17 @@ async function loadVersions() {
         <small>${esc(item.version)}${item.is_latest ? " · 最新" : ""}${item.is_release ? "" : " · 非发布"}</small>
         <strong>${item.users}</strong><span class="muted" style="font-size:12px;">人 · ${item.reports} 次上报</span>
       </div>`).join("");
+    const focusEmail = new URLSearchParams(location.search).get("user_email");
+    const focusRow = focusEmail
+      ? document.querySelector(`#tab-versions tr[data-email="${CSS.escape(focusEmail)}"]`)
+      : null;
+    if (focusRow) {
+      const disclosure = focusRow.closest("details");
+      if (disclosure) disclosure.open = true;
+      focusRow.classList.add("row-fresh");
+      focusRow.scrollIntoView({ behavior: "smooth", block: "center" });
+      focusRow.querySelector("button[data-timeline]")?.click();
+    }
   } catch (error) { markSync(false); toast(`版本运营加载失败：${error.message}`, true); }
 }
 
@@ -3141,6 +3327,9 @@ function renderRegistry() {
   const term = $("#regSearch").value.trim().toLowerCase();
   const components = regData ?? [];
   const visible = components.filter((c) => regHit(c, term));
+  if (visible.length && !visible.some((component) => component.id === regSelected)) {
+    regSelected = visible[0].id;
+  }
   const repoTotal = components.reduce((sum, c) => sum + c.repos.length, 0);
   $("#regStats").textContent = regData === null
     ? "加载中…"
@@ -3434,6 +3623,392 @@ $("#logQuery").addEventListener("input", () => {
 $("#logAuto").addEventListener("change", (event) => {
   clearInterval(logTimer);
   if (event.target.checked) { logTimer = setInterval(loadLogs, 5000); loadLogs(); }
+});
+
+/* ------------------------------ 异常模块 ------------------------------ */
+let anCsrf = "";
+let anMastersLoaded = false;
+let anCatalog = [];
+let anRules = [];
+let anEvents = new Map();
+let anEditingRule = null;
+let anPreviewFingerprint = "";
+let anCurrentView = "overview";
+
+const AN_CATEGORY_LABELS = { component: "组件统计", workflow: "工作流", attribution: "归因处理", version: "版本使用" };
+const AN_SCOPE_LABELS = { platform: "全平台", component: "指定组件", repository: "指定仓库" };
+const AN_PARAM_META = {
+  max_idle_hours: { label: "连续无活动超过", unit: "小时", note: "达到该时长后判定为停滞或中断" },
+  active_window_days: { label: "近期活跃范围", unit: "天", note: "只检查这段时间内曾经活跃的仓库" },
+  baseline_days: { label: "历史基线周期", unit: "天", note: "使用这段时间的数据计算正常水平" },
+  deviation_ratio: { label: "偏离历史水平超过", unit: "%", note: "例如 50 表示偏离一半", scale: 100 },
+  min_sample: { label: "最少历史样本", unit: "条", note: "样本不足时不产生异常" },
+  window_hours: { label: "观察窗口", unit: "小时", note: "在这段时间内统计持续情况" },
+  min_count: { label: "最少出现次数", unit: "次", note: "达到该次数才视为持续异常" },
+  grace_minutes: { label: "允许恢复时间", unit: "分钟", note: "短暂状态变化不会立即产生异常" },
+  statuses: { label: "需要关注的步骤状态", note: "多个状态使用逗号分隔", kind: "list" },
+  max_wait_hours: { label: "人工确认等待超过", unit: "小时", note: "达到该时长后提示门禁超时" },
+  step_types: { label: "需要关注的人工步骤", note: "多个类型使用逗号分隔", kind: "list" },
+  wait_hours: { label: "等待补丁超过", unit: "小时", note: "开发结束后仍未收到补丁的等待时长" },
+  pending_hours: { label: "待处理停留超过", unit: "小时", note: "归因任务排队过久的判断线" },
+  running_minutes: { label: "执行中停留超过", unit: "分钟", note: "归因任务运行过久的判断线" },
+  retry_hours: { label: "等待重试超过", unit: "小时", note: "归因任务长时间未重试的判断线" },
+  min_retry_count: { label: "失败重试达到", unit: "次", note: "达到该次数后判定持续失败" },
+  ignored_flags: { label: "忽略的质量标记", note: "这些标记不会产生异常，使用逗号分隔", kind: "list" },
+  active_days: { label: "近期活跃范围", unit: "天", note: "只检查这段时间内仍在使用的人员" },
+  lag_positions: { label: "落后正式版本达到", unit: "个版本", note: "达到该差距后提示旧版本使用" },
+  allowlist: { label: "允许使用的非发布版本", note: "多个版本使用逗号分隔；留空表示都不允许", kind: "list" },
+  confirm_count: { label: "连续回退达到", unit: "次", note: "排除一次性的版本切换" },
+};
+
+async function ensureAnomalyAdmin() {
+  try {
+    const session = await api("/api/v1/anomalies/admin/session");
+    anCsrf = session.csrf_token;
+    return true;
+  } catch { /* ask for the shared administrator password below */ }
+  const password = await askDialog({
+    title: "系统管理员验证",
+    message: "规则管理、组织全局视角和屏蔽审核需要管理员密码。",
+    placeholder: "管理员密码",
+    okText: "验证",
+  });
+  if (!password) return false;
+  try {
+    const session = await api("/api/v1/anomalies/admin/login", {
+      method: "POST", body: JSON.stringify({ password }),
+    });
+    anCsrf = session.csrf_token;
+    toast("管理员验证成功");
+    return true;
+  } catch (error) {
+    toast(`验证失败：${error.message}`, true);
+    return false;
+  }
+}
+
+const anomalyWrite = (path, options = {}) => api(path, {
+  ...options,
+  headers: { "Content-Type": "application/json", "X-CSRF-Token": anCsrf },
+});
+
+async function loadAnomalyModule() {
+  if (!anMastersLoaded) {
+    const data = await api("/api/v1/ai-masters");
+    $("#anMaster").innerHTML = '<option value="">选择 AI Master</option><option value="__admin__">组织全局（管理员）</option>'
+      + data.items.map((item) => `<option value="${item.id}">${esc(item.name)} · ${item.repo_count} 仓库</option>`).join("");
+    if (data.items.length) $("#anMaster").value = data.items[0].id;
+    anMastersLoaded = true;
+  }
+  if (anCurrentView === "overview") await loadAnomalyEvents();
+  if (anCurrentView === "rules") await loadAnomalyRules();
+  if (anCurrentView === "reviews") await loadAnomalyReviews();
+}
+
+function anDuration(iso) {
+  const hours = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 36e5));
+  return hours < 24 ? `${hours} 小时` : `${Math.floor(hours / 24)} 天`;
+}
+
+async function loadAnomalyEvents() {
+  const master = $("#anMaster").value;
+  if (!master) {
+    $("#anEventBody").innerHTML = "";
+    $("#anEventEmpty").hidden = false;
+    return;
+  }
+  const isAdmin = master === "__admin__";
+  if (isAdmin && !await ensureAnomalyAdmin()) return;
+  const query = new URLSearchParams(isAdmin ? { admin_view: "true" } : { ai_master_id: master });
+  if ($("#anCategory").value) query.set("category", $("#anCategory").value);
+  try {
+    const [events, summary] = await Promise.all([
+      api(`/api/v1/anomalies/events?${query}`),
+      api(`/api/v1/anomalies/summary?${isAdmin ? "admin_view=true" : `ai_master_id=${master}`}`),
+    ]);
+    anEvents = new Map(events.items.map((item) => [item.id, item]));
+    $("#anSumOpen").textContent = summary.open;
+    for (const key of ["Component", "Workflow", "Attribution", "Version"]) {
+      $("#anSum" + key).textContent = summary.categories[key.toLowerCase()];
+    }
+    const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
+    $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
+      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div><div class="an-sub">${esc(item.summary)}</div></td>
+      <td>${esc(item.user_email || "—")}<div class="an-sub">${esc(item.repository || item.component_id || "系统级")}</div></td>
+      <td>${esc(item.actual_value || "—")}<div class="an-sub">阈值 ${esc(item.threshold_value || "—")}</div></td>
+      <td>${anDuration(item.first_detected_at)}<div class="an-sub">第 ${item.occurrence} 次发生</div></td>
+      <td><div class="an-actions"><button class="btn btn--small" data-an-detail="${item.id}">查看详情</button>${item.archive_supported ? `<button class="btn btn--small btn--primary" data-an-archive="${item.id}">申请屏蔽</button>` : ""}<button class="btn btn--small an-issue-shortcut" data-an-issue="${item.id}" title="提问题 / 提诉求" aria-label="针对该异常提问题或诉求"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M12 8v5M9.5 10.5h5"/></svg></button></div></td>
+    </tr>`).join("");
+    $("#anEventEmpty").hidden = events.items.length > 0;
+    markSync(true);
+  } catch (error) {
+    markSync(false);
+    toast(`异常加载失败：${error.message}`, true);
+  }
+}
+
+function openAnomalyDetail(title, html) {
+  $("#anDetailTitle").textContent = title;
+  $("#anDetailContent").innerHTML = html;
+  $("#anDetailMask").hidden = false;
+}
+
+function showAnomalyEvent(id) {
+  const item = anEvents.get(id);
+  const target = item.detail_target || {};
+  const href = target.tab ? `/admin?${new URLSearchParams(target)}` : "";
+  const evidence = item.evidence || {};
+  const facts = [];
+  const addFact = (label, value) => { if (value !== null && value !== undefined && value !== "") facts.push([label, value]); };
+  addFact("影响对象", item.user_email || item.repository || item.component_id || "系统级");
+  if (item.user_email && item.repository) addFact("所在仓库", item.repository);
+  addFact("异常值", item.actual_value || "—");
+  addFact("规则阈值", item.threshold_value || "—");
+  addFact("首次发现", fmtShort(item.first_detected_at));
+  addFact("最近命中", `${fmtShort(item.last_detected_at)} · 累计 ${item.hit_count} 次`);
+  const evidenceLabels = {
+    last_reported_at: "最后一次上报", current_version: "当前版本",
+    workflow_id: "工作流 ID", status: "当前状态", last_activity_at: "最后活动",
+    step_name: "异常步骤", step_status: "步骤状态", completed_at: "完成时间",
+    dev_run_id: "开发记录 ID", retry_count: "重试次数", quality_flags: "质量标记",
+    updated_at: "状态更新时间", recent_count: "近 24 小时上报", baseline_daily: "历史日均上报",
+    count: "窗口内记录数",
+  };
+  for (const [key, label] of Object.entries(evidenceLabels)) {
+    const raw = evidence[key];
+    if (raw === null || raw === undefined || raw === "" || (Array.isArray(raw) && !raw.length)) continue;
+    const value = key.endsWith("_at") ? fmtShort(raw) : (Array.isArray(raw) ? raw.join("、") : raw);
+    addFact(label, value);
+  }
+  const targetLabels = { workflows: "查看工作流详情", attribution: "查看归因处理详情", versions: "查看版本使用详情", components: "查看组件详情", registry: "查看注册表详情" };
+  const factsHtml = facts.map(([label, value]) => `<div class="an-fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+  openAnomalyDetail(item.title, `<p class="an-detail-lead">${esc(item.summary)}</p><div class="an-facts">${factsHtml}</div><div class="an-detail-section">判断依据</div><dl class="kv"><dt>命中规则</dt><dd>${esc(item.rule.name)} · 版本 ${item.rule_version}</dd><dt>发生周期</dt><dd>第 ${item.occurrence} 次发生</dd></dl>${href ? `<div class="toolbar" style="margin:18px 0 0;"><a class="btn btn--primary" href="${esc(href)}">${esc(targetLabels[target.tab] || "查看具体内容")} →</a></div>` : ""}`);
+}
+
+async function requestAnomalyArchive(id) {
+  const requestedBy = await askDialog({ title: "申请屏蔽异常数据", placeholder: "AI Master 姓名" });
+  if (!requestedBy) return;
+  const reason = await askDialog({ title: "屏蔽理由", message: "说明为什么该数据不应继续纳入统计和展示。提交后由管理员审核。", placeholder: "必填" });
+  if (!reason) return;
+  try {
+    await api(`/api/v1/anomalies/events/${id}/archive-requests`, { method: "POST", body: JSON.stringify({ requested_by: requestedBy, reason }) });
+    toast("屏蔽申请已提交，等待管理员审核");
+    loadAnomalyEvents();
+  } catch (error) { toast(`提交失败：${error.message}`, true); }
+}
+
+async function createAnomalyIssue(id) {
+  const reporter = await askDialog({ title: "提问题 / 提诉求", placeholder: "提出人" });
+  if (!reporter) return;
+  const assignee = await askDialog({ title: "问题负责人", placeholder: "负责人姓名" });
+  if (!assignee) return;
+  const suggestion = await askDialog({ title: "优化建议", message: "说明希望产品、组件或流程如何改进。", placeholder: "必填" });
+  if (!suggestion) return;
+  try {
+    await api(`/api/v1/anomalies/events/${id}/issues`, { method: "POST", body: JSON.stringify({ reporter, assignee, suggestion }) });
+    toast("问题或诉求已记录到问题看板");
+    loadAnomalyEvents();
+  } catch (error) { toast(`生成失败：${error.message}`, true); }
+}
+
+async function loadAnomalyCatalog() {
+  if (anCatalog.length) return;
+  const data = await api("/api/v1/anomalies/detector-types");
+  anCatalog = data.items;
+}
+
+function anomalyParamText(key, value) {
+  const meta = AN_PARAM_META[key] || { label: key };
+  if (Array.isArray(value)) return `${meta.label}：${value.length ? value.join("、") : "无"}`;
+  const shown = meta.scale ? Number(value) * meta.scale : value;
+  return `${meta.label}：${shown}${meta.unit || ""}`;
+}
+
+function anomalyParamSummary(params) {
+  const entries = Object.entries(params || {});
+  if (!entries.length) return "使用系统默认判定条件";
+  const shown = entries.slice(0, 2).map(([key, value]) => anomalyParamText(key, value));
+  return shown.join(" · ") + (entries.length > 2 ? ` · 另 ${entries.length - 2} 项` : "");
+}
+
+function anomalyScopeText(rule) {
+  return rule.scope_type === "platform"
+    ? AN_SCOPE_LABELS.platform
+    : `${AN_SCOPE_LABELS[rule.scope_type] || "指定范围"} · ${rule.scope_value || "未填写"}`;
+}
+
+async function loadAnomalyRules() {
+  if (!await ensureAnomalyAdmin()) return;
+  try {
+    await loadAnomalyCatalog();
+    const data = await api("/api/v1/anomalies/rules");
+    const order = new Map(anCatalog.map((item, index) => [item.code, index]));
+    anRules = data.items.sort((a, b) => (order.get(a.detector_type) ?? 999) - (order.get(b.detector_type) ?? 999));
+    const enabled = anRules.filter((item) => item.status === "enabled").length;
+    $("#anRuleCount").textContent = `${anRules.length} 类检测 · ${enabled} 类已启用`;
+    $("#anRuleList").innerHTML = anRules.map((item) => {
+      const spec = anCatalog.find((type) => type.code === item.detector_type);
+      const isEnabled = item.status === "enabled";
+      return `<tr>
+        <td><div class="an-problem">${esc(spec?.name || item.name)}</div><div class="an-sub">${esc(AN_CATEGORY_LABELS[item.category] || item.category)} · 最近命中 ${item.last_match_count ?? "尚未检测"}</div></td>
+        <td><div style="max-width:360px;">${esc(anomalyParamSummary(item.params))}</div></td>
+        <td>${esc(anomalyScopeText(item))}</td>
+        <td>${item.allow_archive ? '<span class="badge badge--finalized_match">允许</span>' : '<span class="muted">不允许</span>'}</td>
+        <td><span class="an-rule-status ${isEnabled ? "is-enabled" : ""}">${isEnabled ? "检测中" : "已停用"}</span></td>
+        <td><div class="an-actions"><button class="btn btn--small" data-an-rule-detail="${item.id}">详情</button><button class="btn btn--small" data-an-rule-edit="${item.id}">编辑</button><button class="btn btn--small" data-an-rule-toggle="${item.id}" data-status="${isEnabled ? "disabled" : "enabled"}">${isEnabled ? "停用" : "启用"}</button></div></td>
+      </tr>`;
+    }).join("");
+  } catch (error) { toast(`规则加载失败：${error.message}`, true); }
+}
+
+function syncAnomalyScopeField() {
+  const scope = $("#anRuleScope").value;
+  $("#anRuleScopeValueField").hidden = scope === "platform";
+  $("#anRuleScopeValueLabel").textContent = scope === "component" ? "组件名称" : "仓库名称";
+  $("#anRuleScopeValue").placeholder = scope === "component" ? "填写组件名称" : "填写仓库名称";
+  if (scope === "platform") $("#anRuleScopeValue").value = "";
+}
+
+function renderAnomalyParamInputs(params) {
+  $("#anRuleParams").innerHTML = Object.entries(params || {}).map(([key, value]) => {
+    const meta = AN_PARAM_META[key] || { label: key };
+    const isList = meta.kind === "list" || Array.isArray(value);
+    const shown = isList ? value.join("，") : (meta.scale ? Number(value) * meta.scale : value);
+    return `<div class="an-field"><label>${esc(meta.label)}</label><div class="an-unit-input"><input class="an-param-input" data-param="${esc(key)}" data-kind="${isList ? "list" : "number"}" data-scale="${meta.scale || 1}" type="${isList ? "text" : "number"}" min="${isList ? "" : "0.01"}" step="${meta.scale ? "1" : "any"}" value="${esc(shown)}">${meta.unit ? `<span>${esc(meta.unit)}</span>` : ""}</div>${meta.note ? `<span class="an-field-note">${esc(meta.note)}</span>` : ""}</div>`;
+  }).join("");
+}
+
+function resetAnomalyRuleForm(rule) {
+  if (!rule) return;
+  anEditingRule = rule;
+  anPreviewFingerprint = "";
+  const spec = anCatalog.find((item) => item.code === rule.detector_type);
+  $("#anRuleTitle").textContent = `编辑：${spec?.name || rule.name}`;
+  $("#anRuleSummary").innerHTML = `<strong>${esc(spec?.name || rule.name)}</strong><span class="muted">${esc(spec?.description || "配置这类异常的判断条件和处理权限。")}</span>`;
+  $("#anRuleName").value = rule.name;
+  $("#anRuleDetector").value = rule.detector_type;
+  $("#anRuleStatus").value = rule.status === "enabled" ? "enabled" : "disabled";
+  $("#anRuleAllowArchive").value = rule.allow_archive ? "true" : "false";
+  $("#anRuleScope").value = rule.scope_type;
+  $("#anRuleScopeValue").value = rule.scope_value || "";
+  syncAnomalyScopeField();
+  renderAnomalyParamInputs(rule.params || spec?.defaults || {});
+  $("#anRuleReason").value = "";
+  $("#anRulePreview").hidden = true;
+  $("#anRuleMask").hidden = false;
+}
+
+function anomalyRuleBody() {
+  const spec = anCatalog.find((item) => item.code === $("#anRuleDetector").value);
+  const params = {};
+  document.querySelectorAll("#anRuleParams .an-param-input").forEach((input) => {
+    if (input.dataset.kind === "list") {
+      params[input.dataset.param] = input.value.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean);
+    } else {
+      const value = Number(input.value);
+      params[input.dataset.param] = value / Number(input.dataset.scale || 1);
+    }
+  });
+  return {
+    name: $("#anRuleName").value.trim(), category: spec.category, detector_type: spec.code,
+    scope_type: $("#anRuleScope").value, scope_value: $("#anRuleScopeValue").value.trim() || null,
+    params, allow_archive: $("#anRuleAllowArchive").value === "true", status: $("#anRuleStatus").value,
+    change_reason: $("#anRuleReason").value.trim() || null,
+  };
+}
+
+async function showAnomalyRule(id) {
+  try {
+    const rule = await api(`/api/v1/anomalies/rules/${id}`);
+    const spec = anCatalog.find((item) => item.code === rule.detector_type);
+    const actionLabels = { created: "创建规则", updated: "修改配置", enabled: "启用规则", disabled: "停用规则", deleted: "删除规则" };
+    const params = Object.entries(rule.params || {}).map(([key, value]) => `<div class="an-fact"><dt>${esc((AN_PARAM_META[key] || {}).label || key)}</dt><dd>${esc(anomalyParamText(key, value).split("：").slice(1).join("："))}</dd></div>`).join("");
+    openAnomalyDetail(spec?.name || rule.name, `<p class="an-detail-lead">${esc(spec?.description || "该规则用于发现需要关注的异常情况。")}</p><div class="an-facts"><div class="an-fact"><dt>当前状态</dt><dd>${rule.status === "enabled" ? "正在检测" : "已停用"}</dd></div><div class="an-fact"><dt>生效范围</dt><dd>${esc(anomalyScopeText(rule))}</dd></div><div class="an-fact"><dt>允许申请屏蔽</dt><dd>${rule.allow_archive ? "允许" : "不允许"}</dd></div><div class="an-fact"><dt>最近一次检测</dt><dd>${rule.last_evaluated_at ? esc(fmtShort(rule.last_evaluated_at)) : "尚未检测"}</dd></div></div><div class="an-detail-section">判定条件</div><div class="an-facts">${params}</div><div class="an-detail-section">变更记录</div>${rule.audits.map((row) => `<div class="an-audit"><strong>${esc(actionLabels[row.action] || "配置变更")} · 第 ${row.version} 版</strong><div class="an-sub">${new Date(row.created_at).toLocaleString()} · ${esc(row.operator)}${row.reason ? ` · ${esc(row.reason)}` : ""}</div></div>`).join("") || '<p class="muted">暂无记录</p>'}`);
+  } catch (error) { toast(`详情加载失败：${error.message}`, true); }
+}
+
+async function toggleAnomalyRule(id, status) {
+  const reason = await askDialog({ title: status === "enabled" ? "启用规则" : "停用规则", placeholder: "变更原因（必填）" });
+  if (!reason) return;
+  try {
+    await anomalyWrite(`/api/v1/anomalies/rules/${id}/status`, { method: "POST", body: JSON.stringify({ status, reason }) });
+    toast("规则状态已更新"); loadAnomalyRules();
+  } catch (error) { toast(`更新失败：${error.message}`, true); }
+}
+
+async function loadAnomalyReviews() {
+  if (!await ensureAnomalyAdmin()) return;
+  try {
+    const data = await api("/api/v1/anomalies/archive-requests");
+    $("#anReviewBody").innerHTML = data.items.map((item) => `<tr><td>${esc(item.requested_by)}<div class="an-sub">${new Date(item.created_at).toLocaleString()}</div></td><td>${esc(item.target_type)}<div class="an-sub mono">${esc(item.target_id)}</div></td><td>${esc(item.reason)}<div class="an-sub">影响 ${item.impact_preview.affected_rows ?? "—"} 条数据</div></td><td><span class="badge">${esc(item.status)}</span>${item.review_note ? `<div class="an-sub">${esc(item.review_note)}</div>` : ""}</td><td>${item.status === "pending" ? `<div class="an-actions"><button class="btn btn--small btn--primary" data-an-review="${item.id}" data-approved="true">通过</button><button class="btn btn--small btn--danger" data-an-review="${item.id}" data-approved="false">拒绝</button></div>` : "—"}</td></tr>`).join("");
+    $("#anReviewEmpty").hidden = data.items.length > 0;
+  } catch (error) { toast(`审核列表加载失败：${error.message}`, true); }
+}
+
+async function reviewAnomalyArchive(id, approved) {
+  const note = await askDialog({ title: approved ? "通过屏蔽申请" : "拒绝屏蔽申请", placeholder: approved ? "审核意见（可选）" : "拒绝理由（必填）" });
+  if (note === null || (!approved && !note)) return;
+  try {
+    await anomalyWrite(`/api/v1/anomalies/archive-requests/${id}/review`, { method: "POST", body: JSON.stringify({ approved, note }) });
+    toast("审核结果已保存"); loadAnomalyReviews();
+  } catch (error) { toast(`审核失败：${error.message}`, true); }
+}
+
+document.querySelector(".an-mode").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-an-view]");
+  if (!button) return;
+  if (button.dataset.anView !== "overview" && !await ensureAnomalyAdmin()) return;
+  anCurrentView = button.dataset.anView;
+  document.querySelectorAll("[data-an-view]").forEach((item) => item.classList.toggle("is-active", item === button));
+  document.querySelectorAll(".an-view").forEach((view) => { view.hidden = view.id !== `an-view-${anCurrentView}`; });
+  if (anCurrentView === "overview") loadAnomalyEvents();
+  if (anCurrentView === "rules") loadAnomalyRules();
+  if (anCurrentView === "reviews") loadAnomalyReviews();
+});
+
+$("#anMaster").addEventListener("change", loadAnomalyEvents);
+$("#anCategory").addEventListener("change", loadAnomalyEvents);
+$("#anRefresh").addEventListener("click", loadAnomalyModule);
+$("#anEventBody").addEventListener("click", (event) => {
+  const detail = event.target.closest("[data-an-detail]"); if (detail) showAnomalyEvent(detail.dataset.anDetail);
+  const archive = event.target.closest("[data-an-archive]"); if (archive) requestAnomalyArchive(archive.dataset.anArchive);
+  const issue = event.target.closest("[data-an-issue]"); if (issue) createAnomalyIssue(issue.dataset.anIssue);
+});
+$("#anRuleList").addEventListener("click", (event) => {
+  const detail = event.target.closest("[data-an-rule-detail]"); if (detail) showAnomalyRule(detail.dataset.anRuleDetail);
+  const edit = event.target.closest("[data-an-rule-edit]"); if (edit) resetAnomalyRuleForm(anRules.find((item) => item.id === edit.dataset.anRuleEdit));
+  const toggle = event.target.closest("[data-an-rule-toggle]"); if (toggle) toggleAnomalyRule(toggle.dataset.anRuleToggle, toggle.dataset.status);
+});
+$("#anReviewBody").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-an-review]");
+  if (button) reviewAnomalyArchive(button.dataset.anReview, button.dataset.approved === "true");
+});
+$("#anRuleScope").addEventListener("change", () => { syncAnomalyScopeField(); anPreviewFingerprint = ""; $("#anRulePreview").hidden = true; });
+$("#anRuleMask").addEventListener("input", () => { anPreviewFingerprint = ""; $("#anRulePreview").hidden = true; });
+$("#anRuleCancel").addEventListener("click", () => { $("#anRuleMask").hidden = true; });
+$("#anDetailClose").addEventListener("click", () => { $("#anDetailMask").hidden = true; });
+$("#anRulePreviewBtn").addEventListener("click", async () => {
+  try {
+    const body = anomalyRuleBody();
+    const result = await anomalyWrite("/api/v1/anomalies/rules/preview", { method: "POST", body: JSON.stringify(body) });
+    anPreviewFingerprint = JSON.stringify(body);
+    $("#anRulePreview").innerHTML = `预计命中 <strong>${result.matches}</strong> 个对象${result.samples.length ? `<div class="an-sub">${result.samples.map((item) => esc(item.title)).join("<br>")}</div>` : ""}`;
+    $("#anRulePreview").hidden = false;
+  } catch (error) { toast(`试算失败：${error.message}`, true); }
+});
+$("#anRuleSave").addEventListener("click", async () => {
+  try {
+    const body = anomalyRuleBody();
+    if (JSON.stringify(body) !== anPreviewFingerprint) throw new Error("请先试算当前参数，再保存规则");
+    await anomalyWrite(`/api/v1/anomalies/rules/${anEditingRule.id}`, { method: "PUT", body: JSON.stringify(body) });
+    $("#anRuleMask").hidden = true; toast("规则已保存"); loadAnomalyRules();
+  } catch (error) { toast(`保存失败：${error.message}`, true); }
+});
+$("#anEvaluate").addEventListener("click", async () => {
+  try {
+    const result = await anomalyWrite("/api/v1/anomalies/rules/evaluate", { method: "POST" });
+    toast(`检测完成：${result.matches} 个对象命中`); loadAnomalyRules();
+  } catch (error) { toast(`检测失败：${error.message}`, true); }
 });
 
 // 首屏只看 URL：?se=张三 / ?ai_master=周宁（带 * 表示未指定/未认领那一桶），没有参数就是全部

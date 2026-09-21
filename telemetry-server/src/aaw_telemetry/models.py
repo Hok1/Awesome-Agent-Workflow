@@ -276,9 +276,7 @@ class CodeAttribution(Base):
     attributed_lines_90: Mapped[int] = mapped_column(Integer, nullable=False)
     mr_commit_lines: Mapped[int | None] = mapped_column(Integer)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
-    attribution_status: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="pending"
-    )
+    attribution_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_retry_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
     quality_flags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
@@ -313,9 +311,7 @@ class Issue(Base):
             "assignee IN ('张轶勃', '徐哲威', '宋东方', '张立肖', '孙杨宇鑫')",
             name="ck_issue_assignee",
         ),
-        CheckConstraint(
-            "status IN ('todo', 'in_progress', 'resolved')", name="ck_issue_status"
-        ),
+        CheckConstraint("status IN ('todo', 'in_progress', 'resolved')", name="ck_issue_status"),
         CheckConstraint("priority IN ('low', 'medium', 'high')", name="ck_issue_priority"),
         Index("ix_issue_status_updated", "status", "updated_at"),
         Index("ix_issue_assignee_updated", "assignee", "updated_at"),
@@ -338,6 +334,7 @@ class Issue(Base):
     ar: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
     resolved_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
 
     activities: Mapped[list[IssueActivity]] = relationship(
@@ -394,6 +391,178 @@ class RepoAiMaster(Base):
     updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
 
     ai_master: Mapped[AiMaster] = relationship()
+
+
+class AnomalyRule(Base):
+    """Stable logical rule; edits increment version without changing identity."""
+
+    __tablename__ = "anomaly_rule"
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('component', 'workflow', 'attribution', 'version')",
+            name="ck_anomaly_rule_category",
+        ),
+        CheckConstraint(
+            "scope_type IN ('platform', 'component', 'repository')",
+            name="ck_anomaly_rule_scope",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'enabled', 'disabled', 'deleted')",
+            name="ck_anomaly_rule_status",
+        ),
+        Index("ix_anomaly_rule_status_type", "status", "detector_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    detector_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, default="platform")
+    scope_value: Mapped[str | None] = mapped_column(String(256))
+    params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    allow_archive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    change_reason: Mapped[str | None] = mapped_column(String(512))
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    last_match_count: Mapped[int | None] = mapped_column(Integer)
+
+
+class AnomalyRuleAudit(Base):
+    __tablename__ = "anomaly_rule_audit"
+    __table_args__ = (Index("ix_anomaly_rule_audit_rule_time", "rule_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_rule.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    before: Mapped[dict | None] = mapped_column(JSON)
+    after: Mapped[dict | None] = mapped_column(JSON)
+    reason: Mapped[str | None] = mapped_column(String(512))
+    operator: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class AnomalyEvent(Base):
+    """One continuous anomaly occurrence for a rule and business object."""
+
+    __tablename__ = "anomaly_event"
+    __table_args__ = (
+        CheckConstraint(
+            "detection_status IN ('active', 'recovered')",
+            name="ck_anomaly_event_detection",
+        ),
+        CheckConstraint(
+            "disposition IN ('open', 'archive_pending', 'archived', 'issue_created')",
+            name="ck_anomaly_event_disposition",
+        ),
+        UniqueConstraint("active_key", name="uq_anomaly_event_active_key"),
+        UniqueConstraint(
+            "rule_id",
+            "object_type",
+            "object_key",
+            "occurrence",
+            name="uq_anomaly_event_occurrence",
+        ),
+        Index("ix_anomaly_event_owner_open", "ai_master_id", "detection_status", "disposition"),
+        Index("ix_anomaly_event_rule_object", "rule_id", "object_type", "object_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_rule.id", ondelete="RESTRICT"), nullable=False
+    )
+    rule_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    rule_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    detector_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    occurrence: Mapped[int] = mapped_column(Integer, nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(64))
+    component_id: Mapped[str | None] = mapped_column(String(128))
+    repository: Mapped[str | None] = mapped_column(String(256))
+    user_email: Mapped[str | None] = mapped_column(String(320))
+    ai_master_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ai_master.id", ondelete="SET NULL")
+    )
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    actual_value: Mapped[str | None] = mapped_column(String(256))
+    threshold_value: Mapped[str | None] = mapped_column(String(256))
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detail_target: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detection_status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    disposition: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
+    closed_reason: Mapped[str | None] = mapped_column(String(64))
+    first_detected_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    last_detected_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    recovered_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class AnomalyArchiveRequest(Base):
+    __tablename__ = "anomaly_archive_request"
+    __table_args__ = (
+        CheckConstraint(
+            "target_type IN ('workflow', 'dev_run', 'attribution', 'event')",
+            name="ck_anomaly_archive_target",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'cancelled')",
+            name="ck_anomaly_archive_status",
+        ),
+        Index("ix_anomaly_archive_status_time", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_event.id", ondelete="CASCADE"), nullable=False
+    )
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    impact_preview: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    review_note: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(MILLISECOND_DATETIME)
+
+
+class AnomalyIssueLink(Base):
+    __tablename__ = "anomaly_issue_link"
+
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_event.id", ondelete="CASCADE"), primary_key=True
+    )
+    issue_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("issue.id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
+
+
+class AnomalyAction(Base):
+    __tablename__ = "anomaly_action"
+    __table_args__ = (Index("ix_anomaly_action_event_time", "event_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("anomaly_event.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(MILLISECOND_DATETIME, nullable=False)
 
 
 class Component(Base):
@@ -472,9 +641,7 @@ class IssueImage(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    issue_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("issue.id", ondelete="SET NULL")
-    )
+    issue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("issue.id", ondelete="SET NULL"))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="temporary")
     media_type: Mapped[str] = mapped_column(String(32), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)

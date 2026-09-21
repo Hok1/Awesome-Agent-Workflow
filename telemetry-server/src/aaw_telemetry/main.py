@@ -17,12 +17,15 @@ from .logging import configure_logging, request_id_var
 from .middleware import RequestBodyLimitMiddleware, RequestContextMiddleware
 from .routers.admin import build_admin_router
 from .routers.ai_masters import build_ai_masters_router
+from .routers.anomalies import build_anomalies_router
 from .routers.dashboard import build_dashboard_router
 from .routers.issues import build_issues_router
 from .routers.objects import build_objects_router
 from .routers.releases import build_releases_router
 from .routers.telemetry import build_telemetry_router
 from .routers.testing_telemetry import build_testing_telemetry_router
+from .services.anomalies import AnomalyService
+from .services.anomaly_scheduler import AnomalyScheduler
 from .services.attribution_scheduler import AttributionScheduler
 from .services.attribution_service import AttributionService
 from .services.diff_archiver import DiffArchiver
@@ -75,12 +78,15 @@ def create_app(
     )
     issue_image_janitor = IssueImageJanitor(session_factory, settings)
     diff_archiver = DiffArchiver(session_factory, settings)
+    anomaly_scheduler = AnomalyScheduler(session_factory, settings, projects)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if not registry_provided:
             with session_factory() as session:
                 RegistryService.load_or_seed(session, projects, settings)
+        with session_factory() as session:
+            AnomalyService(session, projects).ensure_builtin_rules()
         scheduler_task = attribution_scheduler.start()
         image_cleanup_task = asyncio.create_task(
             issue_image_janitor.run(),
@@ -90,6 +96,7 @@ def create_app(
             diff_archiver.run(),
             name="diff-archiver",
         )
+        anomaly_scheduler_task = anomaly_scheduler.start()
         logger.info(
             "Telemetry Server 已启动，可以接收请求",
             extra={"event": "service.started", "version": "0.1.0"},
@@ -100,11 +107,13 @@ def create_app(
             attribution_scheduler.stop()
             issue_image_janitor.stop()
             diff_archiver.stop()
+            anomaly_scheduler.stop()
             try:
                 await asyncio.gather(
                     attribution_scheduler.task or scheduler_task,
                     image_cleanup_task,
                     diff_archiver_task,
+                    anomaly_scheduler_task,
                 )
             finally:
                 close_attribution_service = getattr(attribution_service, "close", None)
@@ -127,6 +136,7 @@ def create_app(
     app.state.attribution_scheduler = attribution_scheduler
     app.state.issue_image_janitor = issue_image_janitor
     app.state.diff_archiver = diff_archiver
+    app.state.anomaly_scheduler = anomaly_scheduler
     app.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=settings.max_request_bytes,
@@ -162,6 +172,7 @@ def create_app(
         )
     )
     app.include_router(build_releases_router(settings))
+    app.include_router(build_anomalies_router(get_session, settings, projects))
     app.include_router(
         build_admin_router(
             get_session,

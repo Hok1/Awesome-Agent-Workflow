@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     attribution_scan_interval_seconds: float = 3600.0
     attribution_retry_window_seconds: int = 90 * 24 * 3600
     attribution_api_token: SecretStr | None = None
+    admin_password: SecretStr = SecretStr("123456")
+    admin_session_seconds: int = 8 * 3600
+    admin_cookie_secure: bool = False
+    anomaly_scan_interval_seconds: float = 300.0
     diff_retention_seconds: int = 90 * 24 * 3600
     diff_archive_interval_seconds: int = 3600
 
@@ -131,6 +135,12 @@ class Settings(BaseSettings):
             raise ValueError("attribution_service_url must use http or https")
         if not 0.1 <= self.attribution_timeout_seconds <= 300:
             raise ValueError("attribution_timeout_seconds must be between 0.1 and 300")
+        if not self.admin_password.get_secret_value():
+            raise ValueError("admin_password must not be empty")
+        if not 300 <= self.admin_session_seconds <= 86400:
+            raise ValueError("admin_session_seconds must be between 300 and 86400")
+        if not 10 <= self.anomaly_scan_interval_seconds <= 86400:
+            raise ValueError("anomaly_scan_interval_seconds must be between 10 and 86400")
         if not 10 <= self.attribution_scan_interval_seconds <= 3600:
             raise ValueError("attribution_scan_interval_seconds must be between 10 and 3600")
         if not 3600 <= self.attribution_retry_window_seconds <= 31_536_000:
