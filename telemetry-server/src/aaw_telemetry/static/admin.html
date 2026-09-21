@@ -360,6 +360,17 @@
     .an-sentence-mini { margin-top: 4px; line-height: 1.9; color: var(--ink-soft); }
     .an-sentence-mini .an-tune { display: inline-block; padding: 0 5px; border-radius: 5px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
     .an-event-table th { white-space: nowrap; }
+    .an-cond > summary {
+      display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;
+      cursor: pointer; list-style: none; user-select: none;
+      font: 600 11.5px var(--body); color: var(--ink-mute);
+      border-bottom: 1px dashed var(--edge-2); padding-bottom: 1px;
+    }
+    .an-cond > summary::-webkit-details-marker { display: none; }
+    .an-cond > summary::before { content: "▸"; font-size: 10px; }
+    .an-cond[open] > summary::before { content: "▾"; }
+    .an-cond > summary:hover { color: var(--iris); border-color: var(--iris); }
+    .an-cond .an-sentence-mini { margin-top: 6px; max-width: 380px; }
     .an-th-help {
       display: inline-flex; align-items: center; justify-content: center;
       width: 15px; height: 15px; margin-left: 4px; vertical-align: 1px;
@@ -2944,7 +2955,7 @@ async function loadAnomalyEvents() {
     }
     const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
     $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
-      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div><div class="an-sub an-sentence-mini">${anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary)}</div></td>
+      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<details class="an-cond"><summary>判定条件</summary><div class="an-sentence-mini">${sentence}</div></details>`; })()}</td>
       <td>${esc(item.user_email || "—")}</td>
       <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
       <td>${anDuration(item.first_detected_at)}</td>
