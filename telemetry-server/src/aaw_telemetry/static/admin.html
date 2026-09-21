@@ -893,7 +893,7 @@
 
     <div class="an-view" id="an-view-overview">
       <div class="an-summary">
-        <div class="stone"><small>当前开放异常</small><strong id="anSumOpen">0</strong></div>
+        <div class="stone"><small>存在异常</small><strong id="anSumOpen">0</strong></div>
         <div class="stone stone--tangerine"><small>组件统计</small><strong id="anSumComponent">0</strong></div>
         <div class="stone stone--magenta"><small>工作流</small><strong id="anSumWorkflow">0</strong></div>
         <div class="stone stone--sky"><small>归因处理</small><strong id="anSumAttribution">0</strong></div>
@@ -908,7 +908,7 @@
         <div class="table-wrap" style="overflow-x:auto;">
           <table><thead><tr><th>问题</th><th>影响范围</th><th>异常依据</th><th>持续</th><th>处理</th></tr></thead><tbody id="anEventBody"></tbody></table>
         </div>
-        <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围没有开放异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
+        <div class="an-empty" id="anEventEmpty" hidden><strong>当前范围不存在异常</strong>这里只展示命中规则的问题，不用正常统计填充页面。</div>
       </div>
     </div>
 
@@ -1064,7 +1064,7 @@
       <div class="an-wide-main">
         <input id="anRuleName" type="hidden"><input id="anRuleDetector" type="hidden">
         <div class="an-form">
-          <div class="an-field"><label>规则状态</label><select id="anRuleStatus"><option value="enabled">启用检测</option><option value="disabled">暂停检测</option></select><span class="an-field-note">停用后不再产生新异常，现有开放异常会自动结束。</span></div>
+          <div class="an-field"><label>规则状态</label><select id="anRuleStatus"><option value="enabled">启用检测</option><option value="disabled">暂停检测</option></select><span class="an-field-note">停用后不再产生新异常，已存在的异常会自动结束。</span></div>
           <div class="an-field"><label>允许 AI Master 申请屏蔽</label><select id="anRuleAllowArchive"><option value="true">允许</option><option value="false">不允许</option></select><span class="an-field-note">关闭后，这类异常不显示“申请屏蔽”。</span></div>
           <div class="an-field"><label>生效范围</label><select id="anRuleScope"><option value="platform">全平台</option><option value="component">指定组件</option><option value="repository">指定仓库</option></select></div>
           <div class="an-field" id="anRuleScopeValueField"><label id="anRuleScopeValueLabel">范围名称</label><input id="anRuleScopeValue" placeholder="填写组件或仓库名称"></div>
