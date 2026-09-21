@@ -360,6 +360,12 @@
     .an-sentence-mini { margin-top: 4px; line-height: 1.9; color: var(--ink-soft); }
     .an-sentence-mini .an-tune { display: inline-block; padding: 0 5px; border-radius: 5px; background: rgba(75,63,228,.10); color: var(--iris); font-weight: 700; font-variant-numeric: tabular-nums; }
     .an-event-table th { white-space: nowrap; }
+    .an-problem-line { position: relative; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+    .an-problem-line .an-problem { font-weight: 700; color: var(--ink); white-space: nowrap; }
+    .an-cond { display: inline-flex; }
+    .an-cond[open] .an-sentence-mini { position: absolute; left: 0; top: calc(100% + 6px); z-index: 5;
+      background: var(--paper-2); border: 1px solid var(--edge-2); border-radius: 8px;
+      box-shadow: var(--sh-card); padding: 8px 12px; max-width: 420px; }
     .an-cond > summary {
       display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;
       cursor: pointer; list-style: none; user-select: none;
@@ -370,7 +376,6 @@
     .an-cond > summary::before { content: "▸"; font-size: 10px; }
     .an-cond[open] > summary::before { content: "▾"; }
     .an-cond > summary:hover { color: var(--iris); border-color: var(--iris); }
-    .an-cond .an-sentence-mini { margin-top: 6px; max-width: 380px; }
     .an-th-help {
       display: inline-flex; align-items: center; justify-content: center;
       width: 15px; height: 15px; margin-left: 4px; vertical-align: 1px;
@@ -2955,7 +2960,7 @@ async function loadAnomalyEvents() {
     }
     const labels = { component: "组件", workflow: "工作流", attribution: "归因", version: "版本" };
     $("#anEventBody").innerHTML = events.items.map((item) => `<tr>
-      <td><span class="badge">${labels[item.category]}</span><div class="an-problem">${esc(item.title)}</div>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<details class="an-cond"><summary>判定条件</summary><div class="an-sentence-mini">${sentence}</div></details>`; })()}</td>
+      <td><div class="an-problem-line"><span class="badge">${labels[item.category]}</span><span class="an-problem">${esc(item.title)}</span>${(() => { const sentence = anomalySentenceHtml(anCatalog.find((entry) => entry.code === item.detector_type), item.rule?.params) || esc(item.summary); return `<details class="an-cond"><summary>判定条件</summary><div class="an-sentence-mini">${sentence}</div></details>`; })()}</div></td>
       <td>${esc(item.user_email || "—")}</td>
       <td><b class="mono">${esc(item.repository || item.component_id || "系统级")}</b></td>
       <td>${anDuration(item.first_detected_at)}</td>
