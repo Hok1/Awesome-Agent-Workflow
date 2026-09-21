@@ -1041,7 +1041,7 @@
 
     <div class="an-view" id="an-admin-view-masters" hidden>
       <div class="card">
-        <h2>按 AI Master <span class="count">谁名下堆积着未处理的异常，一览即知</span></h2>
+        <h2>按 AI Master</h2>
         <div class="table-wrap" style="overflow-x:auto;">
           <table><thead><tr><th>AI Master</th><th>存在异常</th><th>组件统计</th><th>工作流</th><th>归因处理</th><th>版本使用</th><th>最早持续</th><th>操作</th></tr></thead><tbody id="anMasterBody"></tbody></table>
         </div>
@@ -3464,7 +3464,7 @@ async function reviewAnomalyArchive(id, approved) {
 
 $("#anAdminRefresh").addEventListener("click", loadAnomalyAdminModule);
 
-/* 「按 AI Master」：全量事件按归属聚合，谁名下堆积着未处理的问题一目了然。
+/* 「按 AI Master」：全量事件按归属聚合。
    事件与 AI Master 分别取自 anomalies/events?admin_view 与 ai-masters 列表。 */
 async function loadAnomalyMasterBoard() {
   try {
