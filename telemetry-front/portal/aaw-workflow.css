@@ -173,9 +173,6 @@ h1 { font-size: clamp(30px, 3.3vw, 44px); line-height: 1.35; font-weight: 600; l
 .task-group .group-label, .task-group .group-label b { color: #fda4af; }
 .task-group .flow-node { min-height: 83px; }
 .task-group .group-label { margin-bottom: 11px; }
-.workflow-finish { margin: 20px 0 0 120px; text-align: center; color: #6ee7b7; font-size: 9px; }
-.workflow-finish::before { content: "↓"; display: block; margin-bottom: 7px; color: #22d3ee; font-size: 17px; }
-.workflow-finish b { display: inline-block; padding: 6px 18px; border: 1px solid #10b981; border-radius: 20px; background: rgba(6, 95, 70, .35); font-weight: 500; box-shadow: 0 0 18px rgba(16, 185, 129, .11); }
 .node-detail { --detail-accent: #34d399; margin-top: 14px; padding: 22px 24px; border: 1px solid var(--detail-accent); border-radius: 10px; background: linear-gradient(145deg, #0b1a2b, #081321); color: #edf7fb; box-shadow: 0 16px 34px rgba(5, 15, 28, .18); scroll-margin-top: 115px; }
 .node-detail:focus { outline: 0; }
 .node-detail[data-tone="context"] { --detail-accent: #22d3ee; }
@@ -288,12 +285,6 @@ h1 { font-size: clamp(30px, 3.3vw, 44px); line-height: 1.35; font-weight: 600; l
 .task-group .flow-node { height: 82px; min-height: 82px; }
 .task-group .flow-track { gap: 28px; }
 .task-group .flow-cell { flex-basis: 100px; }
-.workflow-finish-cell { position: relative; z-index: 3; flex: 0 0 100px; align-self: flex-start; margin-top: 54px; }
-.workflow-finish-cell .flow-cell { width: 100px; }
-.workflow-finish { position: relative; z-index: 3; flex: 0 0 110px; align-self: center; margin-left: 0; text-align: center; color: #138c77; font-size: 9px; }
-.workflow-finish::before { content: "→"; display: block; margin-bottom: 7px; color: var(--green); font-size: 17px; }
-.workflow-finish b { display: block; padding: 7px 8px; border: 1px solid #1aa181; border-radius: 20px; background: #e8f8f1; color: #14785f; font-weight: 700; white-space: nowrap; }
-.workflow-finish small { display: block; margin-top: 5px; color: var(--canvas-muted); font-size: 8px; }
 .node-detail { --detail-accent: var(--green); margin-top: 14px; padding: 22px 24px; border: 1px solid var(--detail-accent); border-radius: 10px; background: linear-gradient(145deg, #fffdf8, #f3f6ee); color: var(--canvas-text); box-shadow: 0 16px 34px rgba(40, 49, 44, .11); scroll-margin-top: 115px; }
 .node-detail:focus { outline: 0; }
 .node-detail[data-tone="context"] { --detail-accent: var(--green); }

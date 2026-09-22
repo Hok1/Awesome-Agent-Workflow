@@ -98,11 +98,6 @@
       "任务交接记录、候选提交信息及完成报告。",
       "完成检查通过，当前任务标记完成；全部分支与任务完成后，工作流完成。",
       "每个任务完成后停止，后续任务待继续指令。不会自动执行 git add、commit 或 push。"),
-    "workflow-finish": node("全部任务完成", "确认工作流已完成", "aaw-workflow（编排）",
-      "所有任务的完成与交接记录。",
-      "确认任务清单全部完成、门禁结论已记录，并结束当前工作流。",
-      "最终工作流状态与完整的交付证据。",
-      "所有适用门禁通过，任务清单全部完成，工作流可以关闭。"),
     "dev-init": node("确认需求", "对齐一人可独立完成的范围", "aaw-workflow（编排）",
       "需求描述与用于组织本次工作的 SR 编号。",
       "确认目标、约束与验收范围；较长原文可保存为来源材料。",
@@ -175,7 +170,7 @@
     if (key === "ar-split") return "branch";
     if (key.endsWith("-init")) return "context";
     if (key.includes("split")) return "branch";
-    if (["code-implement", "task-done", "workflow-finish"].includes(key)) return "delivery";
+    if (["code-implement", "task-done"].includes(key)) return "delivery";
     return "design";
   }
 
@@ -240,11 +235,6 @@
       (continuation ? " · 继续" : "") + "</b><small>" + description + "</small></header><div class=\"group-sequence\">" + content + "</div></section>";
   }
 
-  function finishFlow(entry, alignWithTask = false) {
-    const node = renderNode("workflow-finish", entry);
-    return alignWithTask ? '<div class="workflow-finish-cell">' + node + "</div>" : node;
-  }
-
   function sharedDesignAndDeliveryRows(entry) {
     return rowTurn("进入 AR 设计") +
       flowRow("02", "AR设计", workflowStage("02", "AR设计",
@@ -253,8 +243,7 @@
       rowTurn("AR设计门禁通过") +
       flowRow("03", "开发", workflowStage("03", "开发",
         flowSubsection("任务拆分", ["task-split"], entry) + connector() +
-        flowSubsection("每个任务", ["code-implement", "code-gate", "task-done"], entry, "按任务列表依次执行，门禁未通过则回到当前任务修正。") +
-        connector() + finishFlow(entry)), true);
+        flowSubsection("每个任务", ["code-implement", "code-gate", "task-done"], entry, "按任务列表依次执行，门禁未通过则回到当前任务修正。")), true);
   }
 
   function renderFlow(entry) {
@@ -271,7 +260,7 @@
       flow = flowRow("01", "设计与准备", phase("01", "设计与验证", ["dev-init", "dev-design", "dev-test-design", "dev-design-gate"], entry) +
         connector() + phase("02", "开发准备", ["dev-task-split"], entry)) +
         rowTurn("确认任务计划") +
-        flowRow("02", "开发与交付", taskFlow(entry) + connector() + finishFlow(entry, true));
+        flowRow("02", "开发与交付", taskFlow(entry));
     }
     return '<div class="flow-board">' + flow + "</div>";
   }
