@@ -1,0 +1,86 @@
+{
+  "skill": "task-dev",
+  "skill_id": "381276f2-01d9-4a5c-a527-599517d0ee81",
+  "suite_id": "9ec3e820-e012-470a-a8a0-8301a18bed0a",
+  "suite_name": "task-dev-SR1-rbcore-T1-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c if exist target rmdir /s /q target",
+      "cmd /c mkdir .sdd\\SR-1\\AR-1\\rbs-core\\.context",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5aa\\fixture\\software_architecture.md\" \".sdd\\software_architecture.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tdv\\fixture\\模块详细设计说明书.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块详细设计说明书.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tdv\\fixture\\模块测试用例设计.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块测试用例设计.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tdv\\fixture\\模块设计门禁结果.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\.context\\模块设计门禁结果.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tdv\\fixture\\tasks-overview.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\tasks-overview.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tdv\\preflight_taskdev.py\" \".sdd\\SR-1\\preflight_taskdev.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_taskdev.py"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 30,
+  "followups": [],
+  "graders": [
+    {
+      "id": "taskdev-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "7af6f97a-6157-4d47-a3c6-699c0491f748",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "7af6f97a-6157-4d47-a3c6-699c0491f748",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "quality_score": 100.0,
+        "duration_ms": 3385721,
+        "grader_stdout": "HEAD 不变/回填含必填小节/范围⊆T1/sm2.rs 新增/测试在/cargo exit=0 → TASKDEV-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "quality_score": 0.0,
+        "duration_ms": 3602575,
+        "grader_stdout": "cargo exit=0 但缺「实现期补充与残余风险」必填小节 → TASKDEV-ASSERT-FAIL",
+        "note": "代码能力与 current 相当；差的只是 skill 教的交接纪律"
+      }
+    ],
+    "iteration_history": [
+      {
+        "round": "v1",
+        "experiment": "4f0ac964",
+        "note": "原渠道额度耗尽 403"
+      },
+      {
+        "round": "v2",
+        "experiment": "5abdf1f6",
+        "note": "copytree 的 target 路径失效 → LNK1104"
+      },
+      {
+        "round": "v3",
+        "experiment": "c8106a07",
+        "note": "openssl-src 缺 providers.num + MSYS perl 抢 PATH"
+      },
+      {
+        "round": "v4",
+        "experiment": "7af6f97a",
+        "note": "定稿轮：current 100 / no_skill 0（缺交接小节）"
+      }
+    ],
+    "note": "本测评为全链路首个真实区分度：增量价值在交接纪律而非编码能力"
+  }
+}

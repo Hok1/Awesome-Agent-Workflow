@@ -1,0 +1,47 @@
+schema_version: 1
+name: dev-design-gate-SR2-defect-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: 3925aecb-91fd-4f8a-a6a4-2b434a403f9e
+  name: dev-design-gate
+setup:
+  commands:
+  - cmd /c mkdir .sdd\SR-2\.context
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\fixture\requirement.md" ".sdd\SR-2\requirement.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\fixture\defect-dev-design.md" ".sdd\SR-2\dev-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\fixture\defect-test-design.md" ".sdd\SR-2\test-design.md"
+  - cmd /c copy /Y "C:\tmp\ctx5dg2\preflight_devgate.py" ".sdd\SR-2\preflight_devgate.py"
+  preflight:
+  - python .sdd\SR-2\preflight_devgate.py defect
+  network: false
+  timeout_seconds: 900
+cases:
+- id: sr2-devgate-defect
+  name: SR-2 轻量设计门禁（带缺陷）
+  input: "你使用 dev-design-gate skill，对 SR-2 的轻量设计执行准入门禁。\n\n【工作目录】当前目录（globaltrustauthority-rbs，Rust\
+    \ workspace）。\n\n【输入（已就位，直接读取，不得修改）】\n- 轻量设计：.sdd/SR-2/dev-design.md\n- 测试设计：.sdd/SR-2/test-design.md\n\
+    - 需求原文：.sdd/SR-2/requirement.md\n\n【本次执行方式（重要，请严格遵守）】\n1. 你是无头执行，由 aaw-workflow\
+    \ 工作单调用，没有人类在旁。前置的工作流确认环节跳过；\n   需要用户确认的问题按 skill 规定处理，不要等待回答。\n2. 本环境不提供任何 MCP\
+    \ 工具。网络不可用。\n3. 严格按 skill 正文规定的 3 项准入检查、结论判定与报告骨架执行；\n   本环境无 aaw CLI——data_schema\
+    \ 回传跳过，只在报告中如实给出统计数字。\n\n【输出要求】\n1. 按 skill 的产物契约把门禁报告写入对应路径（SR=SR-2）。\n2. 最后回复：给出报告路径、结论、建议、未达标项清单。\n"
+  expected: "输入被植入两处有明确判定条款的缺陷：\n\n1. dev-design.md 方案中「加法溢出的处理可选 checked_add 转错或直接\
+    \ wrapping，待定，\n   看情况再定」——决策未收敛（检查项 1）。\n2. test-design.md 覆盖矩阵缺失验收标准 A3 行——契约与验收不可执行（检查项\
+    \ 3）。\n\n门禁应：结论为「不通过」；需整改项命中检查项 1 与检查项 3；形式契约同正向。\n\n依据：dev-design-gate SKILL.md\
+    \ 3 项准入检查表、结论判定「任一检查项未达标……不得通过」。\n"
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 12
+  graders:
+  - id: devgate-assert
+    type: command
+    name: 轻量门禁黑盒断言（形式契约+缺陷命中）
+    weight: 100.0
+    hard_gate: false
+    command: python C:\tmp\ctx5dg2\assert_devgate_defect.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 180

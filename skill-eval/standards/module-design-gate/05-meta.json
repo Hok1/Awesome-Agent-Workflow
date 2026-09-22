@@ -1,0 +1,85 @@
+{
+  "skill": "module-design-gate",
+  "skill_id": "1fb699f8-52ba-4e6e-925b-5a6ba9d98a76",
+  "suite_id": "66dbb318-47a9-4752-a83a-8bef09539050",
+  "suite_name": "module-design-gate-SR1-rbcore-clean-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1\\AR-1\\rbs-core\\.context",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\SR-design.md\" \".sdd\\SR-1\\SR-design.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5aa\\fixture\\software_architecture.md\" \".sdd\\software_architecture.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5dg\\fixture\\AR-clarify.md\" \".sdd\\SR-1\\AR-1\\AR-clarify.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5dg\\fixture\\模块详细设计说明书.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块详细设计说明书.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5dg\\fixture\\模块测试用例设计.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块测试用例设计.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5dg\\fixture\\详细设计上下文.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\.context\\详细设计上下文.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5dg\\preflight_gate.py\" \".sdd\\SR-1\\preflight_gate.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_gate.py clean"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 20,
+  "followups": [],
+  "graders": [
+    {
+      "id": "mdg-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "8813c2a9-f45a-4ac7-85f4-cb8fe5cd10ad",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "8813c2a9-f45a-4ac7-85f4-cb8fe5cd10ad",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "run_id": "f2dce272-3b9f-4f24-ba41-09f7abb96aaf",
+        "quality_score": 100.0,
+        "duration_ms": 234231,
+        "grader_stdout": "结论=不通过 建议=[可进入 AICoding, 回测试设计补用例后重试] 编号反查全过 MDG-ASSERT-PASS",
+        "note": "判不通过：测试设计自认 5 项缺口（GAP3/GAP5/K3/A19），验证闭环性未达标——正确行为"
+      },
+      {
+        "group_name": "no_skill",
+        "run_id": "b522b4da-c5c1-4814-9279-33fd8d26b289",
+        "quality_score": 100.0,
+        "duration_ms": 152493,
+        "grader_stdout": "结论=通过 建议=[可进入 AICoding] MDG-ASSERT-PASS",
+        "note": "判通过：未追测试设计自认缺口，形式合规实质更松"
+      }
+    ],
+    "sibling_experiment": {
+      "variant": "defect",
+      "suite_id": "512121a7-cc58-415f-b790-d301e630847a",
+      "experiment_id": "ee9a61b7-7bbd-4403-9bfc-869db021b959",
+      "runs": [
+        {
+          "group_name": "current",
+          "quality_score": 100.0,
+          "duration_ms": 126170,
+          "grader_stdout": "结论=不通过 未达标维度=验证闭环性 MDG-DEFECT-ASSERT-PASS"
+        },
+        {
+          "group_name": "no_skill",
+          "quality_score": 100.0,
+          "duration_ms": 150645,
+          "grader_stdout": "结论=不通过 未达标维度=决策确定性、验证闭环性 MDG-DEFECT-ASSERT-PASS"
+        }
+      ]
+    }
+  }
+}

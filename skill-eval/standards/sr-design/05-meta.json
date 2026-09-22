@@ -1,0 +1,105 @@
+{
+  "skill": "sr-design",
+  "skill_id": "8e448b16-41d8-4a33-a3b6-784176c3e987",
+  "suite_id": "09cc0688-3281-4690-b8d6-d19b5e16224b",
+  "suite_name": "sr-design-SR1-sm2-eval-v2",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [],
+    "preflight": [],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 1,
+  "followups": [],
+  "graders": [
+    {
+      "id": "gate-1-scope",
+      "type": "llm_rubric",
+      "weight": 0.0,
+      "hard_gate": true
+    },
+    {
+      "id": "gate-2-interop",
+      "type": "llm_rubric",
+      "weight": 0.0,
+      "hard_gate": true
+    },
+    {
+      "id": "gate-3-specs",
+      "type": "llm_rubric",
+      "weight": 0.0,
+      "hard_gate": true
+    },
+    {
+      "id": "gate-4-acceptance",
+      "type": "llm_rubric",
+      "weight": 0.0,
+      "hard_gate": true
+    },
+    {
+      "id": "d1-scope-compliance",
+      "type": "llm_rubric",
+      "weight": 15.0,
+      "hard_gate": false
+    },
+    {
+      "id": "d2-interop",
+      "type": "llm_rubric",
+      "weight": 25.0,
+      "hard_gate": false
+    },
+    {
+      "id": "d3-specs",
+      "type": "llm_rubric",
+      "weight": 15.0,
+      "hard_gate": false
+    },
+    {
+      "id": "d4-acceptance",
+      "type": "llm_rubric",
+      "weight": 15.0,
+      "hard_gate": false
+    },
+    {
+      "id": "d5-risk",
+      "type": "llm_rubric",
+      "weight": 15.0,
+      "hard_gate": false
+    },
+    {
+      "id": "d6-module-iface",
+      "type": "llm_rubric",
+      "weight": 10.0,
+      "hard_gate": false
+    },
+    {
+      "id": "d7-selfconsistency",
+      "type": "llm_rubric",
+      "weight": 5.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "d47ff548-683f-4ba7-8e84-0100e7f9ee13",
+    "mode": "formal",
+    "status": "completed"
+  },
+  "results": {
+    "current": [
+      87.0,
+      84.5,
+      83.3
+    ],
+    "no_skill": [
+      84.4,
+      75.1,
+      84.85
+    ],
+    "delta": 3.48,
+    "hard_gates": "6/6 runs at 4/4",
+    "verdict": "not significant: SE 3.30, t 1.05, df=2"
+  }
+}

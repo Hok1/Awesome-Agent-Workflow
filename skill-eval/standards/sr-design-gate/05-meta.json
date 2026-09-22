@@ -1,0 +1,67 @@
+{
+  "skill": "sr-design-gate",
+  "skill_id": "07075243-041d-41e3-b1d3-17c228e1676a",
+  "suite_id": "7ea9bb80-e7a9-4255-85f3-e058216b87ae",
+  "suite_name": "sr-design-gate-SR1-sm2-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\SR-design.md\" \".sdd\\SR-1\\SR-design.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\assert_gate.py\" \".sdd\\SR-1\\assert_gate.py\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\preflight_fixture.py\" \".sdd\\SR-1\\preflight_fixture.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_fixture.py"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 6,
+  "followups": [],
+  "graders": [
+    {
+      "id": "gate-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "e246e4b5-8804-4a1c-bb9d-6068f75aa872",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "e246e4b5-8804-4a1c-bb9d-6068f75aa872",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 263724,
+        "exit_code": 0,
+        "error_kind": null
+      },
+      {
+        "group_name": "no_skill",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 212990,
+        "exit_code": 0,
+        "error_kind": null
+      }
+    ],
+    "note": "current 组为被测组；no_skill 组是平台强制内置的空对照组（orchestrator.py:171 硬编码，无 API 可关）"
+  }
+}

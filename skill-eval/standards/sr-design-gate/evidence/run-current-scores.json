@@ -1,0 +1,22 @@
+{
+  "components": [
+    {
+      "evidence": "exit_code=0\nstdout:\nASSERT-OK: ������� 12329 �ַ�\nASSERT-OK: report=.sdd/SR-1/SR-design-gate.md\nASSERT-OK: summary={\"unqualified_dimensions\": 3, \"p0_conflicts\": 1, \"p1_conflicts\": 1, \"p2_findings\": 7, \"pending_questions\": 0, \"blocking_issues\": 0}\nASSERT-OK: ���� fail ��ʶ�� P0��p0_conflicts=1��\nASSERT-OK: �����������Ǣ\nASSERT-OK: unqualified_dimensions=3\nASSERT-OK: ���渲�� 3 ��Ŀ��ά��\nGATE-ASSERT-PASS\n\nstderr:\n",
+      "grader_id": "gate-assert",
+      "grader_type": "command",
+      "hard_gate": false,
+      "invalid": false,
+      "name": "门禁结论黑盒断言（读报告与回传数据）",
+      "passed": true,
+      "reasoning": "",
+      "score": 100.0,
+      "weight": 100.0
+    }
+  ],
+  "hard_gates_passed": 0,
+  "hard_gates_total": 0,
+  "invalid": false,
+  "judge_error": null,
+  "quality_score": 100.0,
+  "skill_invoked": "unknown"
+}

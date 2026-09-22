@@ -1,0 +1,59 @@
+{
+  "skill": "task-split",
+  "skill_id": "859e8ce3-314b-4766-b332-fc8953bbe39a",
+  "suite_id": "46392c6c-8b5c-4abf-8bd8-b68312520cb6",
+  "suite_name": "task-split-SR1-rbcore-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1\\AR-1\\rbs-core\\.context",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5ts\\fixture\\模块详细设计说明书.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块详细设计说明书.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5ts\\fixture\\模块测试用例设计.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\模块测试用例设计.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5ts\\fixture\\模块设计门禁结果.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\.context\\模块设计门禁结果.md\""
+    ],
+    "preflight": [],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 12,
+  "followups": [],
+  "graders": [
+    {
+      "id": "tasksplit-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "f451a054-2bcf-4c9a-ad4b-7d488f0f4d7d",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "f451a054-2bcf-4c9a-ad4b-7d488f0f4d7d",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "run_id": "8068d442-f6b4-4f83-a660-921c830955c9",
+        "quality_score": 100.0,
+        "duration_ms": 112810,
+        "grader_stdout": "NOTES: [产物 2059 字符, 任务表 3 行 T1-T3, TC 27/27 覆盖] TASKSPLIT-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "run_id": "4aa86784-6192-463b-9f29-34e7e5d59cae",
+        "quality_score": 100.0,
+        "duration_ms": 160294,
+        "grader_stdout": "NOTES: [产物 1998 字符, 任务表 3 行 T1-T3, TC 27/27 覆盖] TASKSPLIT-ASSERT-PASS"
+      }
+    ],
+    "note": "一轮定稿，无判据迭代"
+  }
+}

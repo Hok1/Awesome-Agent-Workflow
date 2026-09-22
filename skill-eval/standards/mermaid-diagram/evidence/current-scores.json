@@ -1,0 +1,22 @@
+{
+  "components": [
+    {
+      "evidence": "exit_code=0\nstdout:\nNOTES: [\"mermaid �������=2\", \"check_mermaid.py exit=0\", \"validated 2 diagram(s) offline\", \"ͼ��=statediagram-v2,sequencediagram\", \"stateDiagram ת����=10 ״̬������=6\", \"sequenceDiagram ��=1\"]\nMERMAID-ASSERT-PASS\n\nstderr:\n",
+      "grader_id": "mermaid-assert",
+      "grader_type": "command",
+      "hard_gate": false,
+      "invalid": false,
+      "name": "图表产物黑盒断言（存在性/可编译/图型匹配/路径覆盖/无自造标识符）",
+      "passed": true,
+      "reasoning": "",
+      "score": 100.0,
+      "weight": 100.0
+    }
+  ],
+  "hard_gates_passed": 0,
+  "hard_gates_total": 0,
+  "invalid": false,
+  "judge_error": null,
+  "quality_score": 100.0,
+  "skill_invoked": "unknown"
+}

@@ -1,0 +1,70 @@
+{
+  "skill": "effective-document-writing",
+  "skill_id": "f79fed53-9527-4b0c-b45a-2d2ce39a46d3",
+  "suite_id": "fc32df15-fee9-49f4-b79b-9cb10ecb8677",
+  "suite_name": "effective-document-writing-SM2-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5dw\\fixture\\draft.md\" \".sdd\\draft.md\""
+    ],
+    "preflight": [],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 8,
+  "followups": [],
+  "graders": [
+    {
+      "id": "docwrite-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "96a5536e-56de-4a0b-936f-512ac8faba7e",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "96a5536e-56de-4a0b-936f-512ac8faba7e",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "quality_score": 100.0,
+        "duration_ms": 425538,
+        "grader_stdout": "NOTES: [产物 1546 字符] DOCWRITE-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "quality_score": 100.0,
+        "duration_ms": 198036,
+        "grader_stdout": "NOTES: [产物 1184 字符] DOCWRITE-ASSERT-PASS"
+      }
+    ],
+    "iteration_history": [
+      {
+        "round": "v1",
+        "experiment": "fb1c2727",
+        "note": "渠道切换致 profile hash 变化，invalid"
+      },
+      {
+        "round": "v1.5",
+        "experiment": "00b886af",
+        "note": "断言 5 钉词过脆（依据/取舍字面），双组挂"
+      },
+      {
+        "round": "v2",
+        "experiment": "96a5536e",
+        "note": "语义要素判定，定稿双 100"
+      }
+    ]
+  }
+}

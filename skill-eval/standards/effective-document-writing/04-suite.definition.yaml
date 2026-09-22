@@ -1,0 +1,70 @@
+schema_version: 1
+name: effective-document-writing-SM2-eval
+project:
+  path: C:\code\workspace\globaltrustauthority-rbs
+  commit_at_creation: 7ef62cd3a9e035772827808054f3e8a3e904cf50
+skill:
+  id: f79fed53-9527-4b0c-b45a-2d2ce39a46d3
+  name: effective-document-writing
+setup:
+  commands:
+  - cmd /c mkdir .sdd
+  - cmd /c copy /Y "C:\tmp\ctx5dw\fixture\draft.md" ".sdd\draft.md"
+  preflight: []
+  network: false
+  timeout_seconds: 900
+cases:
+- id: sm2-doc-rewrite
+  name: SM2 讨论纪要重写为设计说明
+  input: '你使用 effective-document-writing skill，把一份评审讨论草稿重写为面向交付的设计说明。
+
+
+    【工作目录】当前目录（globaltrustauthority-rbs，Rust workspace）。
+
+
+    【输入（已就位，直接读取，不得修改）】
+
+    - 草稿：.sdd/draft.md（一份带黑话与对话痕迹的讨论纪要，其中只有一条真实方案要点）
+
+
+    【任务】
+
+    把草稿重写为正式设计说明，写入 docs/SM2-auth-design.md。
+
+    - 读者：需要评审该方案并据此开发的工程师。
+
+    - 草稿中的方案要点需要落成明确结论；黑话、空泛表态、对话与生成过程痕迹不得带入。
+
+    - 草稿之外的未证实细节不得自行补全；无依据的内容删除或标为待确认。
+
+
+    【本次执行方式】
+
+    1. 无头执行，没有人类在旁，不要向用户提问。
+
+    2. 严格按 skill 正文的写作原则与交付前检查执行。
+
+
+    【输出要求】
+
+    1. 产出 docs/SM2-auth-design.md。
+
+    2. 最后回复：给出文档路径与你在重写中删除/改写的要点清单。
+
+    '
+  expected: "产出 docs/SM2-auth-design.md，且：\n\n- 不含黑话（赋能/抓手/拉通/对齐颗粒度）与空泛表态（显著提升/全面保障/充分考虑/\n  持续优化）。\n- 不含对话与生成过程痕迹（根据你的要求/如前所述/经过讨论/提示词/聊天记录）。\n- 草稿的唯一的真实方案要点（authn/sm2 模块）落成明确结论；结论/依据/取舍三要素在场。\n- 原稿 .sdd/draft.md 不被修改。\n\n依据：effective-document-writing SKILL.md「控制语言和信息密度」「隔离对话和修改过程」\n「确定写作任务」。\n"
+  weight: 1.0
+  agent_context: ''
+  followups: []
+  max_turns: 8
+  graders:
+  - id: docwrite-assert
+    type: command
+    name: 文档重写黑盒断言（禁词/对话痕迹/三要素/原稿不动）
+    weight: 100.0
+    hard_gate: false
+    command: python C:\tmp\ctx5dw\assert_docwrite.py
+    path: null
+    patterns: []
+    rubric: null
+    timeout_seconds: 120

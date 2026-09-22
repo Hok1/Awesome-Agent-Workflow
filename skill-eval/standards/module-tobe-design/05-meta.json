@@ -1,0 +1,99 @@
+{
+  "skill": "module-tobe-design",
+  "skill_id": "85328486-0876-441e-814e-a728618deac5",
+  "suite_id": "10c7a712-a2db-439c-90be-8dc6876796c0",
+  "suite_name": "module-tobe-design-SR1-rbcore-eval",
+  "definition_hash": null,
+  "project_path": "C:\\code\\workspace\\globaltrustauthority-rbs",
+  "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+  "setup": {
+    "commands": [
+      "cmd /c mkdir .sdd\\SR-1\\AR-1\\rbs-core\\.context",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\original-requirement.md\" \".sdd\\SR-1\\original-requirement.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx4gate\\SR-design.md\" \".sdd\\SR-1\\SR-design.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5aa\\fixture\\software_architecture.md\" \".sdd\\software_architecture.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tb\\fixture\\详细设计上下文.md\" \".sdd\\SR-1\\AR-1\\rbs-core\\.context\\详细设计上下文.md\"",
+      "cmd /c copy /Y \"C:\\tmp\\ctx5tb\\preflight_tobe.py\" \".sdd\\SR-1\\preflight_tobe.py\""
+    ],
+    "preflight": [
+      "python .sdd\\SR-1\\preflight_tobe.py"
+    ],
+    "network": false,
+    "timeout_seconds": 900
+  },
+  "max_turns": 20,
+  "followups": [],
+  "graders": [
+    {
+      "id": "tobe-assert",
+      "type": "command",
+      "weight": 100.0,
+      "hard_gate": false
+    }
+  ],
+  "experiment": {
+    "id": "95b8f3c3-c89a-4d24-ab8e-edf9ca554b83",
+    "mode": "quick",
+    "status": "completed"
+  },
+  "results": {
+    "experiment_id": "95b8f3c3-c89a-4d24-ab8e-edf9ca554b83",
+    "mode": "quick",
+    "status": "completed",
+    "project_commit": "7ef62cd3a9e035772827808054f3e8a3e904cf50",
+    "runs": [
+      {
+        "group_name": "current",
+        "run_id": "8edaafe5-c863-4e26-a4f2-3fe13766c9af",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 170778,
+        "exit_code": 0,
+        "error_kind": null,
+        "grader_stdout": "NOTES: [产物字符数=22218, context TOBE 区引用 ASIS 结论编号=A1-A7,9,11-14,16-20 合法域=20个, 契约标识符命中=4/4] TOBE-ASSERT-PASS"
+      },
+      {
+        "group_name": "no_skill",
+        "run_id": "a845e4f9-5e86-4f3e-8733-909bf44e70b1",
+        "status": "completed",
+        "quality_score": 100.0,
+        "hard_gates_passed": 0,
+        "hard_gates_total": 0,
+        "duration_ms": 415346,
+        "exit_code": 0,
+        "error_kind": null,
+        "grader_stdout": "NOTES: [产物字符数=26761, context TOBE 区引用 ASIS 结论编号=A1-A9,11-14,16-19 合法域=20个, 契约标识符命中=4/4] TOBE-ASSERT-PASS"
+      }
+    ],
+    "iteration_history": [
+      {
+        "round": "v1",
+        "experiment": "1b87c0fd",
+        "note": "chrys 原渠道额度耗尽，current 组 403 预扣费失败"
+      },
+      {
+        "round": "v2",
+        "experiment": "5390b9fe",
+        "note": "断言 4 对象错（应在 context 非说明书）"
+      },
+      {
+        "round": "v3",
+        "experiment": "ba2c6ced",
+        "note": "断言 4 硬编码上限 A16，实际合法域 A1-A20"
+      },
+      {
+        "round": "v4",
+        "experiment": "b544b91e",
+        "note": "断言 3 误判 mermaid 节点 E401 为证据编号"
+      },
+      {
+        "round": "v5",
+        "experiment": "95b8f3c3",
+        "note": "定稿轮，双 100"
+      }
+    ],
+    "note": "no_skill 组在本模型上凭语料先验即合规（见 module-asis-analysis 标准 §5 体系发现 2）；有效结论为 current 组产物合规"
+  }
+}
