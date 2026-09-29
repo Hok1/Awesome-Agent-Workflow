@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from .models import Experiment
+from .models import Experiment, Run
 from .services.cleanup import cleanup_expired_workspaces
 from .services.orchestrator import ExperimentOrchestrator
 
@@ -20,7 +20,7 @@ class JobManager:
     ) -> None:
         self.session_factory = session_factory
         self.orchestrator = orchestrator
-        self.queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self.queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
         self.worker: asyncio.Task | None = None
 
     async def start(self) -> None:
@@ -38,6 +38,17 @@ class JobManager:
                     error_message="Service restarted",
                 )
             )
+            session.execute(
+                update(Run)
+                .where(Run.status == "running")
+                .values(
+                    status="infra_error",
+                    current_stage="infra_error",
+                    error_kind="infra_error",
+                    error_message="Service restarted",
+                    completed_at=datetime.now(UTC),
+                )
+            )
             queued = list(
                 session.scalars(
                     select(Experiment.id)
@@ -48,7 +59,7 @@ class JobManager:
             session.commit()
         self.worker = asyncio.create_task(self._run(), name="skill-eval-worker")
         for experiment_id in queued:
-            await self.queue.put(experiment_id)
+            await self.queue.put(("experiment", experiment_id))
 
     async def stop(self) -> None:
         if self.worker is None:
@@ -59,16 +70,26 @@ class JobManager:
         self.worker = None
 
     async def enqueue(self, experiment_id: str) -> None:
-        await self.queue.put(experiment_id)
+        await self.queue.put(("experiment", experiment_id))
+
+    async def enqueue_retry(self, run_id: str) -> None:
+        await self.queue.put(("retry", run_id))
 
     async def _run(self) -> None:
         while True:
-            experiment_id = await self.queue.get()
+            job = await self.queue.get()
             try:
-                if experiment_id is None:
+                if job is None:
                     return
-                await asyncio.to_thread(self.orchestrator.execute, experiment_id)
+                kind, item_id = job
+                if kind == "retry":
+                    await asyncio.to_thread(self.orchestrator.execute_retry, item_id)
+                else:
+                    await asyncio.to_thread(self.orchestrator.execute, item_id)
             except Exception as exc:
+                if job is None or job[0] != "experiment":
+                    continue
+                experiment_id = job[1]
                 with self.session_factory() as session:
                     experiment = session.get(Experiment, experiment_id)
                     if experiment is not None:

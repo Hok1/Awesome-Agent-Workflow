@@ -21,6 +21,74 @@ RUNNER_PROFILE_ID = "aae000000001"
 JUDGE_PROFILE_ID = "aae000000002"
 MANAGED_MARKER = "[managed:aaw-skill-eval]"
 SENSITIVE_PARTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "CREDENTIAL", "HEADER")
+ISOLATED_HOME_DIR = "chrys-isolated"
+
+
+def prepare_isolated_home(settings: Settings) -> Path:
+    """Materialize a chrys config home that is free of user-global skills.
+
+    chrys merges three auto-loaded skill locations into every agent on top of
+    the profile-configured paths (chrys/service/skills/adapter.py::
+    _collect_skill_paths):
+
+    * ``<config_dir>/skills`` — always on, cannot be disabled via the agent
+      profile, so the only way to exclude the operator's global skills is to
+      run chrys against a different config dir;
+    * ``~/.agents/skills`` — default on, disabled per-profile via
+      ``auto_load_user_agents_skills: false`` (set in the managed profiles);
+    * ``<cwd>/.agents/skills`` — default on; left enabled because it is
+      workspace-local and identical for both groups of a comparison.
+
+    The isolated home contains the managed agent profiles, the model profiles
+    (that is where api_key/base_url live) and settings.yaml — and deliberately
+    no ``skills/`` directory. Returns the APPDATA-style root whose ``chrys``
+    child (``.chrys`` on POSIX) is the chrys config dir.
+    """
+    chrys_dir_name = "chrys" if os.name == "nt" else ".chrys"
+    root = settings.data_dir / ISOLATED_HOME_DIR
+    home = root / chrys_dir_name
+    agents = home / "agents"
+    agents.mkdir(parents=True, exist_ok=True)
+    runtime = ChrysRuntime(settings)
+    for _legacy, document in runtime._managed_documents().items():
+        rendered = yaml.safe_dump(
+            document,
+            allow_unicode=True,
+            sort_keys=False,
+            width=100,
+        )
+        # chrys canonicalizes agent files to "<name>.yaml"; writing that name
+        # directly avoids the move + .conflict quarantine churn on every run.
+        target = agents / f"{document['name']}.yaml"
+        if not target.exists() or target.read_text(encoding="utf-8") != rendered:
+            atomic_write_text(target, rendered)
+    for stale in agents.glob("*.conflict*"):
+        stale.unlink()
+    for legacy in ("AAW-Eval-Runner.yaml", "AAW-Eval-Judge.yaml"):
+        legacy_path = agents / legacy
+        if legacy_path.exists():
+            legacy_path.unlink()
+    real_home = settings.chrys_config_dir
+    models_dst = home / "models"
+    models_dst.mkdir(parents=True, exist_ok=True)
+    real_models = real_home / "models"
+    if real_models.is_dir():
+        for path in real_models.glob("*.yaml"):
+            target = models_dst / path.name
+            if not target.exists() or target.read_bytes() != path.read_bytes():
+                shutil.copy2(path, target)
+        for path in models_dst.glob("*.yaml"):
+            if not (real_models / path.name).exists():
+                path.unlink()
+    settings_src = real_home / "settings.yaml"
+    if settings_src.is_file():
+        settings_dst = home / "settings.yaml"
+        if not settings_dst.exists() or settings_dst.read_bytes() != settings_src.read_bytes():
+            shutil.copy2(settings_src, settings_dst)
+    skills = home / "skills"
+    if skills.exists():
+        shutil.rmtree(skills)
+    return root
 
 
 def _prefix(command: str) -> list[str]:
@@ -43,7 +111,7 @@ def _safe_environment() -> dict[str, str]:
 def _run_chrys(
     settings: Settings,
     *arguments: str,
-    timeout: int = 20,
+    timeout: int = 10,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -180,6 +248,10 @@ class ChrysRuntime:
             "skills": {
                 "paths": [".aaw-eval/skills"],
                 "script_extensions": script_extensions,
+                # ~/.agents/skills is a user-global directory: auto-loading it
+                # would leak the operator's cross-tool skills into every eval
+                # run and pollute the no_skill baseline (R4P1).
+                "auto_load_user_agents_skills": False,
             },
             "approval": {"default": "skip", "user_can_override": False},
         }
@@ -195,7 +267,11 @@ class ChrysRuntime:
                 "evaluation prompt."
             ),
             "tools": {"builtins": []},
-            "skills": {"paths": [], "script_extensions": script_extensions},
+            "skills": {
+                "paths": [],
+                "script_extensions": script_extensions,
+                "auto_load_user_agents_skills": False,
+            },
             "approval": {"default": "auto", "user_can_override": False},
         }
         return {"AAW-Eval-Runner.yaml": runner, "AAW-Eval-Judge.yaml": judge}
@@ -300,16 +376,18 @@ class ChrysRuntime:
             }
         try:
             hashes = self.ensure_profiles() if ensure_profiles else {}
+            # NOTE: the chrys subcommands must run one at a time. Concurrent
+            # pyapp-managed chrys processes race on the pyapp installation
+            # lock on Windows ("unable to release lock file", os error 158),
+            # so probing in parallel makes the payload fail spuriously.
             version = self.version()
             agents = self.agents()
             models = self.models()
-            help_result = _run_chrys(self.settings, "run", "--help")
-            help_text = help_result.stdout + help_result.stderr
+            acp_result = _run_chrys(self.settings, "acp", "--help")
             capabilities = {
-                "run_json": help_result.returncode == 0 and "--json" in help_text,
+                "acp_stdio": acp_result.returncode == 0,
                 "agents_json": True,
                 "models_json": True,
-                "session_resume": help_result.returncode == 0 and "--session" in help_text,
             }
             names = {item.get("name") for item in agents}
             profiles_ready = {RUNNER_PROFILE_NAME, JUDGE_PROFILE_NAME} <= names

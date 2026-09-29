@@ -14,20 +14,24 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import Settings
 from ..errors import EvalError, InfrastructureError
-from ..models import Experiment, Run, SkillRevision, Suite
+from ..models import Experiment, Run, RunAttempt, RunProgressEvent, SkillRevision, Suite
 from ..schemas import CaseSpec, EvalProfile, ExperimentCreateRequest, SetupSpec
 from .chrys import enrich_profile, verify_profile
 from .graders import evaluate_deterministic, merge_scores
+from .logs import LogWriter
+from .progress import RunProgress
 from .repository import (
     capture_changes,
     clone_at_commit,
     file_tree_manifest,
     inspect_clean_project,
+    inspect_project_commit,
     run_trusted_command,
 )
 from .runner import build_judge, build_runner
 from .skills import import_skill, install_snapshot, prepare_eval_workspace
 from .storage import archive_untracked, canonical_json, content_hash, write_json
+from .workspace_paths import experiment_workspace, run_workspace
 
 
 def _now() -> datetime:
@@ -86,6 +90,58 @@ class ExperimentOrchestrator:
             session.refresh(experiment)
             return experiment
 
+    def create_retry(self, experiment_id: str) -> Experiment:
+        with self.session_factory() as session:
+            original = session.get(Experiment, experiment_id)
+            if original is None:
+                raise EvalError(
+                    "EXPERIMENT_NOT_FOUND",
+                    "Experiment was not found",
+                    status_code=404,
+                )
+            suite = session.get(Suite, original.suite_id)
+            assert suite is not None
+            project_path = suite.project_path
+            snapshot = {
+                "suite_id": original.suite_id,
+                "current_revision_id": original.current_revision_id,
+                "baseline_revision_id": original.baseline_revision_id,
+                "project_commit": original.project_commit,
+                "suite_hash": original.suite_hash,
+                "profile_hash": original.profile_hash,
+                "profile_json": original.profile_json,
+                "suite_snapshot_json": original.suite_snapshot_json,
+                "mode": original.mode,
+                "trials": original.trials,
+                "seed": original.seed,
+            }
+
+        inspect_project_commit(project_path, snapshot["project_commit"])
+
+        with self.session_factory() as session:
+            original = session.get(Experiment, experiment_id)
+            assert original is not None
+            if original.status in {"queued", "interrupted"}:
+                original.status = "cancelled"
+                original.cancel_requested_at = original.cancel_requested_at or _now()
+                original.error_kind = "cancelled"
+                original.error_message = "Experiment cancelled because a retry was requested"
+                original.completed_at = original.completed_at or _now()
+            elif original.status in {"preparing", "running"}:
+                original.cancel_requested_at = original.cancel_requested_at or _now()
+                original.error_kind = "cancelled"
+                original.error_message = "Experiment cancellation requested because a retry was requested"
+
+            retry = Experiment(
+                **snapshot,
+                retry_of_experiment_id=original.id,
+                status="queued",
+            )
+            session.add(retry)
+            session.commit()
+            session.refresh(retry)
+            return retry
+
     def execute(self, experiment_id: str) -> None:
         with self.session_factory() as session:
             experiment = session.get(Experiment, experiment_id)
@@ -109,57 +165,121 @@ class ExperimentOrchestrator:
             if baseline is not None:
                 _ = baseline.skill.name
 
-        root = self.settings.workspaces_dir / experiment_id
+        root = experiment_workspace(self.settings, experiment_id)
         base = root / "base"
+        experiment_log = LogWriter(
+            self.settings.artifacts_dir / experiment_id / "logs",
+            scope="experiment",
+        )
+        experiment_log.event("system", "实验开始准备")
         try:
+            experiment_log.event("system", "正在校验 Runner/Judge 配置", stage="preparing")
             verify_profile(self.settings, profile)
-            snapshot = inspect_clean_project(suite.project_path)
-            if snapshot.commit != experiment.project_commit:
-                raise EvalError(
-                    "PROJECT_MOVED",
-                    "Project HEAD changed after the experiment was queued; create a new experiment",
-                )
+            experiment_log.event("system", "Runner/Judge 配置校验完成", stage="preparing")
+            if experiment.retry_of_experiment_id:
+                snapshot = inspect_project_commit(suite.project_path, experiment.project_commit)
+            else:
+                snapshot = inspect_clean_project(suite.project_path)
+                if snapshot.commit != experiment.project_commit:
+                    raise EvalError(
+                        "PROJECT_MOVED",
+                        "Project HEAD changed after the experiment was queued; create a new experiment",
+                    )
             if root.exists():
                 shutil.rmtree(root)
+            experiment_log.event("system", "正在创建固定提交的评测副本", stage="cloning")
             clone_at_commit(snapshot, base)
+            experiment_log.event("system", "评测副本已创建", stage="cloning")
             setup = SetupSpec.model_validate(definition.get("setup") or {})
-            setup_log = self._prepare_base(base, setup)
+            setup_log = self._prepare_base(base, setup, log_writer=experiment_log)
             write_json(self.settings.artifacts_dir / experiment_id / "setup.json", setup_log)
+            experiment_log.event("system", "正在创建独立评测运行", stage="queuing_runs")
             self._create_runs(experiment_id, definition, baseline is not None)
             with self.session_factory() as session:
                 item = session.get(Experiment, experiment_id)
                 assert item is not None
                 item.status = "running"
                 session.commit()
+            experiment_log.event("system", "运行队列已创建，开始依次执行", stage="running")
             for run_id in self._ordered_run_ids(experiment_id):
+                if self._experiment_cancelled(experiment_id):
+                    experiment_log.event("system", "实验已取消，停止启动后续 run", stage="cancelled")
+                    break
                 self._execute_run(run_id, base, current, baseline, profile, definition)
-            with self.session_factory() as session:
-                item = session.get(Experiment, experiment_id)
-                assert item is not None
-                item.status = "completed"
-                item.completed_at = _now()
-                session.commit()
+            self._finish_experiment(experiment_id)
         except EvalError as exc:
+            experiment_log.event("system", f"实验准备失败：{exc.kind} · {exc.message}", stage="failed")
             self._fail_experiment(experiment_id, exc.kind, exc.message)
         except Exception as exc:
+            experiment_log.event(
+                "system", f"实验基础设施异常：{type(exc).__name__}: {exc}", stage="failed"
+            )
             self._fail_experiment(experiment_id, "infra_error", f"{type(exc).__name__}: {exc}")
         finally:
             shutil.rmtree(base, ignore_errors=True)
 
-    def _prepare_base(self, base: Path, setup: SetupSpec) -> dict:
-        log: dict[str, Any] = {"commands": [], "preflight": [], "network": setup.network}
-        for command in setup.commands:
-            result = run_trusted_command(command, base, setup.timeout_seconds)
-            log["commands"].append(result)
+    def _prepare_base(
+        self,
+        base: Path,
+        setup: SetupSpec,
+        *,
+        log_writer: LogWriter | None = None,
+    ) -> dict:
+        setup_log: dict[str, Any] = {"commands": [], "preflight": [], "network": setup.network}
+        for index, command in enumerate(setup.commands, start=1):
+            if log_writer is not None:
+                log_writer.event("setup", f"开始 Setup 命令 #{index}: {command}", stage="setup")
+            result = run_trusted_command(
+                command,
+                base,
+                setup.timeout_seconds,
+                on_log=log_writer.write if log_writer is not None else None,
+                source="setup",
+                stdout_path=(log_writer.root / f"setup-{index}.stdout.txt")
+                if log_writer is not None
+                else None,
+                stderr_path=(log_writer.root / f"setup-{index}.stderr.txt")
+                if log_writer is not None
+                else None,
+            )
+            setup_log["commands"].append(result)
+            if log_writer is not None:
+                log_writer.event(
+                    "setup",
+                    f"Setup 命令 #{index} 结束（exit_code={result.get('exit_code')}）",
+                    stage="setup",
+                )
             if result.get("exit_code") != 0:
                 raise EvalError("SETUP_FAILED", f"Setup command failed: {command}")
-        for command in setup.preflight:
-            result = run_trusted_command(command, base, setup.timeout_seconds)
-            log["preflight"].append(result)
+        for index, command in enumerate(setup.preflight, start=1):
+            if log_writer is not None:
+                log_writer.event(
+                    "preflight", f"开始 Preflight 命令 #{index}: {command}", stage="preflight"
+                )
+            result = run_trusted_command(
+                command,
+                base,
+                setup.timeout_seconds,
+                on_log=log_writer.write if log_writer is not None else None,
+                source="preflight",
+                stdout_path=(log_writer.root / f"preflight-{index}.stdout.txt")
+                if log_writer is not None
+                else None,
+                stderr_path=(log_writer.root / f"preflight-{index}.stderr.txt")
+                if log_writer is not None
+                else None,
+            )
+            setup_log["preflight"].append(result)
+            if log_writer is not None:
+                log_writer.event(
+                    "preflight",
+                    f"Preflight 命令 #{index} 结束（exit_code={result.get('exit_code')}）",
+                    stage="preflight",
+                )
             if result.get("exit_code") != 0:
                 raise EvalError("PREFLIGHT_FAILED", f"Preflight command failed: {command}")
-        log["manifest"] = file_tree_manifest(base)
-        return log
+        setup_log["manifest"] = file_tree_manifest(base)
+        return setup_log
 
     def _create_runs(self, experiment_id: str, definition: dict, has_baseline: bool) -> None:
         with self.session_factory() as session:
@@ -191,6 +311,16 @@ class ExperimentOrchestrator:
                         )
                         order += 1
                         session.add(run)
+                        session.flush()
+                        session.add(
+                            RunProgressEvent(
+                                run_id=run.id,
+                                attempt=1,
+                                kind="stage",
+                                stage="queued",
+                                message="等待前序 run 完成",
+                            )
+                        )
             session.commit()
 
     def _ordered_run_ids(self, experiment_id: str) -> list[str]:
@@ -216,22 +346,50 @@ class ExperimentOrchestrator:
         with self.session_factory() as session:
             run = session.get(Run, run_id)
             assert run is not None
+            if run.status != "queued":
+                return
             case = CaseSpec.model_validate(
                 next(item for item in definition["cases"] if item["id"] == run.case_id)
             )
             run.status = "running"
+            run.current_stage = "creating_workspace"
             run.started_at = _now()
+            run.stage_started_at = run.started_at
+            run.last_activity_at = run.started_at
+            run.last_heartbeat_at = run.started_at
             session.commit()
             group = run.group_name
+            trial_index = run.trial_index
             anonymous_id = run.anonymous_id
             experiment_id = run.experiment_id
+            attempt = run.current_attempt
 
-        run_root = self.settings.workspaces_dir / experiment_id / "runs" / run_id
+        run_root = run_workspace(self.settings, experiment_id, run_id, attempt)
         workspace = run_root / "workspace"
         artifact_dir = self.settings.artifacts_dir / experiment_id / run_id
+        if attempt > 1:
+            artifact_dir = artifact_dir / f"attempt-{attempt}"
         artifact_dir.mkdir(parents=True, exist_ok=True)
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
+            assert run is not None
+            run.artifact_path = str(artifact_dir)
+            session.commit()
+        log_writer = LogWriter(artifact_dir / "logs", scope="run", attempt=attempt)
+
+        def record_progress(kind: str, message: str, stage: str | None) -> None:
+            log_writer.event("system", message, stage=stage)
+
+        progress = RunProgress(self.session_factory, run_id, on_event=record_progress)
+        log_writer.event(
+            "system",
+            f"开始执行 {group} · Trial {trial_index} · 尝试 #{attempt}",
+            stage="creating_workspace",
+        )
         try:
-            shutil.copytree(base, workspace)
+            progress.stage("creating_workspace", "正在创建独立工作区")
+            if base.resolve() != workspace.resolve():
+                shutil.copytree(base, workspace)
             prepare_eval_workspace(workspace)
             selected: SkillRevision | None = None
             if group == "current":
@@ -239,6 +397,7 @@ class ExperimentOrchestrator:
             elif group == "baseline":
                 selected = baseline
             if selected is not None:
+                progress.stage("installing_skill", "正在安装 Skill 快照")
                 install_snapshot(
                     Path(selected.snapshot_path),
                     workspace,
@@ -247,16 +406,46 @@ class ExperimentOrchestrator:
                 )
 
             runner = self.runner or build_runner(self.settings, profile.runner_provider)
+            progress.stage("runner", "Runner 第 1 轮已启动")
             outcome = runner.run(
                 workspace=workspace,
                 artifact_dir=artifact_dir,
                 case=case,
                 profile=profile,
                 skill_name=selected.skill.name if selected else None,
+                on_progress=lambda kind, message: progress.emit(
+                    kind, message, activity=kind == "activity"
+                ),
+                on_log=log_writer.write,
+                is_cancelled=progress.cancelled,
             )
+            if outcome.error_kind == "cancelled":
+                self._fail_run(
+                    run_id,
+                    "cancelled",
+                    outcome.error_message or "Run cancelled by user",
+                    artifact_dir,
+                    retain=True,
+                )
+                return
+            if outcome.error_kind == "timeout":
+                self._fail_run(
+                    run_id,
+                    "timeout",
+                    outcome.error_message or "Runner timed out",
+                    artifact_dir,
+                    retain=True,
+                )
+                return
+            progress.stage("collecting_changes", "正在收集文件改动和响应证据")
             changes = capture_changes(workspace)
+            progress.stage("validators", "正在执行确定性验证器")
             deterministic, command_results = evaluate_deterministic(
-                case, workspace=workspace, changed_files=changes["changed_files"]
+                case,
+                workspace=workspace,
+                changed_files=changes["changed_files"],
+                artifact_dir=artifact_dir,
+                on_log=log_writer.write,
             )
             evidence = {
                 "final_response": outcome.final_response[-80_000:],
@@ -268,6 +457,7 @@ class ExperimentOrchestrator:
                 "skill_invoked": outcome.skill_invoked,
             }
             judge_service = self.judge or build_judge(self.settings, profile.judge_provider)
+            progress.stage("judge", "Judge 正在进行盲评")
             judge = judge_service.evaluate(
                 anonymous_id=anonymous_id,
                 case=case,
@@ -275,9 +465,25 @@ class ExperimentOrchestrator:
                 evidence=evidence,
                 profile=profile,
                 artifact_dir=artifact_dir,
+                on_progress=lambda kind, message: progress.emit(
+                    kind, message, activity=kind == "activity"
+                ),
+                on_log=log_writer.write,
+                is_cancelled=progress.cancelled,
             )
+            if progress.cancelled():
+                self._fail_run(
+                    run_id,
+                    "cancelled",
+                    "Run cancelled by user",
+                    artifact_dir,
+                    retain=True,
+                )
+                return
+            progress.stage("scoring", "正在合并评分与 hard gates")
             merged = merge_scores(case, deterministic, judge)
             merged["skill_invoked"] = outcome.skill_invoked
+            merged["skills_loaded"] = list(outcome.skills_loaded)
             write_json(
                 artifact_dir / "input-and-rubric.json",
                 {"case": case.model_dump(mode="json"), "anonymous_id": anonymous_id},
@@ -304,6 +510,7 @@ class ExperimentOrchestrator:
                         "error_kind": outcome.error_kind,
                         "error_message": outcome.error_message,
                         "skill_invoked": outcome.skill_invoked,
+                        "skills_loaded": list(outcome.skills_loaded),
                     },
                     "profile": profile.model_dump(mode="json"),
                     "changed_files": changes["changed_files"],
@@ -312,7 +519,8 @@ class ExperimentOrchestrator:
                 },
             )
             write_json(artifact_dir / "scores.json", merged)
-            status = "grader_invalid" if merged["invalid"] else "completed"
+            status = outcome.error_kind or ("grader_invalid" if merged["invalid"] else "completed")
+            progress.stage("persisting", "正在保存结果和证据包")
             with self.session_factory() as session:
                 run = session.get(Run, run_id)
                 assert run is not None
@@ -331,6 +539,7 @@ class ExperimentOrchestrator:
                 run.workspace_retained = run.error_kind is not None
                 run.completed_at = _now()
                 session.commit()
+            progress.stage(status, "Run 已完成" if status == "completed" else "Run 已结束")
             if status == "completed" and outcome.error_kind is None:
                 shutil.rmtree(run_root, ignore_errors=True)
                 if run_root.exists():
@@ -362,12 +571,26 @@ class ExperimentOrchestrator:
         write_json(artifact_dir / "error.json", {"kind": kind, "message": message})
         with self.session_factory() as session:
             run = session.get(Run, run_id)
+            attempt = run.current_attempt if run is not None else None
+        log_writer = LogWriter(artifact_dir / "logs", scope="run", attempt=attempt)
+        log_writer.event("system", f"Run 失败：{kind} · {message}", stage=kind)
+        progress = RunProgress(
+            self.session_factory,
+            run_id,
+            on_event=lambda event_kind, event_message, stage: log_writer.event(
+                "system", event_message, stage=stage
+            ),
+        )
+        progress.error(kind, message)
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
             assert run is not None
             run.status = kind
             run.error_kind = kind
             run.error_message = message[:10_000]
             run.artifact_path = str(artifact_dir)
             run.workspace_retained = retain
+            run.current_stage = kind
             run.completed_at = _now()
             session.commit()
 
@@ -381,3 +604,207 @@ class ExperimentOrchestrator:
             experiment.error_message = message[:10_000]
             experiment.completed_at = _now()
             session.commit()
+        LogWriter(
+            self.settings.artifacts_dir / experiment_id / "logs",
+            scope="experiment",
+        ).event("system", f"实验失败：{kind} · {message}", stage="failed")
+
+    def _experiment_cancelled(self, experiment_id: str) -> bool:
+        with self.session_factory() as session:
+            experiment = session.get(Experiment, experiment_id)
+            return bool(experiment is None or experiment.cancel_requested_at)
+
+    def _finish_experiment(self, experiment_id: str) -> None:
+        with self.session_factory() as session:
+            experiment = session.get(Experiment, experiment_id)
+            assert experiment is not None
+            if experiment.cancel_requested_at:
+                for run in experiment.runs:
+                    if run.status == "queued":
+                        run.status = "cancelled"
+                        run.current_stage = "cancelled"
+                        run.error_kind = "cancelled"
+                        run.error_message = "Experiment cancelled before this run started"
+                        run.completed_at = _now()
+                experiment.status = "cancelled"
+                experiment.error_kind = "cancelled"
+                experiment.error_message = experiment.error_message or "Experiment cancelled by user"
+            else:
+                failures = [run for run in experiment.runs if run.status != "completed"]
+                experiment.status = "completed_with_failures" if failures else "completed"
+                if failures:
+                    experiment.error_kind = "run_failures"
+                    experiment.error_message = (
+                        f"{len(failures)} run(s) did not complete successfully"
+                    )
+            experiment.completed_at = _now()
+            session.commit()
+            status = experiment.status
+            message = experiment.error_message or "所有 run 已完成"
+        LogWriter(
+            self.settings.artifacts_dir / experiment_id / "logs",
+            scope="experiment",
+        ).event("system", f"实验结束：{status} · {message}", stage=status)
+
+    def request_run_cancel(self, run_id: str) -> Run:
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                raise EvalError("RUN_NOT_FOUND", "Run was not found", status_code=404)
+            if run.status not in {"queued", "running"}:
+                raise EvalError("RUN_NOT_ACTIVE", "Only queued or running runs can be cancelled")
+            run.cancel_requested_at = _now()
+            if run.status == "queued":
+                run.status = "cancelled"
+                run.current_stage = "cancelled"
+                run.error_kind = "cancelled"
+                run.error_message = "Run cancelled before it started"
+                run.completed_at = _now()
+            session.commit()
+            session.refresh(run)
+            return run
+
+    def request_experiment_cancel(self, experiment_id: str) -> Experiment:
+        with self.session_factory() as session:
+            experiment = session.get(Experiment, experiment_id)
+            if experiment is None:
+                raise EvalError("EXPERIMENT_NOT_FOUND", "Experiment was not found", status_code=404)
+            if experiment.status not in {"queued", "preparing", "running", "interrupted"}:
+                raise EvalError("EXPERIMENT_NOT_ACTIVE", "Only active experiments can be cancelled")
+            experiment.cancel_requested_at = _now()
+            if experiment.status == "queued":
+                experiment.status = "cancelled"
+                experiment.error_kind = "cancelled"
+                experiment.error_message = "Experiment cancelled before it started"
+                experiment.completed_at = _now()
+            session.commit()
+            session.refresh(experiment)
+            return experiment
+
+    def prepare_retry(self, run_id: str) -> Run:
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                raise EvalError("RUN_NOT_FOUND", "Run was not found", status_code=404)
+            if run.error_kind not in {"infra_error", "timeout"}:
+                raise EvalError(
+                    "RUN_NOT_RETRIABLE",
+                    "Only infrastructure errors and timeouts can be formally retried",
+                )
+            if run.current_attempt >= 2:
+                raise EvalError("RETRY_LIMIT_REACHED", "A formal retry was already used")
+            session.add(
+                RunAttempt(
+                    run_id=run.id,
+                    attempt_index=run.current_attempt,
+                    status=run.status,
+                    stage=run.current_stage,
+                    artifact_path=run.artifact_path,
+                    error_kind=run.error_kind,
+                    error_message=run.error_message,
+                    started_at=run.started_at,
+                    completed_at=run.completed_at,
+                )
+            )
+            run.current_attempt += 1
+            run.status = "queued"
+            run.current_stage = "queued"
+            run.stage_started_at = _now()
+            run.last_heartbeat_at = None
+            run.last_activity_at = None
+            run.cancel_requested_at = None
+            run.quality_score = None
+            run.hard_gates_passed = 0
+            run.hard_gates_total = 0
+            run.duration_ms = None
+            run.input_tokens = None
+            run.output_tokens = None
+            run.exit_code = None
+            run.artifact_path = None
+            run.score_json = canonical_json({"retry": True})
+            run.error_kind = None
+            run.error_message = None
+            run.workspace_retained = False
+            run.started_at = None
+            run.completed_at = None
+            experiment = session.get(Experiment, run.experiment_id)
+            assert experiment is not None
+            experiment.status = "queued"
+            experiment.error_kind = None
+            experiment.error_message = None
+            experiment.completed_at = None
+            session.add(
+                RunProgressEvent(
+                    run_id=run.id,
+                    attempt=run.current_attempt,
+                    kind="stage",
+                    stage="queued",
+                    message="正式重试已加入队列",
+                )
+            )
+            session.commit()
+            session.refresh(run)
+            return run
+
+    def execute_retry(self, run_id: str) -> None:
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
+            if run is None or run.status != "queued" or run.current_attempt != 2:
+                return
+            experiment = session.get(Experiment, run.experiment_id)
+            assert experiment is not None
+            suite = session.get(Suite, experiment.suite_id)
+            assert suite is not None
+            definition = json.loads(experiment.suite_snapshot_json)
+            profile = EvalProfile.model_validate_json(experiment.profile_json)
+            current = session.get(SkillRevision, experiment.current_revision_id)
+            baseline = (
+                session.get(SkillRevision, experiment.baseline_revision_id)
+                if experiment.baseline_revision_id
+                else None
+            )
+            assert current is not None
+            _ = current.skill.name
+            if baseline is not None:
+                _ = baseline.skill.name
+            experiment.status = "running"
+            session.commit()
+
+        base = run_workspace(
+            self.settings, experiment.id, run.id, run.current_attempt
+        ) / "workspace"
+        experiment_log = LogWriter(
+            self.settings.artifacts_dir / experiment.id / "logs",
+            scope="experiment",
+        )
+        experiment_log.event(
+            "system",
+            f"正在为 run {run.id[:8]} 准备正式重试 #{run.current_attempt}",
+            stage="retry_preparing",
+        )
+        try:
+            verify_profile(self.settings, profile)
+            snapshot = inspect_clean_project(suite.project_path)
+            if snapshot.commit != experiment.project_commit:
+                raise EvalError(
+                    "PROJECT_MOVED",
+                    "Project HEAD changed after the experiment; create a new experiment",
+                )
+            clone_at_commit(snapshot, base)
+            setup = SetupSpec.model_validate(definition.get("setup") or {})
+            setup_log = self._prepare_base(base, setup, log_writer=experiment_log)
+            write_json(
+                self.settings.artifacts_dir
+                / experiment.id
+                / run.id
+                / f"retry-setup-{run.current_attempt}.json",
+                setup_log,
+            )
+            self._execute_run(run.id, base, current, baseline, profile, definition)
+            self._finish_experiment(experiment.id)
+        except EvalError as exc:
+            experiment_log.event("system", f"重试准备失败：{exc.kind} · {exc.message}", stage="failed")
+            artifact_dir = self.settings.artifacts_dir / experiment.id / run.id / "attempt-2"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            self._fail_run(run.id, exc.kind, exc.message, artifact_dir, retain=True)
+            self._finish_experiment(experiment.id)

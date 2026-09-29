@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from aaw_skill_eval.services.cleanup import cleanup_expired_workspaces
+from aaw_skill_eval.services.workspace_paths import run_workspace
 
 
 def test_cleanup_removes_only_expired_retained_workspace(client, tmp_path: Path):
@@ -71,8 +72,13 @@ def test_cleanup_removes_only_expired_retained_workspace(client, tmp_path: Path)
     run_root = settings.workspaces_dir / experiment_id / "runs" / run_id
     run_root.mkdir(parents=True)
     (run_root / "marker.txt").write_text("retained", encoding="utf-8")
+    short_root = run_workspace(settings, experiment_id, run_id)
+    short_root.mkdir(parents=True)
+    (short_root / "marker.txt").write_text("retained", encoding="utf-8")
+    assert len(str(run_root)) - len(str(short_root)) >= 40
 
     assert cleanup_expired_workspaces(settings, factory) == 1
     assert not run_root.exists()
+    assert not short_root.exists()
     with factory() as session:
         assert session.get(Run, run_id).workspace_retained is False

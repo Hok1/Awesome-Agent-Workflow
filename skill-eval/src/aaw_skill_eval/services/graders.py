@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..schemas import CaseSpec
+from .logs import LogCallback
 from .repository import run_trusted_command
 from .runner import JudgeOutcome
 
@@ -38,6 +39,8 @@ def evaluate_deterministic(
     *,
     workspace: Path,
     changed_files: list[str],
+    artifact_dir: Path | None = None,
+    on_log: LogCallback | None = None,
 ) -> tuple[list[ScoreComponent], list[dict[str, Any]]]:
     components: list[ScoreComponent] = []
     command_results: list[dict[str, Any]] = []
@@ -45,10 +48,40 @@ def evaluate_deterministic(
         if grader.type == "llm_rubric":
             continue
         if grader.type == "command":
-            result = run_trusted_command(grader.command or "", workspace, grader.timeout_seconds)
+            safe_id = "".join(
+                character if character.isalnum() or character in {"-", "_"} else "-"
+                for character in grader.id
+            )
+            stdout_path = (
+                artifact_dir / "logs" / f"validator-{safe_id}.stdout.txt"
+                if artifact_dir is not None
+                else None
+            )
+            stderr_path = (
+                artifact_dir / "logs" / f"validator-{safe_id}.stderr.txt"
+                if artifact_dir is not None
+                else None
+            )
+            if on_log is not None:
+                on_log("validator", "event", f"开始验证器：{grader.name}")
+            result = run_trusted_command(
+                grader.command or "",
+                workspace,
+                grader.timeout_seconds,
+                on_log=on_log,
+                source="validator",
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+            )
             command_results.append(result)
             timed_out = bool(result.get("timed_out"))
             passed = result.get("exit_code") == 0 and not timed_out
+            if on_log is not None:
+                on_log(
+                    "validator",
+                    "event",
+                    f"验证器结束：{grader.name}（{'通过' if passed else '失败'}）",
+                )
             evidence = (
                 f"exit_code={result.get('exit_code')}\n"
                 f"stdout:\n{result.get('stdout', '')[-4000:]}\n"
@@ -71,6 +104,12 @@ def evaluate_deterministic(
         elif grader.type == "file_exists":
             candidate = _safe_relative(workspace, grader.path or "")
             passed = bool(candidate and candidate.exists())
+            if on_log is not None:
+                on_log(
+                    "validator",
+                    "event",
+                    f"文件检查：{grader.path or ''}（{'通过' if passed else '失败'}）",
+                )
             components.append(
                 ScoreComponent(
                     grader_id=grader.id,
@@ -94,6 +133,12 @@ def evaluate_deterministic(
                 }
             )
             passed = not matched
+            if on_log is not None:
+                on_log(
+                    "validator",
+                    "event",
+                    f"变更约束检查：{grader.name}（{'通过' if passed else '失败'}）",
+                )
             components.append(
                 ScoreComponent(
                     grader_id=grader.id,
