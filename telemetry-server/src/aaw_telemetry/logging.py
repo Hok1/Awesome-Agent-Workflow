@@ -35,7 +35,7 @@ class TextFormatter(logging.Formatter):
             return "null"
         if isinstance(value, bool):
             return str(value).lower()
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return str(value)
         rendered = str(value)
         if not rendered or any(character.isspace() for character in rendered) or any(

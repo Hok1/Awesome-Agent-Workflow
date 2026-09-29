@@ -1830,7 +1830,7 @@ class AnomalyService:
         for key, default in spec.defaults.items():
             value = params[key]
             if (
-                isinstance(default, (int, float))
+                isinstance(default, int | float)
                 and not isinstance(default, bool)
                 and float(value) <= 0
             ):
