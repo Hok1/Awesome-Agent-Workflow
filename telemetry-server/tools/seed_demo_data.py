@@ -182,7 +182,9 @@ class Workflow:
 
     # -- 真实步骤序列 -------------------------------------------------------
 
-    def run_sr_full(self, ars: list[tuple[str, dict[str, int], str]], *, upload_last: bool = True) -> None:
+    def run_sr_full(
+        self, ars: list[tuple[str, dict[str, int], str]], *, upload_last: bool = True
+    ) -> None:
         """完整 SR 链路。ars: [(AR 号, 每个 task-dev 的 diff spec, 备注)]。
 
         链路里的设计/门禁步骤真实上报；task-split 后每个 AR 对应
@@ -439,8 +441,12 @@ client.post(
         "enabled": True,
     },
 ).raise_for_status()
-chain_master = client.post("/api/v1/ai-masters", json={"name": "工具链值守"}).raise_for_status().json()
-platform_master = client.post("/api/v1/ai-masters", json={"name": "遥测平台值守"}).raise_for_status().json()
+chain_master = (
+    client.post("/api/v1/ai-masters", json={"name": "工具链值守"}).raise_for_status().json()
+)
+platform_master = (
+    client.post("/api/v1/ai-masters", json={"name": "遥测平台值守"}).raise_for_status().json()
+)
 client.put(
     "/api/v1/ai-masters/assignments/aaw-toolchain",
     json={"ai_master_id": chain_master["id"]},
@@ -460,7 +466,10 @@ print("\n========== 生长型演示数据就绪 ==========")
 print(f"版本基准: {roster['latest_version']}（来源 {roster['release_source']}）"
       f" · 活跃 {roster['active_users']} 人 · 旧版本 {roster['on_old']} 人"
       f" · 非发布账号 {roster['non_release_users']} 人")
-print(f"旧版本名单: {[(r['user_name'], r['version'], '落后' + str(r['behind'])) for r in roster['items']]}")
+old_versions = [
+    (r["user_name"], r["version"], "落后" + str(r["behind"])) for r in roster["items"]
+]
+print(f"旧版本名单: {old_versions}")
 print(f"积压体检: {health['backlog']}")
 full_rate = overview["attribution_rate_80"]
 intent_rate = overview["attribution_rate_80_merge_intent"]

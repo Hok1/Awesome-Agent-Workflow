@@ -4,7 +4,6 @@ import pytest
 
 from aaw_telemetry.errors import ApiError
 from aaw_telemetry.services.telemetry_filters import (
-    TelemetryFilterService,
     evaluate_filters,
     validate_filters,
 )

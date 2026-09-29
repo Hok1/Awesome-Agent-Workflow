@@ -92,13 +92,29 @@ class Experiment(Base):
     trials: Mapped[int] = mapped_column(Integer)
     seed: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    retry_of_experiment_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("experiments.id"), nullable=True, index=True
+    )
     error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     suite: Mapped[Suite] = relationship()
+    retry_of: Mapped[Experiment | None] = relationship(
+        remote_side="Experiment.id",
+        foreign_keys=[retry_of_experiment_id],
+        back_populates="retries",
+    )
+    retries: Mapped[list[Experiment]] = relationship(
+        foreign_keys=[retry_of_experiment_id],
+        back_populates="retry_of",
+        order_by="Experiment.created_at",
+    )
     current_revision: Mapped[SkillRevision] = relationship(foreign_keys=[current_revision_id])
     baseline_revision: Mapped[SkillRevision | None] = relationship(
         foreign_keys=[baseline_revision_id]
@@ -131,11 +147,64 @@ class Run(Base):
     error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     workspace_retained: Mapped[bool] = mapped_column(Boolean, default=False)
+    current_stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stage_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    current_attempt: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     experiment: Mapped[Experiment] = relationship(back_populates="runs")
+    progress_events: Mapped[list[RunProgressEvent]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    attempts: Mapped[list[RunAttempt]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class RunProgressEvent(Base):
+    __tablename__ = "run_progress_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("runs.id"), index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[Run] = relationship(back_populates="progress_events")
+
+
+class RunAttempt(Base):
+    __tablename__ = "run_attempts"
+    __table_args__ = (UniqueConstraint("run_id", "attempt_index"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("runs.id"), index=True)
+    attempt_index: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32))
+    stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    artifact_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[Run] = relationship(back_populates="attempts")
 
 
 class HumanReview(Base):

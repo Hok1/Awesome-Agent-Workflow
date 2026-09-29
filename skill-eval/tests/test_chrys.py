@@ -10,8 +10,9 @@ from aaw_skill_eval.services.chrys import (
     JUDGE_PROFILE_NAME,
     RUNNER_PROFILE_NAME,
     ChrysRuntime,
+    prepare_isolated_home,
 )
-from aaw_skill_eval.services.runner import _judge_scores
+from aaw_skill_eval.services.runner import _chrys_error_text, _judge_scores
 
 
 def test_legacy_eval_profile_defaults_to_codex():
@@ -56,10 +57,45 @@ def test_managed_chrys_profiles_keep_code_instructions_but_isolate_tools(tmp_pat
     assert set(hashes) == {RUNNER_PROFILE_NAME, JUDGE_PROFILE_NAME}
     assert runner["instructions"] == "Effective Code instructions"
     assert runner["skills"]["paths"] == [".aaw-eval/skills"]
+    assert runner["skills"]["auto_load_user_agents_skills"] is False
     assert "ask_user" not in runner["tools"]["builtins"]
     assert "sub_agents" not in runner
     assert judge["tools"]["builtins"] == []
     assert judge["skills"]["paths"] == []
+    assert judge["skills"]["auto_load_user_agents_skills"] is False
+
+
+def test_prepare_isolated_home_excludes_user_global_skills(tmp_path: Path):
+    home = tmp_path / "chrys"
+    (home / "agents").mkdir(parents=True)
+    (home / "models").mkdir(parents=True)
+    (home / "skills" / "aaw-workflow").mkdir(parents=True)
+    (home / "models" / "4c3f3678ed0e.yaml").write_text(
+        yaml.safe_dump({"id": "4c3f3678ed0e", "name": "hw", "api_key": "k"}),
+        encoding="utf-8",
+    )
+    (home / "settings.yaml").write_text(yaml.safe_dump({"model": "4c3f3678ed0e"}), encoding="utf-8")
+    data_dir = tmp_path / "data"
+    settings = Settings(
+        data_dir=data_dir,
+        chrys_home=home,
+        chrys_command="missing-chrys-for-test",
+    )
+    root = prepare_isolated_home(settings)
+    isolated = root / "chrys"
+    agents = sorted(path.name for path in (isolated / "agents").glob("*.yaml"))
+    assert agents == [f"{JUDGE_PROFILE_NAME}.yaml", f"{RUNNER_PROFILE_NAME}.yaml"]
+    assert (isolated / "models" / "4c3f3678ed0e.yaml").is_file()
+    assert (isolated / "settings.yaml").is_file()
+    assert not (isolated / "skills").exists()
+    runner = yaml.safe_load(
+        (isolated / "agents" / f"{RUNNER_PROFILE_NAME}.yaml").read_text(encoding="utf-8")
+    )
+    assert runner["skills"]["auto_load_user_agents_skills"] is False
+    # idempotent: a second preparation must not duplicate or churn files
+    prepare_isolated_home(settings)
+    assert sorted(path.name for path in (isolated / "agents").glob("*.yaml")) == agents
+    assert not list((isolated / "agents").glob("*.conflict*"))
 
 
 def test_chrys_judge_accepts_json_code_fence_and_validates_ids():
@@ -82,3 +118,8 @@ def test_chrys_judge_accepts_json_code_fence_and_validates_ids():
     )
     assert scores[0].score == 87
     assert scores[0].grader_id == "quality"
+
+
+def test_chrys_error_message_is_unwrapped_from_cli_json():
+    raw = '{"error":"Response hit the output token limit while reasoning","code":"executor_error"}'
+    assert _chrys_error_text(raw) == "Response hit the output token limit while reasoning"

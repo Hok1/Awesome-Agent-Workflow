@@ -10,7 +10,13 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import build_router
 from .config import Settings, get_settings
-from .database import Base, build_engine, build_session_factory, session_dependency
+from .database import (
+    Base,
+    build_engine,
+    build_session_factory,
+    migrate_schema,
+    session_dependency,
+)
 from .errors import EvalError
 from .jobs import JobManager
 from .services.orchestrator import ExperimentOrchestrator
@@ -21,6 +27,7 @@ def create_app(settings: Settings | None = None, *, engine=None) -> FastAPI:
     settings.ensure_directories()
     engine = engine or build_engine(settings)
     Base.metadata.create_all(engine)
+    migrate_schema(engine)
     session_factory = build_session_factory(engine)
     get_session = session_dependency(session_factory)
     orchestrator = ExperimentOrchestrator(settings, session_factory)

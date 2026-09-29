@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import Settings
 from ..models import Run
+from .workspace_paths import run_workspace
 
 
 def cleanup_expired_workspaces(
@@ -30,14 +31,22 @@ def cleanup_expired_workspaces(
             )
         ).all()
         for run in runs:
-            candidate = (settings.workspaces_dir / run.experiment_id / "runs" / run.id).resolve()
-            if not candidate.is_relative_to(workspace_root):
+            legacy_name = (
+                run.id if run.current_attempt == 1 else f"r{run.current_attempt}-{run.id[:8]}"
+            )
+            candidates = (
+                run_workspace(settings, run.experiment_id, run.id, run.current_attempt),
+                settings.workspaces_dir / run.experiment_id / "runs" / legacy_name,
+            )
+            try:
+                for candidate in candidates:
+                    candidate = candidate.resolve()
+                    if not candidate.is_relative_to(workspace_root):
+                        raise OSError("Run workspace is outside the workspace root")
+                    if candidate.exists():
+                        shutil.rmtree(candidate)
+            except OSError:
                 continue
-            if candidate.exists():
-                try:
-                    shutil.rmtree(candidate)
-                except OSError:
-                    continue
             run.workspace_retained = False
             cleaned += 1
         session.commit()

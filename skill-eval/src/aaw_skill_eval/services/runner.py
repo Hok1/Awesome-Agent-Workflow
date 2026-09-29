@@ -1,19 +1,33 @@
 from __future__ import annotations
 
+import codecs
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import threading
 import time
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from ..config import Settings
 from ..errors import InfrastructureError
 from ..schemas import CaseSpec, EvalProfile, GraderSpec
+from .acp import ChrysAcpSession
 from .chrys import JUDGE_PROFILE_NAME, RUNNER_PROFILE_NAME
+from .logs import LogCallback
 from .storage import write_json
+from .workspace_scan import (
+    WORKSPACE_SCAN_INTERVAL_SECONDS,
+    scan_workspace,
+    relative_if_inside,
+)
 
 
 @dataclass
@@ -29,6 +43,7 @@ class RunOutcome:
     error_message: str | None = None
     turns: int = 1
     skill_invoked: Literal["yes", "no", "unknown"] = "unknown"
+    skills_loaded: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -44,6 +59,29 @@ class JudgeOutcome:
     scores: list[JudgeScore] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+
+
+ProgressCallback = Callable[[str, str], None]
+CancelCallback = Callable[[], bool]
+
+_scan_workspace = scan_workspace
+_relative_if_inside = relative_if_inside
+
+
+def _workspace_timeout_note(stats: dict[str, Any] | None) -> str:
+    """Explain whether the agent was still writing files when the timeout hit."""
+    if not stats:
+        return ""
+    changed = stats.get("changed_files") or 0
+    age = stats.get("last_change_age_seconds")
+    if changed and age is not None:
+        return (
+            f"；超时前 {max(0, round(age))}s 工作区仍有文件更新"
+            f"（累计 {changed} 个文件变动），Agent 无输出但仍在工作，可考虑提高单轮超时"
+        )
+    if changed:
+        return f"；超时前工作区累计有 {changed} 个文件变动"
+    return "；超时期间工作区无任何文件改动（无输出且无活动）"
 
 
 def command_prefix(command: str) -> list[str]:
@@ -134,54 +172,15 @@ def _find_thread_id(events: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _parse_json_output(raw: str) -> list[dict[str, Any]]:
+def _chrys_error_text(stderr: str) -> str:
+    text = stderr.strip()[-3000:]
     try:
-        value = json.loads(raw)
+        payload = json.loads(text)
     except json.JSONDecodeError:
-        return _parse_jsonl(raw)
-    if isinstance(value, dict):
-        return [value]
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    return [{"type": "unparsed", "text": str(value)[:20_000]}]
-
-
-def _content_text(value: Any) -> str | None:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        parts = []
-        for item in value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return "\n".join(parts) if parts else None
-    if isinstance(value, dict):
-        for key in ("text", "content", "message", "response", "output", "result"):
-            text = _content_text(value.get(key))
-            if text:
-                return text
-    return None
-
-
-def _final_response(events: list[dict[str, Any]]) -> str:
-    priority = (
-        "final_response",
-        "finalResponse",
-        "response",
-        "output",
-        "result",
-        "message",
-        "content",
-        "text",
-    )
-    for event in reversed(events):
-        for key in priority:
-            text = _content_text(event.get(key))
-            if text:
-                return text
-    return ""
+        return text
+    if isinstance(payload, dict):
+        return str(payload.get("error") or payload.get("message") or text)[-3000:]
+    return text
 
 
 def _skill_invocation(events: list[dict[str, Any]], skill_name: str | None) -> str:
@@ -227,6 +226,258 @@ def _token_usage(events: list[dict[str, Any]]) -> tuple[int | None, int | None]:
     )
 
 
+def _safe_event_summary(line: str) -> str:
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return "Runner 产生了新输出"
+    if not isinstance(value, dict):
+        return "Runner 产生了新事件"
+    labels = [value.get(key) for key in ("type", "event", "name", "tool", "tool_name", "toolName")]
+    label = next((str(item) for item in labels if item), "event")
+    return f"Runner 事件：{label[:120]}"
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _execute_streaming(
+    command: list[str],
+    *,
+    prompt: str | None,
+    prompt_snapshot: str | None = None,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
+    stdout_path: Path,
+    stderr_path: Path,
+    on_progress: ProgressCallback | None,
+    on_log: LogCallback | None,
+    log_source: str,
+    is_cancelled: CancelCallback | None,
+) -> tuple[int | None, str, str, int, bool, bool, dict[str, Any]]:
+    started = time.monotonic()
+    started_at = datetime.now(UTC).isoformat()
+    invocation_id = uuid4().hex
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    last_output = [started]
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_name = None
+    snapshot = prompt if prompt is not None else prompt_snapshot
+    if snapshot is not None:
+        prompt_dir = stdout_path.parent / "invocations"
+        prompt_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = prompt_dir / f"{invocation_id}.prompt.txt"
+        prompt_file.write_text(snapshot, encoding="utf-8")
+        prompt_name = f"{'judge/' if log_source == 'judge' else ''}invocations/{prompt_file.name}"
+    command_text = subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
+
+    def invocation_event(phase: str, **details: Any) -> None:
+        if on_log is not None:
+            on_log(log_source, "invocation", json.dumps({
+                "id": invocation_id,
+                "phase": phase,
+                "source": log_source,
+                "command": command_text,
+                "cwd": str(cwd),
+                "prompt_file": prompt_name,
+                "started_at": started_at,
+                "timeout_seconds": timeout_seconds,
+                **details,
+            }, ensure_ascii=False))
+
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE if prompt is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+            bufsize=0,
+        )
+    except OSError as exc:
+        invocation_event("spawn_error", error=str(exc), ended_at=datetime.now(UTC).isoformat())
+        raise
+
+    invocation_event("start", pid=process.pid, process_state="running")
+
+    if process.stdin is not None:
+        def send_prompt() -> None:
+            try:
+                process.stdin.write((prompt or "").encode("utf-8"))
+                process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass
+            finally:
+                with suppress(OSError):
+                    process.stdin.close()
+
+        threading.Thread(target=send_prompt, daemon=True).start()
+
+    def drain(
+        stream,
+        destination: Path,
+        chunks: list[str],
+        *,
+        channel: str,
+        report: bool,
+    ) -> None:
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        with destination.open("a", encoding="utf-8") as output:
+            while True:
+                data = os.read(stream.fileno(), 4096)
+                if not data:
+                    break
+                chunk = decoder.decode(data)
+                if not chunk:
+                    continue
+                last_output[0] = time.monotonic()
+                chunks.append(chunk)
+                output.write(chunk)
+                output.flush()
+                if on_log is not None:
+                    on_log(log_source, channel, chunk)
+                if report and on_progress is not None:
+                    on_progress("activity", _safe_event_summary(chunk))
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                chunks.append(tail)
+                output.write(tail)
+                output.flush()
+                if on_log is not None:
+                    on_log(log_source, channel, tail)
+        stream.close()
+
+    stdout_thread = threading.Thread(
+        target=drain,
+        args=(process.stdout, stdout_path, stdout_parts),
+        kwargs={"channel": "stdout", "report": True},
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=drain,
+        args=(process.stderr, stderr_path, stderr_parts),
+        kwargs={"channel": "stderr", "report": True},
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    excluded_outputs = {
+        name
+        for name in (
+            _relative_if_inside(cwd, stdout_path),
+            _relative_if_inside(cwd, stderr_path),
+        )
+        if name
+    }
+    workspace_baseline = _scan_workspace(cwd, exclude=excluded_outputs)
+    workspace_changed_files = 0
+    last_workspace_change: float | None = None
+    last_workspace_scan = time.monotonic()
+
+    timed_out = False
+    cancelled = False
+    last_heartbeat = started
+    while process.poll() is None:
+        current = time.monotonic()
+        if is_cancelled is not None and is_cancelled():
+            cancelled = True
+            _terminate_process_tree(process)
+            break
+        if current - started >= timeout_seconds:
+            timed_out = True
+            _terminate_process_tree(process)
+            break
+        if current - last_workspace_scan >= WORKSPACE_SCAN_INTERVAL_SECONDS:
+            last_workspace_scan = current
+            snapshot_files = _scan_workspace(cwd, exclude=excluded_outputs)
+            changed = [
+                name
+                for name, signature in snapshot_files.items()
+                if workspace_baseline.get(name) != signature
+            ]
+            removed = [name for name in workspace_baseline if name not in snapshot_files]
+            if changed or removed:
+                workspace_changed_files += len(changed) + len(removed)
+                last_workspace_change = current
+                sample = "、".join(changed[:3])
+                if on_progress is not None:
+                    on_progress(
+                        "activity",
+                        f"工作区文件有更新：{len(changed)} 个变动"
+                        + (f"（如 {sample}）" if sample else "")
+                        + (f"，{len(removed)} 个删除" if removed else ""),
+                    )
+                workspace_baseline = snapshot_files
+        if on_progress is not None and current - last_heartbeat >= 30:
+            elapsed = int(current - started)
+            silent = int(current - last_output[0])
+            remaining = max(0, timeout_seconds - elapsed)
+            workspace_note = (
+                f"工作区 {int(current - last_workspace_change)}s 前有文件更新"
+                if last_workspace_change is not None
+                else "工作区暂无文件改动"
+            )
+            on_progress(
+                "heartbeat",
+                f"子进程 PID {process.pid} 仍在运行；已运行 {elapsed}s，"
+                f"最近 {silent}s 无 stdout/stderr；{workspace_note}；本轮超时还剩 {remaining}s",
+            )
+            last_heartbeat = current
+        time.sleep(0.25)
+    stdout_thread.join(timeout=5)
+    stderr_thread.join(timeout=5)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    workspace_stats = {
+        "changed_files": workspace_changed_files,
+        "last_change_age_seconds": (
+            round(time.monotonic() - last_workspace_change, 1)
+            if last_workspace_change is not None
+            else None
+        ),
+    }
+    invocation_event(
+        "end",
+        pid=process.pid,
+        process_state="exited",
+        ended_at=datetime.now(UTC).isoformat(),
+        exit_code=process.returncode,
+        duration_ms=duration_ms,
+        timed_out=timed_out,
+        cancelled=cancelled,
+        stdout_bytes=len("".join(stdout_parts).encode("utf-8")),
+        stderr_bytes=len("".join(stderr_parts).encode("utf-8")),
+        workspace_changed_files=workspace_stats["changed_files"],
+        workspace_last_change_age_seconds=workspace_stats["last_change_age_seconds"],
+    )
+    return (
+        process.returncode,
+        "".join(stdout_parts),
+        "".join(stderr_parts),
+        duration_ms,
+        timed_out,
+        cancelled,
+        workspace_stats,
+    )
+
+
 class CodexRunner:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -239,37 +490,32 @@ class CodexRunner:
         cwd: Path,
         state_dir: Path,
         timeout_seconds: int,
-    ) -> tuple[int | None, str, str, int, bool]:
+        stdout_path: Path,
+        stderr_path: Path,
+        on_progress: ProgressCallback | None = None,
+        on_log: LogCallback | None = None,
+        log_source: str = "runner",
+        is_cancelled: CancelCallback | None = None,
+    ) -> tuple[int | None, str, str, int, bool, bool, dict[str, Any]]:
         command = [*command_prefix(self.settings.codex_command), *arguments, "-"]
-        started = time.monotonic()
         try:
-            result = subprocess.run(
+            return _execute_streaming(
                 command,
-                input=prompt,
+                prompt=prompt,
                 cwd=cwd,
                 env=_isolated_environment(state_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_seconds,
-                check=False,
-            )
-            return (
-                result.returncode,
-                result.stdout,
-                result.stderr,
-                int((time.monotonic() - started) * 1000),
-                False,
+                timeout_seconds=timeout_seconds,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                on_progress=on_progress,
+                on_log=on_log,
+                log_source=log_source,
+                is_cancelled=is_cancelled,
             )
         except FileNotFoundError as exc:
             raise InfrastructureError(
                 "CODEX_NOT_FOUND", f"Codex executable not found: {self.settings.codex_command}"
             ) from exc
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            return None, stdout, stderr, int((time.monotonic() - started) * 1000), True
 
     def run(
         self,
@@ -279,6 +525,9 @@ class CodexRunner:
         case: CaseSpec,
         profile: EvalProfile,
         skill_name: str | None,
+        on_progress: ProgressCallback | None = None,
+        on_log: LogCallback | None = None,
+        is_cancelled: CancelCallback | None = None,
     ) -> RunOutcome:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         last_message = artifact_dir / "last-message.txt"
@@ -309,19 +558,26 @@ class CodexRunner:
         if not case.followups:
             arguments.append("--ephemeral")
 
-        exit_code, stdout, stderr, duration_ms, timed_out = self._execute(
+        stdout_path = artifact_dir / "codex.jsonl"
+        stderr_path = artifact_dir / "codex.stderr.txt"
+        exit_code, stdout, stderr, duration_ms, timed_out, cancelled, workspace_stats = self._execute(
             arguments,
             prompt=prompt,
             cwd=workspace,
             state_dir=artifact_dir / "codex-state",
             timeout_seconds=profile.timeout_seconds,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            on_progress=on_progress,
+            on_log=on_log,
+            is_cancelled=is_cancelled,
         )
         events = _parse_jsonl(stdout)
         thread_id = _find_thread_id(events)
         final_response = last_message.read_text(encoding="utf-8") if last_message.exists() else ""
         turns = 1
 
-        if not timed_out and exit_code == 0 and case.followups:
+        if not timed_out and not cancelled and exit_code == 0 and case.followups:
             used: set[int] = set()
             while turns < case.max_turns:
                 match_index = next(
@@ -363,12 +619,17 @@ class CodexRunner:
                     *_config_args(profile, judge=False),
                     thread_id,
                 ]
-                code, out, err, elapsed, followup_timeout = self._execute(
+                code, out, err, elapsed, followup_timeout, followup_cancelled = self._execute(
                     resume_args,
                     prompt=followup.reply,
                     cwd=workspace,
                     state_dir=artifact_dir / "codex-state",
                     timeout_seconds=profile.timeout_seconds,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    on_progress=on_progress,
+                    on_log=on_log,
+                    is_cancelled=is_cancelled,
                 )
                 duration_ms += elapsed
                 stdout += "\n" + out
@@ -381,13 +642,12 @@ class CodexRunner:
                 )
                 exit_code = code
                 timed_out = followup_timeout
+                cancelled = followup_cancelled
                 turns += 1
-                if timed_out or code != 0:
+                if timed_out or cancelled or code != 0:
                     break
 
         input_tokens, output_tokens = _token_usage(events)
-        (artifact_dir / "codex.jsonl").write_text(stdout, encoding="utf-8")
-        (artifact_dir / "codex.stderr.txt").write_text(stderr, encoding="utf-8")
         return RunOutcome(
             exit_code=exit_code,
             final_response=final_response,
@@ -396,11 +656,19 @@ class CodexRunner:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             thread_id=thread_id,
-            error_kind="timeout" if timed_out else ("agent_error" if exit_code else None),
+            error_kind=(
+                "cancelled"
+                if cancelled
+                else ("timeout" if timed_out else ("agent_error" if exit_code else None))
+            ),
             error_message=(
-                "Codex execution timed out"
-                if timed_out
-                else (stderr.strip()[-3000:] if exit_code else None)
+                "Run cancelled by user"
+                if cancelled
+                else (
+                    "Codex execution timed out"
+                    if timed_out
+                    else (stderr.strip()[-3000:] if exit_code else None)
+                )
             ),
             turns=turns,
             skill_invoked=_skill_invocation(events, skill_name),
@@ -421,6 +689,9 @@ class CodexJudge:
         evidence: dict[str, Any],
         profile: EvalProfile,
         artifact_dir: Path,
+        on_progress: ProgressCallback | None = None,
+        on_log: LogCallback | None = None,
+        is_cancelled: CancelCallback | None = None,
     ) -> JudgeOutcome:
         llm_graders = [grader for grader in graders if grader.type == "llm_rubric"]
         if not llm_graders:
@@ -488,16 +759,22 @@ class CodexJudge:
             str(last_message),
             *_config_args(profile, judge=True),
         ]
-        code, stdout, stderr, _, timed_out = self.runner._execute(
+        code, stdout, stderr, _, timed_out, cancelled = self.runner._execute(
             arguments,
             prompt=prompt,
             cwd=judge_dir,
             state_dir=judge_dir / "codex-state",
             timeout_seconds=profile.timeout_seconds,
+            stdout_path=judge_dir / "judge.jsonl",
+            stderr_path=judge_dir / "judge.stderr.txt",
+            on_progress=on_progress,
+            on_log=on_log,
+            log_source="judge",
+            is_cancelled=is_cancelled,
         )
         events = _parse_jsonl(stdout)
-        (judge_dir / "judge.jsonl").write_text(stdout, encoding="utf-8")
-        (judge_dir / "judge.stderr.txt").write_text(stderr, encoding="utf-8")
+        if cancelled:
+            return JudgeOutcome(events=events, error="Judge cancelled by user")
         if timed_out:
             return JudgeOutcome(events=events, error="Judge timed out")
         if code != 0 or not last_message.exists():
@@ -583,68 +860,15 @@ def _judge_scores(
 
 
 class ChrysRunner:
+    """Runs cases through `chrys acp` (Agent Client Protocol over stdio).
+
+    The ACP notification stream (agent message chunks, tool calls, plan and
+    token updates) is forwarded to the platform progress/log pipeline, and the
+    per-turn timeout only fires when the agent shows no activity at all.
+    """
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-
-    def _execute_turn(
-        self,
-        *,
-        prompt: str,
-        cwd: Path,
-        artifact_dir: Path,
-        profile_name: str,
-        model_profile: str,
-        timeout_seconds: int,
-        session_id: str | None = None,
-        turn: int = 1,
-    ) -> tuple[int | None, str, str, int, bool, list[dict[str, Any]], str]:
-        runtime_dir = cwd / ".aaw-eval"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        task_file = runtime_dir / f"prompt-{profile_name.replace(' ', '-').lower()}-{turn}.txt"
-        task_file.write_text(prompt, encoding="utf-8")
-        arguments = [
-            "run",
-            "--json",
-            "--agent",
-            profile_name,
-            "--model",
-            model_profile,
-            "--workdir",
-            str(cwd),
-        ]
-        if session_id:
-            arguments.extend(["--session", session_id])
-        arguments.extend(["--task", str(task_file.relative_to(cwd))])
-        started = time.monotonic()
-        try:
-            result = subprocess.run(
-                [*command_prefix(self.settings.chrys_command), *arguments],
-                cwd=cwd,
-                env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_seconds,
-                check=False,
-            )
-            code, stdout, stderr, timed_out = result.returncode, result.stdout, result.stderr, False
-        except FileNotFoundError as exc:
-            raise InfrastructureError(
-                "CHRYS_NOT_FOUND", f"Chrys executable not found: {self.settings.chrys_command}"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            code = None
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            timed_out = True
-        duration_ms = int((time.monotonic() - started) * 1000)
-        events = _parse_json_output(stdout)
-        final = _final_response(events)
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        (artifact_dir / f"chrys-turn-{turn}.json").write_text(stdout, encoding="utf-8")
-        (artifact_dir / f"chrys-turn-{turn}.stderr.txt").write_text(stderr, encoding="utf-8")
-        return code, stdout, stderr, duration_ms, timed_out, events, final
 
     def run(
         self,
@@ -654,6 +878,9 @@ class ChrysRunner:
         case: CaseSpec,
         profile: EvalProfile,
         skill_name: str | None,
+        on_progress: ProgressCallback | None = None,
+        on_log: LogCallback | None = None,
+        is_cancelled: CancelCallback | None = None,
     ) -> RunOutcome:
         prompt_parts = []
         if skill_name:
@@ -662,85 +889,135 @@ class ChrysRunner:
         if case.agent_context:
             prompt_parts.append("Agent 可见补充上下文：\n" + case.agent_context)
         prompt = "\n\n".join(prompt_parts)
-        code, stdout, stderr, duration_ms, timed_out, events, final = self._execute_turn(
-            prompt=prompt,
+        acp = ChrysAcpSession(
+            self.settings,
+            agent_profile=RUNNER_PROFILE_NAME,
             cwd=workspace,
             artifact_dir=artifact_dir,
-            profile_name=RUNNER_PROFILE_NAME,
-            model_profile=profile.runner_model,
-            timeout_seconds=profile.timeout_seconds,
+            on_log=on_log,
+            log_source="runner",
         )
-        session_id = _find_thread_id(events)
+        events: list[dict[str, Any]] = []
+        duration_ms = 0
+        final = ""
         turns = 1
         used: set[int] = set()
-        while not timed_out and code == 0 and turns < case.max_turns and case.followups:
-            match_index = next(
-                (
-                    index
-                    for index, item in enumerate(case.followups)
-                    if index not in used
-                    and item.when_output_contains.casefold() in final.casefold()
-                ),
-                None,
+        session_id: str | None = None
+        timed_out = False
+        cancelled = False
+        idle_timeout = False
+        turn_error: dict[str, Any] | None = None
+        try:
+            acp.start()
+            acp.initialize()
+            session_id = acp.new_session(workspace)
+            acp.ensure_model(profile.runner_model)
+            result = acp.prompt(
+                prompt,
+                timeout_seconds=profile.timeout_seconds,
+                on_progress=on_progress,
+                is_cancelled=is_cancelled,
+                turn=1,
             )
-            if match_index is None:
-                break
-            if not session_id:
-                return RunOutcome(
-                    exit_code=code,
-                    final_response=final,
-                    events=events,
-                    duration_ms=duration_ms,
-                    error_kind="infra_error",
-                    error_message="Chrys did not emit a resumable session id",
-                    turns=turns,
-                    skill_invoked=_skill_invocation(events, skill_name),
+            events.extend(result.events)
+            duration_ms += result.duration_ms
+            final = result.text
+            timed_out, cancelled = result.timed_out, result.cancelled
+            idle_timeout = result.idle_timeout
+            turn_error = result.error
+            while (
+                not timed_out
+                and not cancelled
+                and turn_error is None
+                and result.stop_reason == "end_turn"
+                and turns < case.max_turns
+                and case.followups
+            ):
+                match_index = next(
+                    (
+                        index
+                        for index, item in enumerate(case.followups)
+                        if index not in used
+                        and item.when_output_contains.casefold() in final.casefold()
+                    ),
+                    None,
                 )
-            used.add(match_index)
-            followup = case.followups[match_index]
-            turns += 1
-            next_code, out, err, elapsed, next_timeout, next_events, next_final = (
-                self._execute_turn(
-                    prompt=followup.reply,
-                    cwd=workspace,
-                    artifact_dir=artifact_dir,
-                    profile_name=RUNNER_PROFILE_NAME,
-                    model_profile=profile.runner_model,
+                if match_index is None:
+                    break
+                used.add(match_index)
+                followup = case.followups[match_index]
+                turns += 1
+                result = acp.prompt(
+                    followup.reply,
                     timeout_seconds=profile.timeout_seconds,
-                    session_id=session_id,
+                    on_progress=on_progress,
+                    is_cancelled=is_cancelled,
                     turn=turns,
                 )
-            )
-            code, timed_out = next_code, next_timeout
-            stdout += "\n" + out
-            stderr += "\n" + err
-            duration_ms += elapsed
-            events.extend(next_events)
-            final = next_final or final
-        input_tokens, output_tokens = _token_usage(events)
+                events.extend(result.events)
+                duration_ms += result.duration_ms
+                timed_out, cancelled = result.timed_out, result.cancelled
+                idle_timeout = idle_timeout or result.idle_timeout
+                turn_error = result.error
+                final = result.text or final
+                if timed_out or cancelled or turn_error is not None:
+                    break
+        finally:
+            acp.close()
+        error_kind = None
+        error_message = None
+        if cancelled:
+            error_kind = "cancelled"
+            error_message = "Run cancelled by user"
+        elif timed_out:
+            error_kind = "timeout"
+            if idle_timeout:
+                idle_limit = max(profile.timeout_seconds, 60)
+                error_message = (
+                    f"Chrys execution timed out after {idle_limit}s without any activity "
+                    "(no ACP events, no workspace file changes); consider raising the "
+                    "per-turn inactivity timeout"
+                )
+            else:
+                error_message = (
+                    f"Chrys turn exceeded the absolute limit of "
+                    f"{max(3 * profile.timeout_seconds, 3600)}s while still active"
+                )
+        elif turn_error is not None:
+            error_kind = "agent_error"
+            error_message = _acp_error_text(turn_error)
+        last = events[-1] if events else {}
+        input_tokens = last.get("input_tokens") if isinstance(last, dict) else None
+        output_tokens = last.get("output_tokens") if isinstance(last, dict) else None
         return RunOutcome(
-            exit_code=code,
+            exit_code=0 if error_kind is None else 1,
             final_response=final,
             events=events,
             duration_ms=duration_ms,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+            output_tokens=output_tokens if isinstance(output_tokens, int) else None,
             thread_id=session_id,
-            error_kind="timeout" if timed_out else ("agent_error" if code else None),
-            error_message=(
-                "Chrys execution timed out"
-                if timed_out
-                else (stderr.strip()[-3000:] if code else None)
-            ),
+            error_kind=error_kind,
+            error_message=error_message,
             turns=turns,
             skill_invoked=_skill_invocation(events, skill_name),
+            skills_loaded=list(acp.skills_loaded),
         )
+
+
+def _acp_error_text(error: dict[str, Any]) -> str:
+    message = str(error.get("message") or "Chrys agent error")
+    data = error.get("data")
+    if isinstance(data, dict):
+        detail = data.get("message") or data.get("details")
+        if detail:
+            message = f"{message}: {detail}"
+    return message[-3000:]
 
 
 class ChrysJudge:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.runner = ChrysRunner(settings)
 
     def evaluate(
         self,
@@ -751,6 +1028,9 @@ class ChrysJudge:
         evidence: dict[str, Any],
         profile: EvalProfile,
         artifact_dir: Path,
+        on_progress: ProgressCallback | None = None,
+        on_log: LogCallback | None = None,
+        is_cancelled: CancelCallback | None = None,
     ) -> JudgeOutcome:
         llm_graders = [grader for grader in graders if grader.type == "llm_rubric"]
         if not llm_graders:
@@ -774,58 +1054,75 @@ class ChrysJudge:
             '"evidence":"...","reasoning":"..."}]}。每个 grader_id 恰好一次，分数 0-100。\n\n'
             + json.dumps(payload, ensure_ascii=False, indent=2)
         )
-        code, stdout, stderr, _, timed_out, events, final = self.runner._execute_turn(
-            prompt=prompt,
+        acp = ChrysAcpSession(
+            self.settings,
+            agent_profile=JUDGE_PROFILE_NAME,
             cwd=judge_dir,
             artifact_dir=judge_dir,
-            profile_name=JUDGE_PROFILE_NAME,
-            model_profile=profile.judge_model,
-            timeout_seconds=profile.timeout_seconds,
+            on_log=on_log,
+            log_source="judge",
         )
-        if timed_out:
-            return JudgeOutcome(events=events, error="Judge timed out")
-        if code != 0:
-            return JudgeOutcome(
-                events=events, error=(stderr.strip() or "Chrys Judge failed")[-3000:]
-            )
+        events: list[dict[str, Any]] = []
         try:
-            return JudgeOutcome(
-                scores=_judge_scores(final, anonymous_id=anonymous_id, graders=llm_graders),
-                events=events,
-            )
-        except (TypeError, ValueError) as first_error:
-            session_id = _find_thread_id(events)
-            if not session_id:
-                return JudgeOutcome(events=events, error=f"Invalid Judge output: {first_error}")
-            repair_prompt = (
-                "保持刚才的 candidate_id、各 grader_id、分数和理由完全不变。"
-                "只修复输出格式，并且只返回合法 JSON 对象，不要使用 Markdown 代码块。"
-            )
-            repair = self.runner._execute_turn(
-                prompt=repair_prompt,
-                cwd=judge_dir,
-                artifact_dir=judge_dir,
-                profile_name=JUDGE_PROFILE_NAME,
-                model_profile=profile.judge_model,
+            acp.start()
+            acp.initialize()
+            acp.new_session(judge_dir)
+            acp.ensure_model(profile.judge_model)
+            result = acp.prompt(
+                prompt,
                 timeout_seconds=profile.timeout_seconds,
-                session_id=session_id,
-                turn=2,
+                on_progress=on_progress,
+                is_cancelled=is_cancelled,
+                turn=1,
             )
-            repair_code, _, repair_stderr, _, repair_timeout, repair_events, repaired = repair
-            events.extend(repair_events)
-            if repair_timeout or repair_code != 0:
-                detail = repair_stderr.strip() or str(first_error)
-                return JudgeOutcome(
-                    events=events, error=f"Judge format repair failed: {detail}"[-3000:]
-                )
+            events.extend(result.events)
+            if result.cancelled:
+                return JudgeOutcome(events=events, error="Judge cancelled by user")
+            if result.timed_out:
+                return JudgeOutcome(events=events, error="Judge timed out")
+            if result.error is not None:
+                return JudgeOutcome(events=events, error=_acp_error_text(result.error))
             try:
-                scores = _judge_scores(repaired, anonymous_id=anonymous_id, graders=llm_graders)
-                return JudgeOutcome(scores=scores, events=events)
-            except (TypeError, ValueError) as repair_error:
                 return JudgeOutcome(
+                    scores=_judge_scores(
+                        result.text, anonymous_id=anonymous_id, graders=llm_graders
+                    ),
                     events=events,
-                    error=f"Invalid Judge output after format repair: {repair_error}",
                 )
+            except (TypeError, ValueError) as first_error:
+                repair_prompt = (
+                    "保持刚才的 candidate_id、各 grader_id、分数和理由完全不变。"
+                    "只修复输出格式，并且只返回合法 JSON 对象，不要使用 Markdown 代码块。"
+                )
+                repair = acp.prompt(
+                    repair_prompt,
+                    timeout_seconds=profile.timeout_seconds,
+                    on_progress=on_progress,
+                    is_cancelled=is_cancelled,
+                    turn=2,
+                )
+                events.extend(repair.events)
+                if repair.timed_out or repair.cancelled or repair.error is not None:
+                    detail = (
+                        _acp_error_text(repair.error)
+                        if repair.error is not None
+                        else str(first_error)
+                    )
+                    return JudgeOutcome(
+                        events=events, error=f"Judge format repair failed: {detail}"[-3000:]
+                    )
+                try:
+                    scores = _judge_scores(
+                        repair.text, anonymous_id=anonymous_id, graders=llm_graders
+                    )
+                    return JudgeOutcome(scores=scores, events=events)
+                except (TypeError, ValueError) as repair_error:
+                    return JudgeOutcome(
+                        events=events,
+                        error=f"Invalid Judge output after format repair: {repair_error}",
+                    )
+        finally:
+            acp.close()
 
 
 def build_runner(settings: Settings, provider: str):

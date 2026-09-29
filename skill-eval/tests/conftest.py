@@ -51,8 +51,26 @@ def skill(tmp_path: Path) -> Path:
 
 
 class FakeRunner:
-    def run(self, *, workspace, artifact_dir, case, profile, skill_name):
+    def run(
+        self,
+        *,
+        workspace,
+        artifact_dir,
+        case,
+        profile,
+        skill_name,
+        on_progress=None,
+        on_log=None,
+        is_cancelled=None,
+    ):
+        if on_progress:
+            on_progress("activity", "Runner fixture produced output")
         label = "skill" if skill_name else "no-skill"
+        output = f"runner fixture output for {label}\n"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "fixture-runner.stdout.txt").write_text(output, encoding="utf-8")
+        if on_log:
+            on_log("runner", "stdout", output)
         (workspace / "result.md").write_text(f"result from {label}\n", encoding="utf-8")
         return RunOutcome(
             exit_code=0,
@@ -65,7 +83,27 @@ class FakeRunner:
 
 
 class FakeJudge:
-    def evaluate(self, *, anonymous_id, case, graders, evidence, profile, artifact_dir):
+    def evaluate(
+        self,
+        *,
+        anonymous_id,
+        case,
+        graders,
+        evidence,
+        profile,
+        artifact_dir,
+        on_progress=None,
+        on_log=None,
+        is_cancelled=None,
+    ):
+        if on_progress:
+            on_progress("activity", "Judge fixture produced output")
+        output = "judge fixture output\n"
+        judge_dir = artifact_dir / "judge"
+        judge_dir.mkdir(parents=True, exist_ok=True)
+        (judge_dir / "fixture-judge.stdout.txt").write_text(output, encoding="utf-8")
+        if on_log:
+            on_log("judge", "stdout", output)
         score = 88 if "with skill" in evidence["final_response"] else 55
         return JudgeOutcome(
             scores=[

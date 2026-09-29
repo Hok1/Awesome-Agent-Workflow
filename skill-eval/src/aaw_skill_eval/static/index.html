@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AAW Skill Eval</title>
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260928-5">
 </head>
 <body>
   <div class="app-shell">
@@ -19,68 +19,33 @@
       </div>
     </header>
 
-    <main id="top">
-      <section class="hero">
-        <div>
-          <p class="eyebrow">AGENT SKILL EVALUATION</p>
-          <h1>让 Skill 的效果<br><span>有证据可比较</span></h1>
-          <p class="hero-copy">同项目、同模型、同评分规则，对比无 Skill、基准版本和当前版本。只呈现得分与事实，不替你下结论。</p>
-          <div class="hero-actions">
-            <button class="button button-primary button-large" data-open="newSuite">创建第一个测试</button>
-            <button class="button button-ghost button-large" data-scroll="experiments">查看最近实验</button>
+    <main id="top" class="workspace">
+      <section class="workbench" aria-labelledby="experimentsTitle">
+        <section class="experiment-panel" id="experiments">
+          <div class="section-heading">
+            <div><p class="eyebrow">RUN HISTORY</p><h1 id="experimentsTitle">最近实验</h1></div>
+            <div class="experiment-actions">
+              <select id="experimentStatusFilter" aria-label="筛选实验状态"><option value="">全部状态</option></select>
+              <select id="experimentModeFilter" aria-label="筛选实验模式"><option value="">全部模式</option><option value="formal">正式</option><option value="quick">快速</option></select>
+              <button class="button button-ghost" id="refreshButton">刷新数据</button>
+            </div>
           </div>
-        </div>
-        <div class="hero-visual" aria-hidden="true">
-          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-          <div class="score-core"><span id="heroScore">—</span><small>最近均分</small></div>
-          <div class="float-card card-a"><small>vs 无 Skill</small><strong id="heroDelta">—</strong></div>
-          <div class="float-card card-b"><small>正式实验</small><strong>3× trials</strong></div>
-          <div class="float-card card-c"><small>Judge</small><strong>Blind</strong></div>
-        </div>
-      </section>
-
-      <section class="metrics" aria-label="概览">
-        <article><small>已登记 Skill</small><strong id="metricSkills">0</strong><span>完整目录哈希版本</span></article>
-        <article><small>已验证项目</small><strong id="metricProjects">0</strong><span>项目之间等权聚合</span></article>
-        <article><small>最近实验</small><strong id="metricExperiments">0</strong><span>不可变运行记录</span></article>
-        <article><small>运行队列</small><strong id="metricQueue">0</strong><span>本地串行执行</span></article>
-      </section>
-
-      <section class="section" id="skills">
-        <div class="section-heading">
-          <div><p class="eyebrow">SKILL SCOREBOARD</p><h2>最近得分</h2></div>
-          <div class="score-actions">
-            <select id="runnerFilter" aria-label="筛选 Runner"><option value="">全部 Runner</option></select>
-            <select id="judgeFilter" aria-label="筛选 Judge"><option value="">全部 Judge</option></select>
-            <select id="modeFilter" aria-label="筛选模式"><option value="">全部模式</option><option value="formal">正式</option><option value="quick">快速</option></select>
-            <select id="profileFilter" aria-label="选择 Profile"><option value="">选择 Profile 看均分</option></select>
-            <button class="button button-ghost" id="refreshButton">刷新数据</button>
-          </div>
-        </div>
-        <div class="table-card">
-          <table>
-            <thead><tr><th>Skill</th><th>项目</th><th>Runner</th><th>Judge</th><th>当前分</th><th>vs 无 Skill</th><th>vs 基准</th><th>最近实验</th></tr></thead>
-            <tbody id="skillRows"><tr><td colspan="8" class="empty">尚无评测数据</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="section split" id="experiments">
-        <div>
-          <div class="section-heading"><div><p class="eyebrow">RUN HISTORY</p><h2>最近实验</h2></div></div>
           <div id="experimentList" class="experiment-list"></div>
-        </div>
-        <aside class="launch-card">
+        </section>
+        <aside class="launch-card" aria-labelledby="launchTitle">
           <p class="eyebrow">RUN A SUITE</p>
-          <h3>运行已保存套件</h3>
+          <h2 id="launchTitle">运行已保存套件</h2>
           <label>测试套件<select id="runSuite"></select></label>
           <div class="field-grid">
             <label>Runner<select id="runnerProvider"></select></label>
-            <label>模式<select id="runMode"><option value="formal">正式 · 每组 3 次</option><option value="quick">快速 · 每组 1 次</option></select></label>
+            <label>模式<select id="runMode"><option value="quick">快速 · 每组 1 次</option><option value="formal">正式 · 每组 3 次</option></select></label>
           </div>
+          <label>单轮无活动超时（秒）<input id="timeoutSeconds" type="number" min="30" max="14400" step="30" value="1800" inputmode="numeric"></label>
+          <p class="form-hint">Agent 持续有输出或文件改动时不会被中断；连续无活动达该时长（30-14400，默认 1800）才终止，单轮总时长上限为其 3 倍。</p>
           <div id="runnerCodexConfig">
-            <label>Codex 模型<input id="runnerCodexModel" placeholder="请输入显式模型 ID" autocomplete="off"></label>
+            <label>Codex 模型<input id="runnerCodexModel" list="codexModelOptions" placeholder="请选择或输入模型 ID（如 gpt-6-sol）" autocomplete="off"></label>
             <label>推理强度<select id="runnerEffort"><option>high</option><option>medium</option><option>xhigh</option><option>low</option></select></label>
+            <p class="form-hint" id="runnerCodexModelHint">候选模型读取自本机 Codex 配置。</p>
           </div>
           <div id="runnerChrysConfig" class="hidden">
             <label>Chrys Model Profile<select id="runnerChrysModel"></select></label>
@@ -90,7 +55,7 @@
           <div id="judgeConfig" class="judge-config hidden">
             <label>Judge<select id="judgeProvider"></select></label>
             <div id="judgeCodexConfig">
-              <label>Codex Judge 模型<input id="judgeCodexModel" placeholder="请输入显式模型 ID" autocomplete="off"></label>
+              <label>Codex Judge 模型<input id="judgeCodexModel" list="codexModelOptions" placeholder="请选择或输入模型 ID（如 gpt-6-sol）" autocomplete="off"></label>
               <label>Judge 推理强度<select id="judgeEffort"><option>high</option><option>medium</option><option>xhigh</option><option>low</option></select></label>
             </div>
             <div id="judgeChrysConfig" class="hidden">
@@ -141,7 +106,8 @@
     </div>
   </dialog>
 
+  <datalist id="codexModelOptions"></datalist>
   <div id="toast" class="toast" role="status"></div>
-  <script src="/assets/app.js" defer></script>
+  <script src="/assets/app.js?v=20260928-5" defer></script>
 </body>
 </html>
