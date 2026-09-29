@@ -5,10 +5,11 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterator, Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -665,7 +666,8 @@ class EvidenceProvider:
                     f"{repo} 采纳率大幅下降",
                     (
                         f"近 {int(params['recent_days'])} 天采纳率（80%）"
-                        f"{recent_rate:.0%}，之前 {int(params['baseline_days'])} 天为 {base_rate:.0%}"
+                        f"{recent_rate:.0%}，之前 "
+                        f"{int(params['baseline_days'])} 天为 {base_rate:.0%}"
                     ),
                     repo,
                     self._component(repo),
@@ -734,7 +736,7 @@ class EvidenceProvider:
     def _rollback_from(rows: list[TelemetryMessage]) -> str | None:
         """同一用户近期的上报里是否出现过更高的正式版本（回退来源），没有则返回 None。"""
         parsed = [
-            (version := _semver(row.aaw_version))
+            _semver(row.aaw_version)
             for row in rows
             if _semver(row.aaw_version) is not None
         ]
@@ -1479,7 +1481,12 @@ class AnomalyService:
             event.disposition = "archive_pending"
             event.updated_at = now
             self.session.add(
-                self._action(event, "archive_requested", request.requested_by, {"reason": reason, "source": "admin_console"})
+                self._action(
+                    event,
+                    "archive_requested",
+                    request.requested_by,
+                    {"reason": reason, "source": "admin_console"},
+                )
             )
         self.session.commit()
         return self._archive_payload(request)

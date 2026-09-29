@@ -11,7 +11,6 @@ as change history.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -64,7 +63,9 @@ def _validate_dirs(values: list[str], key: str) -> list[str]:
 def _validate_suffixes(values: list[str], key: str) -> list[str]:
     for value in values:
         if not value.startswith(".") or len(value) < 2 or value.count(".") > 1:
-            raise ApiError(422, "FILTER_INVALID", f"filters.{key} 条目 {value!r} 必须是形如 '.png' 的后缀")
+            raise ApiError(
+                422, "FILTER_INVALID", f"filters.{key} 条目 {value!r} 必须是形如 '.png' 的后缀"
+            )
 
 
 def validate_filters(filters: dict) -> dict:
@@ -89,7 +90,8 @@ def validate_filters(filters: dict) -> dict:
         raise ApiError(
             422,
             "FILTER_INVALID",
-            f"filters.max_file_bytes 必须是 {_MAX_FILE_BYTES_RANGE[0]}~{_MAX_FILE_BYTES_RANGE[1]} 之间的整数",
+            f"filters.max_file_bytes 必须是 {_MAX_FILE_BYTES_RANGE[0]}~"
+            f"{_MAX_FILE_BYTES_RANGE[1]} 之间的整数",
         )
 
     dirs = _string_list(filters.get("excluded_dirs"), "excluded_dirs")
@@ -120,7 +122,9 @@ def _merge_legacy_suffix_keys(filters: dict) -> dict:
 def _validate_bounded(values: list[str], key: str) -> None:
     for value in values:
         if not value or len(value.encode("utf-8")) > _MAX_STRING_BYTES:
-            raise ApiError(422, "FILTER_INVALID", f"filters.{key} 条目为空或超过 {_MAX_STRING_BYTES} 字节")
+            raise ApiError(
+                422, "FILTER_INVALID", f"filters.{key} 条目为空或超过 {_MAX_STRING_BYTES} 字节"
+            )
 
 
 @dataclass(frozen=True)

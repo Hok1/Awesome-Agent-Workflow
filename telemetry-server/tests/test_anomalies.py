@@ -13,7 +13,6 @@ from aaw_telemetry.models import (
     AnomalyEvent,
     AnomalyRule,
     CodeAttribution,
-    DevRun,
     WorkflowRun,
 )
 from aaw_telemetry.services.anomalies import DETECTOR_SPECS, AnomalyService
@@ -595,7 +594,11 @@ def test_startup_retires_removed_builtin_rules_and_closes_events(client):
         f"/api/v1/anomalies/events?ai_master_id={master_id}&include_closed=true",
         headers=headers,
     ).json()["items"]
-    assert all(row["closed_reason"] == "rule_deleted" for row in history if row["detector_type"] == "core_stats_shift")
+    assert all(
+        row["closed_reason"] == "rule_deleted"
+        for row in history
+        if row["detector_type"] == "core_stats_shift"
+    )
     # 幂等：再跑一次不会报错或复活规则。
     with Session(client.app.state.engine) as session:
         AnomalyService(session, client.app.state.projects).ensure_builtin_rules()
@@ -832,7 +835,13 @@ def test_adoption_drop_detects_rate_decline_not_noise(client):
         "category": rule["category"],
         "detector_type": "adoption_drop",
         "scope_type": "platform",
-        "params": {"recent_days": 7, "baseline_days": 28, "drop_pp": 25, "min_runs": 3, "min_lines": 5},
+        "params": {
+            "recent_days": 7,
+            "baseline_days": 28,
+            "drop_pp": 25,
+            "min_runs": 3,
+            "min_lines": 5,
+        },
         "status": "enabled",
         "change_reason": "验证采纳率下降检测",
     }
