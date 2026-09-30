@@ -1,11 +1,14 @@
 const state = {
   suites: [], experiments: [], draft: null, poller: null,
-  runtime: null, controlsInitialized: false, detail: null, detailPoller: null,
+  runtime: null, controlsInitialized: false, detail: null, detailPoller: null, routeId: null, lastComparison: "",
   experimentsRequestSeq: 0,
   runEvents: {}, eventCursors: {}, runLogs: {}, expandedRuns: {}, retryingExperiments: new Set(),
-  logConsole: null, logPoller: null
+  logConsole: null, logPoller: null, conversations: {}
 };
 const RUNTIME_CACHE_KEY = "aaw-skill-eval.runtime.v1";
+const ROUTE_EXPERIMENT = /^#\/experiments\/([0-9a-f-]{36})$/i;
+const GROUP_ORDER = ["no_skill", "baseline", "current"];
+const GROUP_LABELS = {no_skill: "无 Skill", baseline: "上一基准", current: "当前候选"};
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 
@@ -207,7 +210,7 @@ function renderExperiments() {
     <div><h3>${escapeHtml(item.suite_name)}</h3><div class="experiment-meta"><span class="pill ${item.status}">${escapeHtml(experimentStatusLabel(item.status))}</span><span>${providerName(item.profile.runner.provider)} → ${providerName(item.profile.judge.provider)}</span><span>${item.mode==="formal"?"正式":"快速"} · ${item.trials} trial</span><span>${fmtTime(item.created_at)}</span><span>${escapeHtml(item.project_commit.slice(0,8))}</span></div>${experimentLineageMarkup(item)}${total?`<div class="progress-row"><div class="progress-track"><i style="width:${percent}%"></i></div><span>${done}/${total} 完成${progress.running?` · ${progress.running} 运行中`:""}${progress.queued?` · ${progress.queued} 等待`:""}${progress.failed?` · ${progress.failed} 异常`:""}</span>${progress.active_stage?`<strong>${escapeHtml(stageLabel(progress.active_stage))}</strong>`:""}${progress.stalled?`<b class="stall-warning">${progress.active_heartbeat_age_seconds!=null&&progress.active_heartbeat_age_seconds<45?"静默等待":"心跳中断"} · ${fmtDuration(progress.active_activity_age_seconds)} 无新活动</b>`:""}</div>`:""}</div>
     <div class="experiment-result"><strong class="score">${fmtScore(item.scores.current)}</strong><button class="button button-ghost button-small" data-detail="${item.id}">详情</button><button class="button button-ghost button-small" data-retry-experiment="${item.id}" ${retrying?"disabled":""}>${retrying?"正在加入…":"重试"}</button></div>
   </article>`}).join("");
-  $$('[data-detail]').forEach(button=>button.addEventListener("click",()=>showDetail(button.dataset.detail)));
+  $$('[data-detail]').forEach(button=>button.addEventListener("click",()=>navigateToExperiment(button.dataset.detail)));
   $$('[data-retry-experiment]').forEach(button=>button.addEventListener("click",()=>retryExperiment(button.dataset.retryExperiment)));
 }
 function updatePolling(){const active=state.experiments.some(x=>["queued","preparing","running"].includes(x.status));if(active&&!state.poller)state.poller=setInterval(()=>refreshExperiments().catch(()=>{}),2000);if(!active&&state.poller){clearInterval(state.poller);state.poller=null;}}
@@ -251,7 +254,7 @@ async function launchExperiment(){
   const button=$("#runButton"),label=button.textContent;button.disabled=true;button.textContent="正在加入队列…";
   try{const body={suite_id:suiteId,mode:$("#runMode").value,profile:{schema_version:2,name:profileName,runner_provider:runnerProvider,runner_model:runnerModel,runner_reasoning_effort:runnerEffort,judge_provider:judgeProvider,judge_model:judgeModel,judge_reasoning_effort:judgeEffort,timeout_seconds:timeoutSeconds,network:false,allowed_mcp_servers:[]}};const result=await api("/api/v1/experiments",{method:"POST",body:JSON.stringify(body)});upsertExperiment(result.experiment);toast(`实验 ${result.id.slice(0,8)} 已加入队列（单轮无活动超时 ${timeoutSeconds}s）`);refreshExperiments().catch(()=>toast("实验已入队，后续状态刷新失败"));}catch(error){toast(error.message);}finally{button.disabled=false;button.textContent=label;}
 }
-function runActions(item,run){const actions=[];if(["queued","running"].includes(run.status))actions.push(`<button class="text-button danger" data-cancel-run="${run.id}">取消 run</button>`);if(["infra_error","timeout"].includes(run.error_kind)&&run.current_attempt<2)actions.push(`<button class="text-button" data-retry-run="${run.id}">正式重试</button>`);if(run.artifact_available)actions.push(`<button class="text-button" data-log="${run.id}">日志</button>`);if(!["queued","running"].includes(run.status)&&run.artifact_available)actions.push(`<button class="text-button" data-evidence="${run.id}">证据</button>`);if(!["queued","running"].includes(run.status))actions.push(`<button class="text-button" data-review="${run.id}">复核${run.reviews.length?` (${run.reviews.length})`:""}</button>`);return actions.join("");}
+function runActions(item,run){const actions=[];if(["queued","running"].includes(run.status))actions.push(`<button class="text-button danger" data-cancel-run="${run.id}">取消 run</button>`);if(["infra_error","timeout"].includes(run.error_kind)&&run.current_attempt<2)actions.push(`<button class="text-button" data-retry-run="${run.id}">正式重试</button>`);if(run.artifact_available)actions.push(`<button class="text-button" data-conversation="${run.id}">对话</button>`);if(run.artifact_available)actions.push(`<button class="text-button" data-log="${run.id}">日志</button>`);if(!["queued","running"].includes(run.status)&&run.artifact_available)actions.push(`<button class="text-button" data-evidence="${run.id}">证据</button>`);if(!["queued","running"].includes(run.status))actions.push(`<button class="text-button" data-review="${run.id}">复核${run.reviews.length?` (${run.reviews.length})`:""}</button>`);return actions.join("");}
 function renderTimeline(run){const events=state.runEvents[run.id]||[];if(!run.tracking_available&&!events.length)return '<p class="legacy-note">此 run 创建于阶段追踪功能之前，没有可用的阶段时间线。</p>';const lastHeartbeat=events.findLastIndex(event=>event.kind==="heartbeat");const visible=events.filter((event,index)=>event.kind!=="heartbeat"||index===lastHeartbeat);return `<ol class="timeline">${visible.map(event=>`<li class="${event.kind}"><time>${fmtTime(event.created_at)}</time><div><strong>${escapeHtml(stageLabel(event.stage))}</strong><span>${escapeHtml(event.message)}</span>${event.attempt>1?`<small>重试 #${event.attempt}</small>`:""}</div></li>`).join("")||'<li><div><span>正在等待首个阶段事件…</span></div></li>'}</ol>`;}
 function stallDiagnosis(item,run){
   if(!run.stalled)return "";
@@ -289,13 +292,8 @@ function renderRun(item,run){
   const stageSeconds=run.status==="running"?elapsedSince(run.stage_started_at):null;
   const scoringSkipped=!["queued","running","completed"].includes(run.status)&&run.quality_score==null;
   const logs=state.runLogs[run.id];
-  return `<article class="run-card ${run.stalled?"is-stalled":""}" data-run-card="${run.id}"><div class="run-summary"><div><span class="run-order">${escapeHtml(run.group)} · Trial ${run.trial}${run.current_attempt>1?` · 重试 #${run.current_attempt}`:""}</span><h3>${escapeHtml(run.case_id)}</h3></div><div class="run-stage"><span class="pill ${run.status}">${escapeHtml(experimentStatusLabel(run.status))}</span><strong>${escapeHtml(stageLabel(run.current_stage))}</strong>${scoringSkipped?'<span class="skip-badge" title="Runner 未完成，验证器与 Judge 未执行">评分已跳过</span>':""}</div><div class="run-clocks"><span>总耗时 ${fmtDuration(totalSeconds)}</span>${stageSeconds!=null?`<span>当前阶段 ${fmtDuration(stageSeconds)}</span>`:""}<span>心跳 ${fmtDuration(run.heartbeat_age_seconds)} 前</span><span class="${run.stalled?"warn":""}">有效活动 ${fmtDuration(run.activity_age_seconds)} 前</span></div><div class="run-actions">${runActions(item,run)}<button class="text-button" data-toggle-run="${run.id}">${open?"收起":"时间线"}</button></div></div><div class="run-detail ${open?"":"hidden"}" id="run-detail-${run.id}">${run.error_message?`<div class="message error"><strong>${escapeHtml(stageLabel(run.current_stage))}</strong> · ${escapeHtml(run.error_kind||"error")} · ${escapeHtml(run.error_message)}</div>`:""}${scoringSkipped?`<div class="skip-note">评分已跳过：Runner 未完成（${escapeHtml(experimentStatusLabel(run.status))}），确定性验证器、自动分与 Judge 盲评均未执行，因此分数显示为 “—”。如需评分请重试该 run。</div>`:""}${renderScoreBreakdown(run)}${stallDiagnosis(item,run)}${run.attempts.length?`<p class="attempt-history">历史尝试：${run.attempts.map(attempt=>`#${attempt.attempt} ${escapeHtml(experimentStatusLabel(attempt.status))}`).join(" · ")}</p>`:""}${renderTimeline(run)}${logs?`<div class="log-panel">${logs.items.map(log=>`<h4>${escapeHtml(log.name)}</h4><pre>${escapeHtml(log.content)}</pre>`).join("")||'<p>暂无日志输出。</p>'}</div>`:""}</div></article>`;
+  return `<article class="run-card ${run.stalled?"is-stalled":""}" data-run-card="${run.id}"><div class="run-summary"><div><span class="run-order">${escapeHtml(run.group)} · Trial ${run.trial}${run.current_attempt>1?` · 重试 #${run.current_attempt}`:""}</span><h3>${escapeHtml(run.case_id)}</h3></div><div class="run-stage"><span class="pill ${run.status}">${escapeHtml(experimentStatusLabel(run.status))}</span><strong>${escapeHtml(stageLabel(run.current_stage))}</strong>${scoringSkipped?'<span class="skip-badge" title="Runner 未完成，验证器与 Judge 未执行">评分已跳过</span>':""}</div><div class="run-clocks"><span>总耗时 ${fmtDuration(totalSeconds)}</span>${stageSeconds!=null?`<span>当前阶段 ${fmtDuration(stageSeconds)}</span>`:""}<span>心跳 ${fmtDuration(run.heartbeat_age_seconds)} 前</span><span class="${run.stalled?"warn":""}">有效活动 ${fmtDuration(run.activity_age_seconds)} 前</span></div><div class="run-actions">${runActions(item,run)}<button class="text-button" data-toggle-run="${run.id}">${open?"收起":"时间线"}</button></div></div><div class="run-detail ${open?"":"hidden"}" id="run-detail-${run.id}">${run.error_message?`<div class="message error"><strong>${escapeHtml(stageLabel(run.current_stage))}</strong> · ${escapeHtml(run.error_kind||"error")} · ${escapeHtml(run.error_message)}</div>`:""}${scoringSkipped?`<div class="skip-note">评分已跳过：Runner 未完成（${escapeHtml(experimentStatusLabel(run.status))}），确定性验证器、自动分与 Judge 盲评均未执行，因此分数显示为 “—”。如需评分请重试该 run。</div>`:""}${renderScoreBreakdown(run)}<div class="conversation-slot" id="conversation-slot-${run.id}"></div>${stallDiagnosis(item,run)}${run.attempts.length?`<p class="attempt-history">历史尝试：${run.attempts.map(attempt=>`#${attempt.attempt} ${escapeHtml(experimentStatusLabel(attempt.status))}`).join(" · ")}</p>`:""}${run.reviews.length?`<div class="run-reviews"><strong>人工复核（${run.reviews.length} · 与自动分并列保存）</strong>${run.reviews.map(review=>`<div class="run-review"><strong>${fmtScore(review.score)}</strong><span>${escapeHtml(review.reviewer)} · ${fmtTime(review.created_at)}${review.note?` · “${escapeHtml(review.note)}”`:""}</span></div>`).join("")}</div>`:""}${renderTimeline(run)}${logs?`<div class="log-panel">${logs.items.map(log=>`<h4>${escapeHtml(log.name)}</h4><pre>${escapeHtml(log.content)}</pre>`).join("")||'<p>暂无日志输出。</p>'}</div>`:""}</div></article>`;
 }
-function bindDetailActions(item){const id=item.id;$$('[data-toggle-run]').forEach(button=>button.addEventListener("click",()=>{const runId=button.dataset.toggleRun;state.expandedRuns[runId]=!(state.expandedRuns[runId]??false);renderDetail(state.detail);if(state.expandedRuns[runId])loadRunEvents(runId);}));$$('[data-evidence]').forEach(button=>button.addEventListener("click",()=>showEvidence(button.dataset.evidence)));$$('[data-artifact]').forEach(button=>button.addEventListener("click",()=>openArtifact(button.dataset.artifactRun,button.dataset.artifact)));$$('[data-review]').forEach(button=>button.addEventListener("click",()=>addReview(id,button.dataset.review)));$$('[data-cancel-run]').forEach(button=>button.addEventListener("click",()=>cancelRun(button.dataset.cancelRun)));$$('[data-retry-run]').forEach(button=>button.addEventListener("click",()=>retryRun(button.dataset.retryRun)));$$('[data-log]').forEach(button=>button.addEventListener("click",()=>loadRunLogs(button.dataset.log)));const cancel=$("#cancelExperimentButton");if(cancel)cancel.addEventListener("click",()=>cancelExperiment(id));const baseline=$("#setBaselineButton");if(baseline)baseline.addEventListener("click",()=>setBaseline(item));}
-function renderDetail(item){state.detail=item;$("#detailTitle").textContent=item.suite_name;const p=item.profile,active=["queued","preparing","running"].includes(item.status);$("#detailBody").innerHTML=`<div class="detail-toolbar"><div class="experiment-meta"><span class="pill ${item.status}">${escapeHtml(experimentStatusLabel(item.status))}</span><span>commit ${escapeHtml(item.project_commit.slice(0,10))}</span><span>${providerName(p.runner.provider)} ${escapeHtml(modelName(p.runner))} → ${providerName(p.judge.provider)} ${escapeHtml(modelName(p.judge))}</span>${p.self_judge?'<span class="self-judge">Self-judge</span>':""}</div>${active?'<button class="button button-ghost button-small danger" id="cancelExperimentButton">取消整个实验</button>':""}</div><div class="profile-strip"><span>Runner 隔离：${escapeHtml(p.runner.isolation)}</span><span>网络：${escapeHtml(p.runner.network_policy)}</span><span>Profile ${escapeHtml(p.hash.slice(0,10))}</span></div><div class="detail-scores"><div class="detail-score"><small>无 Skill</small><strong>${fmtScore(item.scores.no_skill)}</strong></div><div class="detail-score"><small>上一基准</small><strong>${fmtScore(item.scores.baseline)}</strong></div><div class="detail-score"><small>当前候选</small><strong>${fmtScore(item.scores.current)}</strong></div></div><p>当前 vs 无 Skill：${fmtDelta(item.delta_no_skill)}　 当前 vs 基准：${fmtDelta(item.delta_baseline)}</p>${item.error_message?`<div class="message error">${escapeHtml(item.error_message)}</div>`:""}<div class="run-grid">${item.runs.map(run=>renderRun(item,run)).join("")||'<div class="empty">正在准备运行列表…</div>'}</div>${item.status==="completed"?'<button class="button button-ghost" id="setBaselineButton">将当前修订设为基准版本</button>':""}`;bindDetailActions(item);}
-async function loadRunEvents(runId){try{const after=state.eventCursors[runId]||0,result=await api(`/api/v1/runs/${runId}/events?after=${after}`);state.runEvents[runId]=[...(state.runEvents[runId]||[]),...result.items];if(result.items.length)state.eventCursors[runId]=result.items.at(-1).id;if(state.detail)renderDetail(state.detail);}catch(error){toast(error.message);}}
-async function refreshDetail(){if(!state.detail)return;try{const item=await api(`/api/v1/experiments/${state.detail.id}`);state.detail=item;await Promise.all(item.runs.filter(run=>run.status==="running"||run.stalled||!["queued","completed","cancelled"].includes(run.status)).map(run=>loadRunEvents(run.id)));renderDetail(item);if(!["queued","preparing","running"].includes(item.status)){clearInterval(state.detailPoller);state.detailPoller=null;}}catch(error){toast(error.message);}}
-async function showDetail(id){try{const item=await api(`/api/v1/experiments/${id}`);state.runEvents={};state.eventCursors={};state.runLogs={};state.expandedRuns={};item.runs.forEach(run=>{if(run.status==="running"||run.stalled||!["queued","completed","cancelled"].includes(run.status))state.expandedRuns[run.id]=true;});renderDetail(item);if(!$("#detailModal").open)$("#detailModal").showModal();await Promise.all(item.runs.filter(run=>state.expandedRuns[run.id]).map(run=>loadRunEvents(run.id)));if(state.detailPoller)clearInterval(state.detailPoller);if(["queued","preparing","running"].includes(item.status))state.detailPoller=setInterval(refreshDetail,2000);}catch(error){toast(error.message);}}
 async function cancelRun(runId){if(!window.confirm("取消当前 run，并继续执行其余 run？"))return;try{await api(`/api/v1/runs/${runId}/cancel`,{method:"POST"});toast("已请求取消 run");await refreshDetail();}catch(error){toast(error.message);}}
 async function cancelExperiment(id){if(!window.confirm("取消整个实验及所有未运行的 run？"))return;try{await api(`/api/v1/experiments/${id}/cancel`,{method:"POST"});toast("已请求取消实验");await refreshDetail();}catch(error){toast(error.message);}}
 async function retryRun(runId){if(!window.confirm("对这个基础设施失败执行一次正式重试？原失败记录会保留。"))return;try{await api(`/api/v1/runs/${runId}/retry`,{method:"POST"});toast("正式重试已加入队列");await refreshDetail();}catch(error){toast(error.message);}}
@@ -319,7 +317,6 @@ async function retryExperiment(experimentId) {
     if (state.detail?.id === experimentId) renderDetail(state.detail);
   }
 }
-async function loadRunLogs(runId){try{state.runLogs[runId]=await api(`/api/v1/runs/${runId}/logs?tail=300`);if(state.detail)renderDetail(state.detail);}catch(error){toast(error.message);}}
 async function setBaseline(item){try{await api(`/api/v1/skills/${item.skill_id}/baseline`,{method:"POST",body:JSON.stringify({revision_id:item.current_revision_id})});toast("已设为基准版本");try{await loadAll();}catch{toast("基准已保存，但页面刷新失败");}}catch(error){toast(error.message);}}
 async function showEvidence(runId){try{const result=await api(`/api/v1/runs/${runId}/artifacts`);if(!result.items.length)return toast("这个 run 暂无证据文件");const preferred=result.items.find(item=>item.name==="scores.json")||result.items[0];window.open(preferred.url,"_blank","noopener");}catch(error){toast(error.message);}}
 async function openArtifact(runId,name){try{const result=await api(`/api/v1/runs/${runId}/artifacts`);const item=result.items.find(entry=>entry.name===name);if(!item)return toast(`该 run 没有 ${name}（可能未产生该证据文件）`);window.open(item.url,"_blank","noopener");}catch(error){toast(error.message);}}
@@ -911,9 +908,23 @@ function bindLogConsole() {
     renderLogConsoleOnly();
     if (stream.selectedFile) fetchFilePreview();
   });
-  $("#logDownloadButton")?.addEventListener("click", () => {
+  $("#logDownloadButton")?.addEventListener("click", async () => {
     const url = currentLogStream()?.selectedFile;
-    if (url) window.open(url, "_blank", "noopener");
+    if (!url) return;
+    if (state.logConsole?.unmasked) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    // masked by default: download the masked preview instead of the raw file
+    try {
+      const separator = url.includes("?") ? "&" : "?";
+      const result = await api(`${url}${separator}preview=true`);
+      const name = decodeURIComponent(url.split("/").pop().split("?")[0]).replace(/[?#].*$/, "");
+      downloadText(`masked-${name}`, result.content);
+      toast("已下载遮盖敏感值后的文件；如需原文请勾选“显示未遮盖内容”后再下载");
+    } catch (error) {
+      toast(`下载失败：${error.message}`);
+    }
   });
   $("#logUnmasked")?.addEventListener("change", event => {
     consoleState.unmasked = event.target.checked;
@@ -950,6 +961,562 @@ function stopLogPolling() {
   state.logPoller = null;
 }
 
+const fmean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+
+// ---------------- conversation replay (read-only, live-updating) ----------------
+
+function conversationState(runId) {
+  return state.conversations[runId] ||= {
+    source: "runner", data: null, signature: null, loading: false,
+    open: false, poller: null, expanded: new Set(), unmasked: false, promptCache: {}
+  };
+}
+
+function stopConversationPolling(runId) {
+  const conv = state.conversations[runId];
+  if (conv?.poller) { clearInterval(conv.poller); conv.poller = null; }
+}
+
+function resetConversations() {
+  Object.keys(state.conversations).forEach(stopConversationPolling);
+  state.conversations = {};
+}
+
+function fmtSize(bytes) {
+  if (bytes == null) return "—";
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+const TOOL_STATUS_LABELS = {completed: "完成", failed: "失败", in_progress: "进行中", pending: "等待"};
+
+const RUNNER_STAGES = ["creating_workspace", "installing_skill", "runner", "collecting_changes", "validators", "scoring", "persisting"];
+
+function sourceStageInfo(run, source) {
+  if (!run || !["queued", "running"].includes(run.status)) return null;
+  const stage = run.current_stage;
+  const runnerActive = RUNNER_STAGES.includes(stage);
+  const judgeActive = stage === "judge";
+  return {
+    stage,
+    thisActive: source === "runner" ? runnerActive : judgeActive,
+    otherActive: source === "runner" ? judgeActive : runnerActive,
+  };
+}
+
+function conversationPanelMarkup(runId, conv) {
+  const run = state.detail?.runs.find(candidate => candidate.id === runId);
+  const live = run && ["queued", "running"].includes(run.status);
+  const stageInfo = sourceStageInfo(run, conv.source);
+  const otherLabel = conv.source === "runner" ? "Judge 评分" : "Runner 执行";
+  const tabDot = active => active ? ' <i class="conv-tab-dot" title="该侧正在产生新事件"></i>' : "";
+  const tabs = ["runner", "judge"].map(source => {
+    const info = sourceStageInfo(run, source);
+    return `<button class="conv-tab${conv.source === source ? " active" : ""}" data-conv-source="${source}">${source === "runner" ? "Runner 对话" : "Judge 对话"}${live && info?.thisActive ? tabDot(true) : ""}</button>`;
+  }).join("");
+  const maskLabel = conv.unmasked ? "已显示未遮盖原文" : "敏感值已遮盖";
+  const stageNote = live
+    ? (stageInfo?.thisActive
+        ? `阶段：${stageLabel(stageInfo.stage)}`
+        : stageInfo?.otherActive
+          ? `本侧暂无新事件 · ${otherLabel}进行中，可切换页签查看`
+          : `阶段：${stageLabel(run.current_stage)}`)
+    : "只读回放";
+  return {
+    signature: `${conv.source}#${conv.unmasked ? "raw" : "masked"}#${conv.signature || "loading"}`,
+    html: `<section class="conversation-panel" data-conversation-panel="${runId}">
+      <div class="conversation-head">
+        <div class="conversation-tabs">${tabs}</div>
+        <div class="conversation-controls">
+          <label class="conv-mask${conv.unmasked ? " is-unmasked" : ""}"><input type="checkbox" data-conv-unmasked${conv.unmasked ? " checked" : ""}> 显示未遮盖内容（可能包含敏感信息）</label>
+          <button class="text-button" data-conv-copy>复制对话</button>
+          <button class="text-button" data-conv-export>导出对话</button>
+        </div>
+        <span class="conversation-meta">${live ? '<span class="conv-live">● 运行中实时更新</span>' : ""} · ${stageNote} · ${maskLabel}</span>
+      </div>
+      <div class="conversation-body">${conv.data ? attemptsMarkup(runId, conv) : '<p class="conv-loading">正在读取对话记录…</p>'}</div>
+    </section>`
+  };
+}
+
+function attemptsMarkup(runId, conv) {
+  const pending = Boolean(conv.data?.pending);
+  return conv.data.attempts.map(attempt => {
+    if (!attempt.available) {
+      return `<div class="conv-attempt"><h4>尝试 #${attempt.attempt}</h4><p class="conv-missing">${escapeHtml(attempt.reason || "没有对话记录")}</p></div>`;
+    }
+    const session = attempt.session || {};
+    const meta = [
+      session.model && `模型 ${escapeHtml(session.model)}`,
+      session.agent && `agent ${escapeHtml(session.agent)}`,
+      session.tools != null ? `工具 ${session.tools} 个` : "",
+      session.skills?.length ? `技能 ${session.skills.length} 个` : "",
+    ].filter(Boolean).join(" · ");
+    return `<div class="conv-attempt">
+      <h4>尝试 #${attempt.attempt}${meta ? ` <small>${meta}</small>` : ""}</h4>
+      ${attempt.turns.map(turn => turnMarkup(runId, conv, attempt, turn, pending)).join("")
+        || '<p class="conv-missing">会话已建立但没有任何轮次记录（可能被立即取消）。</p>'}
+      ${attempt.unparsed_lines ? `<p class="conv-missing">另有 ${attempt.unparsed_lines} 行无法解析的 wire 记录，可在诊断区查看原始日志。</p>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function turnMarkup(runId, conv, attempt, turn, pending = false) {
+  const prompt = turn.prompt;
+  const promptKey = `prompt:${attempt.attempt}:${turn.turn}`;
+  const usage = turn.usage?.input_tokens != null
+    ? ` · tokens ${turn.usage.input_tokens} 入 / ${turn.usage.output_tokens ?? "—"} 出` : "";
+  const context = turn.context?.size ? ` · 上下文 ${turn.context.used ?? "—"}/${turn.context.size}` : "";
+  const stateLabel = turn.stop_reason
+    ? `stop ${turn.stop_reason}`
+    : pending ? '<span class="conv-live">● 本轮进行中</span>' : "未收到结束信号";
+  const promptBlock = !prompt
+    ? '<p class="conv-missing">该轮没有 invocation 记录，提示词缺失。</p>'
+    : `<details class="conv-prompt" data-conv-prompt="${runId}|${attempt.attempt}|${prompt.file}" data-conv-key="${promptKey}"${conv.expanded.has(promptKey) ? " open" : ""}>
+        <summary>提示词 · ${escapeHtml(prompt.file.split("/").pop())} · ${fmtSize(prompt.bytes)}${prompt.available ? "" : "（文件缺失）"}</summary>
+        <pre>展开时加载…</pre>
+      </details>`;
+  return `<details class="conv-turn" open>
+    <summary><span class="conv-turn-title">第 ${turn.turn} 轮</span><span class="conv-turn-meta">${stateLabel}${usage}${context}</span></summary>
+    <div class="conv-turn-body">
+      ${promptBlock}
+      ${turn.items.map((item, index) => conversationItemMarkup(runId, conv, attempt, turn, item, index)).join("")}
+      ${turn.error ? `<div class="conv-error">轮次错误 · ${escapeHtml(JSON.stringify(turn.error).slice(0, 300))}</div>` : ""}
+    </div>
+  </details>`;
+}
+
+function conversationItemMarkup(runId, conv, attempt, turn, item, index) {
+  const key = `item:${attempt.attempt}:${turn.turn}:${index}`;
+  if (item.type === "message") {
+    return `<div class="conv-message"><span class="conv-role">Agent 回复</span><pre>${escapeHtml(item.text)}</pre></div>`;
+  }
+  if (item.type === "thought") {
+    return `<details class="conv-thought" data-conv-key="${key}"${conv.expanded.has(key) ? " open" : ""}>
+      <summary>Agent 思考 · ${item.text.length} 字</summary><pre>${escapeHtml(item.text)}</pre></details>`;
+  }
+  if (item.type === "tool_call") {
+    const statusLabel = TOOL_STATUS_LABELS[item.status] || item.status || "未知";
+    const statusClass = item.status === "failed" ? "bad" : item.status === "completed" ? "ok" : "";
+    return `<details class="conv-tool" data-conv-key="${key}"${conv.expanded.has(key) ? " open" : ""}>
+      <summary><span class="conv-tool-name">${escapeHtml(item.name || item.tool_call_id || "工具调用")}</span>${item.input ? `<span class="conv-tool-input">${escapeHtml(item.input)}</span>` : ""}<span class="conv-tool-status ${statusClass}">${statusLabel}</span></summary>
+      <div class="conv-tool-body">
+        ${item.kind ? `<p><strong>类型：</strong>${escapeHtml(item.kind)}</p>` : ""}
+        ${item.input ? `<p><strong>入参：</strong>${escapeHtml(item.input)}</p>` : ""}
+        ${item.result ? `<pre>${escapeHtml(item.result)}</pre>` : '<p class="conv-missing">该工具调用没有结果记录（可能被取消或记录中断）。</p>'}
+      </div>
+    </details>`;
+  }
+  if (item.type === "plan") return `<div class="conv-plan">${item.entries ? `计划更新 · ${item.completed}/${item.entries} 项完成` : "Agent 更新了执行计划"}</div>`;
+  if (item.type === "system_error") return `<div class="conv-error">Chrys 错误 · ${escapeHtml(item.text)}</div>`;
+  if (item.type === "system_warning") return `<div class="conv-warning">Chrys 警告 · ${escapeHtml(item.text)}</div>`;
+  return "";
+}
+
+function renderConversationInto(runId) {
+  const slot = document.getElementById(`conversation-slot-${runId}`);
+  const conv = state.conversations[runId];
+  if (!slot || !conv || !conv.open) return;
+  const {signature, html} = conversationPanelMarkup(runId, conv);
+  if (slot.dataset.signature === signature) return;
+  slot.dataset.signature = signature;
+  slot.innerHTML = html;
+  bindConversationActions(runId);
+}
+
+async function fetchConversation(runId) {
+  const conv = conversationState(runId);
+  if (conv.loading) return;
+  conv.loading = true;
+  try {
+    const result = await api(`/api/v1/runs/${runId}/conversation?source=${conv.source}${conv.unmasked ? "&unmasked=true" : ""}`);
+    if (state.conversations[runId] !== conv) return;
+    const signature = result.attempts.map(attempt => attempt.signature || "none").join("|");
+    const unchanged = conv.signature === signature && conv.data;
+    conv.data = result;
+    conv.signature = signature;
+    if (!unchanged) renderConversationInto(runId);
+    if (!result.pending) stopConversationPolling(runId);
+  } catch (error) {
+    toast(`对话读取失败：${error.message}`);
+  } finally {
+    conv.loading = false;
+  }
+}
+
+function toggleConversationMask(runId) {
+  const conv = conversationState(runId);
+  conv.unmasked = !conv.unmasked;
+  conv.data = null;
+  conv.signature = null;
+  conv.promptCache = {};
+  renderConversationInto(runId);
+  fetchConversation(runId);
+  toast(conv.unmasked ? "已切换为显示未遮盖原文（可能包含敏感信息）" : "已恢复默认遮盖敏感值");
+}
+
+function startConversationPolling(runId) {
+  stopConversationPolling(runId);
+  const run = state.detail?.runs.find(candidate => candidate.id === runId);
+  if (!run || run.status !== "running") return;
+  conversationState(runId).poller = setInterval(() => fetchConversation(runId), 2000);
+}
+
+function expandRunForConversation(runId) {
+  // The conversation slot lives inside the run-detail container, which stays
+  // collapsed (.hidden) for completed runs unless expanded. Opening a
+  // conversation must expand the run card too, otherwise the panel renders
+  // into a hidden container and nothing is visible (R1P1).
+  const needsExpand = !state.expandedRuns[runId];
+  if (needsExpand) state.expandedRuns[runId] = true;
+  if (!state.detail) return;
+  renderDetail(state.detail);
+  // the timeline of a freshly expanded run has no events loaded yet
+  if (needsExpand && !state.eventCursors[runId]) {
+    loadRunEvents(runId).then(() => { if (state.detail) renderDetail(state.detail); });
+  }
+}
+
+function toggleConversation(runId) {
+  const conv = conversationState(runId);
+  conv.open = !conv.open;
+  if (conv.open) {
+    expandRunForConversation(runId);
+    fetchConversation(runId);
+    startConversationPolling(runId);
+    document.getElementById(`conversation-slot-${runId}`)?.scrollIntoView({behavior: "smooth", block: "nearest"});
+  } else {
+    stopConversationPolling(runId);
+    renderDetail(state.detail);
+  }
+}
+
+function openConversationAt(runId, source) {
+  const conv = conversationState(runId);
+  const hadData = conv.open && conv.source === source && conv.data;
+  conv.open = true;
+  if (conv.source !== source) { conv.source = source; conv.data = null; conv.signature = null; }
+  if (!state.expandedRuns[runId] || !hadData) expandRunForConversation(runId);
+  if (!hadData) {
+    fetchConversation(runId);
+    startConversationPolling(runId);
+  }
+  document.getElementById(`conversation-slot-${runId}`)?.scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+function switchConversationSource(runId, source) {
+  const conv = conversationState(runId);
+  if (conv.source === source) return;
+  conv.source = source;
+  conv.data = null;
+  conv.signature = null;
+  renderConversationInto(runId);
+  fetchConversation(runId);
+}
+
+async function loadPromptInto(details, runId) {
+  const pre = details.querySelector("pre");
+  if (!pre || pre.dataset.loaded) return;
+  const conv = conversationState(runId);
+  const [, attempt, file] = details.dataset.convPrompt.split("|");
+  const cacheKey = `${conv.unmasked ? "raw" : "masked"}|${file}`;
+  if (conv.promptCache?.[cacheKey]) {
+    pre.textContent = conv.promptCache[cacheKey];
+    pre.dataset.loaded = "1";
+    return;
+  }
+  pre.textContent = "正在读取提示词…";
+  try {
+    const path = file.split("/").map(encodeURIComponent).join("/");
+    const result = await api(`/api/v1/runs/${runId}/log-files/${path}?preview=true&attempt=${attempt}${conv.unmasked ? "&unmasked=true" : ""}`);
+    conv.promptCache ||= {};
+    conv.promptCache[cacheKey] = result.content || "（提示词为空）";
+    pre.textContent = conv.promptCache[cacheKey];
+    pre.dataset.loaded = "1";
+  } catch (error) {
+    pre.textContent = `提示词读取失败：${error.message}`;
+  }
+}
+
+function bindConversationActions(runId) {
+  const panel = document.querySelector(`[data-conversation-panel="${runId}"]`);
+  const conv = state.conversations[runId];
+  if (!panel || !conv) return;
+  panel.querySelectorAll("[data-conv-source]").forEach(button =>
+    button.addEventListener("click", () => switchConversationSource(runId, button.dataset.convSource)));
+  panel.querySelectorAll("[data-conv-unmasked]").forEach(toggle =>
+    toggle.addEventListener("change", () => toggleConversationMask(runId)));
+  panel.querySelectorAll("[data-conv-copy]").forEach(button =>
+    button.addEventListener("click", () => copyConversation(runId)));
+  panel.querySelectorAll("[data-conv-export]").forEach(button =>
+    button.addEventListener("click", () => exportConversation(runId)));
+  panel.querySelectorAll("details[data-conv-key]").forEach(details =>
+    details.addEventListener("toggle", () => {
+      if (details.open) conv.expanded.add(details.dataset.convKey);
+      else conv.expanded.delete(details.dataset.convKey);
+    }));
+  panel.querySelectorAll("details[data-conv-prompt]").forEach(details =>
+    details.addEventListener("toggle", () => { if (details.open) loadPromptInto(details, runId); }));
+  panel.querySelectorAll("details[data-conv-prompt][open]").forEach(details =>
+    loadPromptInto(details, runId));
+}
+
+function downloadText(filename, text) {
+  const blob = new Blob([text], {type: "text/plain;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function fetchConversationPrompt(runId, attempt, file) {
+  const conv = conversationState(runId);
+  const cacheKey = `${conv.unmasked ? "raw" : "masked"}|${file}`;
+  conv.promptCache ||= {};
+  if (conv.promptCache[cacheKey] !== undefined) return conv.promptCache[cacheKey];
+  const path = file.split("/").map(encodeURIComponent).join("/");
+  const result = await api(`/api/v1/runs/${runId}/log-files/${path}?preview=true&attempt=${attempt}${conv.unmasked ? "&unmasked=true" : ""}`);
+  conv.promptCache[cacheKey] = result.content || "（提示词为空）";
+  return conv.promptCache[cacheKey];
+}
+
+async function buildConversationText(runId, {withPrompts = false} = {}) {
+  const conv = conversationState(runId);
+  const itemLine = item => {
+    if (item.type === "message") return `Agent 回复：\n${item.text}`;
+    if (item.type === "thought") return `Agent 思考：\n${item.text}`;
+    if (item.type === "tool_call") {
+      const status = TOOL_STATUS_LABELS[item.status] || item.status || "未知";
+      return [`工具调用：${item.name || item.tool_call_id}（${status}）`,
+        item.input ? `  入参：${item.input}` : null,
+        item.result ? `  结果：${item.result}` : "  结果：（无记录）"].filter(Boolean).join("\n");
+    }
+    if (item.type === "plan") return `计划更新 · ${item.completed}/${item.entries} 项完成`;
+    if (item.type === "system_error") return `Chrys 错误 · ${item.text}`;
+    if (item.type === "system_warning") return `Chrys 警告 · ${item.text}`;
+    return null;
+  };
+  const lines = [];
+  const experiment = state.detail;
+  lines.push(`# ${experiment ? experiment.suite_name : "实验"} · ${conv.source === "runner" ? "Runner" : "Judge"} 对话回放`);
+  lines.push(`run: ${runId}`);
+  lines.push(`导出时间：${new Date().toISOString()}`);
+  lines.push(`敏感值：${conv.unmasked ? "未遮盖（原文）" : "已按默认规则遮盖"}`);
+  for (const attempt of conv.data?.attempts || []) {
+    lines.push(`\n===== 尝试 #${attempt.attempt} =====`);
+    if (!attempt.available) {
+      lines.push(attempt.reason || "没有对话记录");
+      continue;
+    }
+    const session = attempt.session || {};
+    const meta = [
+      session.model && `模型 ${session.model}`,
+      session.agent && `agent ${session.agent}`,
+      session.tools != null ? `工具 ${session.tools} 个` : "",
+    ].filter(Boolean).join(" · ");
+    if (meta) lines.push(`会话：${meta}`);
+    for (const turn of attempt.turns) {
+      const usage = turn.usage?.input_tokens != null
+        ? ` · tokens ${turn.usage.input_tokens}/${turn.usage.output_tokens ?? "—"}` : "";
+      lines.push(`\n-- 第 ${turn.turn} 轮 · ${turn.stop_reason ? `stop ${turn.stop_reason}` : "未收到结束信号"}${usage} --`);
+      if (turn.prompt?.file) {
+        if (withPrompts) {
+          const promptText = await fetchConversationPrompt(runId, attempt.attempt, turn.prompt.file);
+          lines.push(`[提示词 ${turn.prompt.file}]\n${promptText}`);
+        } else {
+          lines.push(`[提示词 ${turn.prompt.file}（${fmtSize(turn.prompt.bytes)}，导出文件内含全文）]`);
+        }
+      } else {
+        lines.push("[提示词记录缺失]");
+      }
+      turn.items.forEach(item => {
+        const line = itemLine(item);
+        if (line) lines.push(line);
+      });
+      if (turn.error) lines.push(`轮次错误：${JSON.stringify(turn.error)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+async function copyConversation(runId) {
+  const conv = conversationState(runId);
+  if (!conv.data) return toast("对话尚未加载");
+  try {
+    const text = await buildConversationText(runId);
+    await navigator.clipboard.writeText(text);
+    toast(conv.unmasked ? "已复制对话（未遮盖原文）" : "已复制对话（敏感值已遮盖）");
+  } catch {
+    toast("浏览器未允许复制，请手动选择内容");
+  }
+}
+
+async function exportConversation(runId) {
+  const conv = conversationState(runId);
+  if (!conv.data) return toast("对话尚未加载");
+  toast("正在生成导出文件（含提示词全文）…");
+  try {
+    const text = await buildConversationText(runId, {withPrompts: true});
+    const name = `conversation-${runId.slice(0, 8)}-${conv.source}${conv.unmasked ? "-raw" : "-masked"}.txt`;
+    downloadText(name, text);
+    toast(conv.unmasked ? `已导出 ${name}（未遮盖原文）` : `已导出 ${name}（敏感值已遮盖）`);
+  } catch (error) {
+    toast(`导出失败：${error.message}`);
+  }
+}
+
+function verdictMarkup(item) {
+  const conclusion = item.conclusion;
+  if (!conclusion) return "";
+  if (["queued", "preparing", "running"].includes(item.status)) {
+    return `<span class="verdict-badge is-running">实验进行中</span><span class="verdict-note">结论将在所有 run 完成后给出</span>`;
+  }
+  const map = {
+    gates_failed: ["is-gates-failed", "未达标", "硬门禁未通过 · 硬门禁优先于质量分，分数保留供分析"],
+    provisional: ["is-provisional", "暂定结论", "候选组尚缺 trial · 差值不参与正式比较"],
+    no_score: ["is-no-score", "无有效评分", "候选组没有完成的 run，无法给出结论"],
+    solid: ["is-solid", "结论有效", "硬门禁通过 · trial 齐全 · 差值为正式比较"],
+  };
+  const [cls, label, note] = map[conclusion.verdict] || ["is-unknown", conclusion.verdict, ""];
+  return `<span class="verdict-badge ${cls}">${escapeHtml(label)}</span><span class="verdict-note">${escapeHtml(note)}</span>`;
+}
+
+function groupScoreCard(item, group) {
+  const info = item.conclusion?.groups?.[group];
+  if (!info) return "";
+  if (info.missing) {
+    return `<div class="detail-score is-missing"><small>${GROUP_LABELS[group]}</small><strong>—</strong><span class="score-note">未参与（无基准修订）</span></div>`;
+  }
+  const notes = [];
+  if (info.provisional) notes.push(`<span class="score-note provisional">暂定 · ${info.completed_trials}/${info.expected_trials} trial，不参与正式差值</span>`);
+  else notes.push(`<span class="score-note">trial ${info.completed_trials}/${info.expected_trials}${info.gates_total ? ` · 门禁 ${info.gates_passed}/${info.gates_total}` : ""}</span>`);
+  if (info.gates_failed) notes.push(`<span class="score-note gates-failed">硬门禁未通过 · 未达标</span>`);
+  return `<div class="detail-score${info.gates_failed ? " is-gates-failed" : ""}${info.provisional ? " is-provisional" : ""}"><small>${GROUP_LABELS[group]}</small><strong>${info.score == null ? "—" : fmtScore(info.score)}</strong>${notes.join("")}</div>`;
+}
+
+function conclusionMarkup(item) {
+  const conclusion = item.conclusion;
+  if (!conclusion) return "";
+  const deltaCell = (value, formal, label) => {
+    if (value == null) return `<span class="delta-item">${label}：<span class="delta">—</span></span>`;
+    const tag = formal ? '<small class="delta-formal">正式比较</small>' : '<small class="delta-provisional">暂定 · 不参与正式比较</small>';
+    return `<span class="delta-item">${label}：${fmtDelta(value)}${tag}</span>`;
+  };
+  return `<div class="conclusion-strip">${verdictMarkup(item)}</div>
+    <div class="detail-scores">${GROUP_ORDER.map(group => groupScoreCard(item, group)).join("")}</div>
+    <p class="delta-row">${deltaCell(item.delta_no_skill, conclusion.formal_deltas?.no_skill, "当前 vs 无 Skill")}　${deltaCell(item.delta_baseline, conclusion.formal_deltas?.baseline, "当前 vs 基准")}</p>`;
+}
+
+function runsByCaseAndGroup(item) {
+  const grouped = new Map();
+  item.runs.forEach(run => {
+    let byGroup = grouped.get(run.case_id);
+    if (!byGroup) { byGroup = {}; grouped.set(run.case_id, byGroup); }
+    (byGroup[run.group] ||= []).push(run);
+  });
+  return grouped;
+}
+
+function groupHeaderCell(byGroup, group, expectedTrials) {
+  const runs = byGroup[group] || [];
+  if (!runs.length) return `<th class="is-missing"><span>${GROUP_LABELS[group]}</span><strong>—</strong><small>未参与</small></th>`;
+  const completed = runs.filter(run => run.status === "completed");
+  const scored = completed.filter(run => run.quality_score != null);
+  const mean = scored.length ? fmean(scored.map(run => run.quality_score)) : null;
+  const provisional = completed.length < expectedTrials;
+  const gatesFail = completed.some(run => (run.hard_gates?.total || 0) > 0 && run.hard_gates.passed < run.hard_gates.total);
+  return `<th${gatesFail ? ' class="is-gates-failed"' : ""}><span>${GROUP_LABELS[group]}</span><strong>${mean == null ? "—" : fmtScore(mean)}</strong><small class="${provisional ? "provisional" : ""}">${provisional ? `暂定 ${completed.length}/${expectedTrials}` : `${completed.length}/${expectedTrials} trial`}</small>${gatesFail ? '<small class="gates-failed-note">硬门禁未通过</small>' : ""}</th>`;
+}
+
+function graderCell(grader, runs) {
+  const trials = runs
+    .map(run => ({run, comp: (run.scores?.components || []).find(entry => entry.grader_id === grader.id)}))
+    .filter(entry => entry.comp);
+  if (!trials.length) {
+    const unfinished = runs.filter(run => run.status !== "completed").length;
+    return `<td><span class="cell-empty">${unfinished ? `未评分（${unfinished} 个 run 未完成）` : "—"}</span></td>`;
+  }
+  const isGate = !!grader.hard_gate || !!trials[0].comp.hard_gate;
+  const scored = trials.filter(entry => entry.comp.score != null);
+  let value, cls = "";
+  if (isGate) {
+    const passed = trials.filter(entry => entry.comp.passed).length;
+    value = `${passed}/${trials.length} 通过`;
+    cls = passed === trials.length ? "ok" : "bad";
+  } else if (scored.length === 1) {
+    value = fmtScore(scored[0].comp.score);
+  } else {
+    value = scored.length ? `${fmtScore(fmean(scored.map(entry => entry.comp.score)))}（均值 ${scored.length} trial）` : "—";
+  }
+  return `<td class="${cls}"><details class="cell-trials"><summary><span class="cell-value">${escapeHtml(value)}</span><span class="cell-expand">展开 trial</span></summary>${trials.map(trialDetail).join("")}</details></td>`;
+}
+
+function trialDetail({run, comp}) {
+  const isGate = !!comp.hard_gate;
+  const value = isGate ? (comp.passed ? "通过" : "未通过") : fmtScore(comp.score);
+  const reviews = (run.reviews || []).map(review =>
+    `<div class="trial-review">人工复核 <strong>${fmtScore(review.score)}</strong> · ${escapeHtml(review.reviewer)} · ${fmtTime(review.created_at)}${review.note ? ` · “${escapeHtml(review.note)}”` : ""}</div>`
+  ).join("");
+  return `<div class="trial-detail">
+    <div class="trial-head"><span class="pill ${run.status}">${escapeHtml(experimentStatusLabel(run.status))}</span><strong>Trial ${run.trial}${run.current_attempt > 1 ? ` · 重试 #${run.current_attempt}` : ""}</strong><span class="trial-score ${comp.passed === false ? "bad" : comp.passed === true ? "ok" : ""}">${escapeHtml(value)}</span>${comp.invalid ? '<span class="trial-invalid">无效</span>' : ""}<button class="text-button" data-judge-log="${run.id}">Judge 对话</button></div>
+    ${comp.reasoning ? `<p class="trial-reasoning"><strong>评分理由：</strong>${escapeHtml(comp.reasoning)}</p>` : ""}
+    ${comp.evidence ? `<details class="trial-evidence"><summary>证据</summary><pre>${escapeHtml(comp.evidence)}</pre></details>` : ""}
+    ${reviews}
+  </div>`;
+}
+
+function qualityCell(runs) {
+  const completed = runs.filter(run => run.status === "completed" && run.quality_score != null);
+  if (!completed.length) return `<td class="quality-cell">—</td>`;
+  const gatesFail = completed.some(run => (run.hard_gates?.total || 0) > 0 && run.hard_gates.passed < run.hard_gates.total);
+  return `<td class="quality-cell${gatesFail ? " is-gates-failed" : ""}"><strong>${fmtScore(fmean(completed.map(run => run.quality_score)))}</strong><small>${completed.length}/${runs.length} trial</small>${gatesFail ? '<small class="gates-failed-note">门禁未过 · 未达标</small>' : ""}</td>`;
+}
+
+function caseReviewsMarkup(byGroup, availableGroups) {
+  const entries = [];
+  availableGroups.forEach(group => (byGroup[group] || []).forEach(run => (run.reviews || []).forEach(review => entries.push({group, run, review}))));
+  if (!entries.length) {
+    return `<div class="case-reviews"><strong>人工复核</strong><span class="case-reviews-empty">暂无人工复核。自动分已保存；可点击下方运行明细中各 run 的“复核”提交人工分，人工分与自动分并列保存展示。</span></div>`;
+  }
+  const means = availableGroups
+    .map(group => {
+      const scores = [];
+      (byGroup[group] || []).forEach(run => (run.reviews || []).forEach(review => scores.push(review.score)));
+      return scores.length ? `${GROUP_LABELS[group]} ${fmtScore(fmean(scores))}` : "";
+    })
+    .filter(Boolean)
+    .join(" · ");
+  return `<div class="case-reviews"><strong>人工复核（与自动分并列保存 · ${entries.length} 条）</strong><ul>${entries.map(({group, run, review}) => `<li><span class="review-group">${GROUP_LABELS[group]} · Trial ${run.trial}</span><strong>${fmtScore(review.score)}</strong><span class="review-meta">${escapeHtml(review.reviewer)} · ${fmtTime(review.created_at)}${review.note ? ` · “${escapeHtml(review.note)}”` : ""}</span></li>`).join("")}</ul>${means ? `<p class="review-means">人工均分：${means}</p>` : ""}</div>`;
+}
+
+function caseCard(caseSpec, byGroup, expectedTrials) {
+  const graders = caseSpec.graders || [];
+  const availableGroups = GROUP_ORDER.filter(group => (byGroup[group] || []).length);
+  if (!availableGroups.length) {
+    return `<article class="case-card"><div class="case-head"><h3>${escapeHtml(caseSpec.name || caseSpec.id)}</h3><span class="case-meta">${escapeHtml(caseSpec.id)} · 权重 ${caseSpec.weight ?? 1}</span></div><p class="case-empty">该用例尚未产生 run。</p></article>`;
+  }
+  const header = `<thead><tr><th class="dim-col">评分维度</th>${availableGroups.map(group => groupHeaderCell(byGroup, group, expectedTrials)).join("")}</tr></thead>`;
+  const rows = graders.map(grader => {
+    const typeLabel = grader.hard_gate ? "硬门禁（必须通过）" : grader.type === "llm_rubric" ? `LLM 评分 · 权重 ${grader.weight ?? "—"}` : `命令验证器 · 权重 ${grader.weight ?? "—"}`;
+    return `<tr><th class="dim-col"><span class="dim-name">${escapeHtml(grader.name || grader.id)}</span><span class="dim-type${grader.hard_gate ? " gate" : ""}">${escapeHtml(typeLabel)}</span></th>${availableGroups.map(group => graderCell(grader, byGroup[group])).join("")}</tr>`;
+  }).join("");
+  const qualityRow = `<tr class="quality-row"><th class="dim-col"><span class="dim-name">质量分</span><span class="dim-type">加权均值 · 硬门禁不计入</span></th>${availableGroups.map(group => qualityCell(byGroup[group])).join("")}</tr>`;
+  return `<article class="case-card">
+    <div class="case-head"><h3>${escapeHtml(caseSpec.name || caseSpec.id)}</h3><span class="case-meta">${escapeHtml(caseSpec.id)} · 权重 ${caseSpec.weight ?? 1}</span></div>
+    <div class="table-card comparison-wrap"><table class="comparison-table">${header}<tbody>${rows}${qualityRow}</tbody></table></div>
+    ${caseReviewsMarkup(byGroup, availableGroups)}
+  </article>`;
+}
+
+function comparisonMarkup(item) {
+  const cases = item.suite_snapshot?.cases || [];
+  if (!cases.length) return "";
+  const grouped = runsByCaseAndGroup(item);
+  const expected = item.conclusion?.expected_trials_per_group || item.trials || 1;
+  return `<div class="comparison-cases">${cases.map(caseSpec => caseCard(caseSpec, grouped.get(caseSpec.id) || {}, expected)).join("")}</div>`;
+}
+
 function renderDetail(item, {fresh = false} = {}) {
   state.detail = item;
   const previousLogKey = logStreamKey();
@@ -959,20 +1526,30 @@ function renderDetail(item, {fresh = false} = {}) {
   const retrying = state.retryingExperiments.has(item.id);
   const body = $("#detailBody");
   const rebuild = fresh || body.dataset.experimentId !== item.id || !$("#detailSummary");
-  const summary = `<div class="detail-toolbar"><div class="experiment-meta"><span class="pill ${item.status}">${escapeHtml(experimentStatusLabel(item.status))}</span><span>commit ${escapeHtml(item.project_commit.slice(0,10))}</span><span>${providerName(p.runner.provider)} ${escapeHtml(modelName(p.runner))} → ${providerName(p.judge.provider)} ${escapeHtml(modelName(p.judge))}</span>${p.self_judge?'<span class="self-judge">Self-judge</span>':""}</div><div class="detail-actions"><button class="button button-ghost button-small" data-retry-experiment="${item.id}" ${retrying?"disabled":""}>${retrying?"正在加入…":"重试实验"}</button>${active?'<button class="button button-ghost button-small danger" id="cancelExperimentButton">取消整个实验</button>':""}</div></div>${experimentLineageMarkup(item)}<div class="profile-strip"><span>Runner 隔离：${escapeHtml(p.runner.isolation)}</span><span>网络：${escapeHtml(p.runner.network_policy)}</span><span>Profile ${escapeHtml(p.hash.slice(0,10))}</span></div><div class="detail-scores"><div class="detail-score"><small>无 Skill</small><strong>${fmtScore(item.scores.no_skill)}</strong></div><div class="detail-score"><small>上一基准</small><strong>${fmtScore(item.scores.baseline)}</strong></div><div class="detail-score"><small>当前候选</small><strong>${fmtScore(item.scores.current)}</strong></div></div><p>当前 vs 无 Skill：${fmtDelta(item.delta_no_skill)}　 当前 vs 基准：${fmtDelta(item.delta_baseline)}</p>${item.error_message?`<div class="message error">${escapeHtml(item.error_message)}</div>`:""}`;
+  const summary = `<div class="detail-toolbar"><div class="experiment-meta"><span class="pill ${item.status}">${escapeHtml(experimentStatusLabel(item.status))}</span><span>commit ${escapeHtml(item.project_commit.slice(0,10))}</span><span>${providerName(p.runner.provider)} ${escapeHtml(modelName(p.runner))} → ${providerName(p.judge.provider)} ${escapeHtml(modelName(p.judge))}</span>${p.self_judge?'<span class="self-judge">Self-judge</span>':""}</div><div class="detail-actions"><button class="button button-ghost button-small" data-retry-experiment="${item.id}" ${retrying?"disabled":""}>${retrying?"正在加入…":"重试实验"}</button>${active?'<button class="button button-ghost button-small danger" id="cancelExperimentButton">取消整个实验</button>':""}</div></div>${experimentLineageMarkup(item)}<div class="profile-strip"><span>Runner 隔离：${escapeHtml(p.runner.isolation)}</span><span>网络：${escapeHtml(p.runner.network_policy)}</span><span>Profile ${escapeHtml(p.hash.slice(0,10))}</span></div>${conclusionMarkup(item)}${item.error_message?`<div class="message error">${escapeHtml(item.error_message)}</div>`:""}`;
+  const comparison = comparisonMarkup(item);
   const runs = item.runs.map(run => renderRun(item, run)).join("") || '<div class="empty">正在准备运行列表…</div>';
   const footer = item.status === "completed" ? '<button class="button button-ghost" id="setBaselineButton">将当前修订设为基准版本</button>' : "";
   if (rebuild) {
-    body.innerHTML = `<div id="detailSummary">${summary}</div>${renderLogConsole(item)}<div class="run-grid" id="detailRunGrid">${runs}</div><div id="detailFooter">${footer}</div>`;
+    state.lastComparison = comparison;
+    body.innerHTML = `<div id="detailSummary">${summary}</div><section class="detail-section" id="detailComparison"><div class="section-heading"><div><p class="eyebrow">CASE COMPARISON</p><h2>结果对照</h2></div></div><div id="detailComparisonBody">${comparison}</div></section><section class="detail-section" id="detailRunsSection"><div class="section-heading"><div><p class="eyebrow">RUNS</p><h2>运行明细</h2></div></div><div class="run-grid" id="detailRunGrid">${runs}</div></section><details class="detail-section diagnostic-section" id="diagnosticSection"${active ? " open" : ""}><summary><div><p class="eyebrow">DIAGNOSTICS</p><h2>诊断 · 原始日志与调用记录</h2></div><span class="diagnostic-hint">实时日志、Agent 调用、原始输出文件</span></summary>${renderLogConsole(item)}</details><div id="detailFooter">${footer}</div>`;
     body.dataset.experimentId = item.id;
     bindLogConsole();
     restoreLogScroll();
   } else {
     $("#detailSummary").innerHTML = summary;
+    const comparisonBody = $("#detailComparisonBody");
+    if (comparisonBody && state.lastComparison !== comparison) {
+      state.lastComparison = comparison;
+      comparisonBody.innerHTML = comparison;
+    }
     $("#detailRunGrid").innerHTML = runs;
     $("#detailFooter").innerHTML = footer;
   }
   bindDetailActions(item);
+  Object.entries(state.conversations).forEach(([runId, conv]) => {
+    if (conv.open) renderConversationInto(runId);
+  });
   if (!rebuild && previousLogKey !== logStreamKey()) {
     renderLogConsoleOnly();
     loadSelectedLogFiles();
@@ -986,15 +1563,28 @@ function bindDetailActions(item) {
     const runId = button.dataset.toggleRun;
     state.expandedRuns[runId] = !(state.expandedRuns[runId] ?? false);
     renderDetail(state.detail);
-    if (state.expandedRuns[runId]) loadRunEvents(runId);
+    // a freshly expanded run has no events loaded yet; re-render once they arrive
+    if (state.expandedRuns[runId] && !state.eventCursors[runId]) {
+      loadRunEvents(runId).then(() => { if (state.detail) renderDetail(state.detail); });
+    }
   }));
   $$('[data-evidence]').forEach(button => button.addEventListener("click", () => showEvidence(button.dataset.evidence)));
+  $$('[data-artifact]').forEach(button => button.addEventListener("click", () => openArtifact(button.dataset.artifactRun, button.dataset.artifact)));
   $$('[data-review]').forEach(button => button.addEventListener("click", () => addReview(id, button.dataset.review)));
   $$('[data-cancel-run]').forEach(button => button.addEventListener("click", () => cancelRun(button.dataset.cancelRun)));
   $$('[data-retry-run]').forEach(button => button.addEventListener("click", () => retryRun(button.dataset.retryRun)));
   $("#detailSummary")?.querySelectorAll("[data-retry-experiment]").forEach(button => button.addEventListener("click", () => retryExperiment(button.dataset.retryExperiment)));
-  $$('[data-log]').forEach(button => button.addEventListener("click", () => selectRunLog(button.dataset.log)));
-  $("#detailSummary")?.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => showDetail(button.dataset.detail)));
+  $$('[data-conversation]').forEach(button => button.addEventListener("click", () => toggleConversation(button.dataset.conversation)));
+  $$('[data-log]').forEach(button => button.addEventListener("click", () => {
+    selectRunLog(button.dataset.log);
+    const diagnostics = $("#diagnosticSection");
+    if (diagnostics) {
+      diagnostics.open = true;
+      diagnostics.scrollIntoView({behavior: "smooth", block: "start"});
+    }
+  }));
+  $$('[data-judge-log]').forEach(button => button.addEventListener("click", () => openConversationAt(button.dataset.judgeLog, "judge")));
+  $("#detailSummary")?.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => navigateToExperiment(button.dataset.detail)));
   const cancel = $("#cancelExperimentButton");
   if (cancel) cancel.addEventListener("click", () => cancelExperiment(id));
   const baseline = $("#setBaselineButton");
@@ -1021,41 +1611,80 @@ async function refreshDetail() {
     if (!["queued", "preparing", "running"].includes(item.status)) {
       clearInterval(state.detailPoller);
       state.detailPoller = null;
+      stopLogPolling();
     }
   } catch (error) { toast(error.message); }
 }
 
+function routeExperimentId() {
+  const match = location.hash.match(ROUTE_EXPERIMENT);
+  return match ? match[1] : null;
+}
+
+function leaveDetail() {
+  stopLogPolling();
+  resetConversations();
+  if (state.detailPoller) { clearInterval(state.detailPoller); state.detailPoller = null; }
+  state.detail = null;
+  state.routeId = null;
+}
+
+function applyRoute() {
+  const id = routeExperimentId();
+  const homeView = $("#homeView"), experimentView = $("#experimentView");
+  if (!homeView || !experimentView) return;
+  if (id) {
+    homeView.classList.add("hidden");
+    experimentView.classList.remove("hidden");
+    if (state.routeId !== id) showDetail(id);
+    return;
+  }
+  experimentView.classList.add("hidden");
+  homeView.classList.remove("hidden");
+  if (state.routeId) leaveDetail();
+}
+
+function navigateToExperiment(id) { location.hash = `#/experiments/${id}`; }
+function backToList() { location.hash = "#/"; }
+
 async function showDetail(id) {
+  state.routeId = id;
   try {
     const item = await api(`/api/v1/experiments/${id}`);
+    if (state.routeId !== id) return;
     state.runEvents = {};
     state.eventCursors = {};
     state.runLogs = {};
     state.expandedRuns = {};
-    item.runs.forEach(run => { if (run.status === "running" || run.stalled || !["queued", "completed", "cancelled"].includes(run.status)) state.expandedRuns[run.id] = true; });
+    resetConversations();
+    item.runs.forEach(run => { if (run.status === "running" || run.stalled || !["queued","completed","cancelled"].includes(run.status)) state.expandedRuns[run.id] = true; });
     ensureLogConsole(item, {fresh: true});
     renderDetail(item, {fresh: true});
-    if (!$("#detailModal").open) $("#detailModal").showModal();
+    window.scrollTo({top: 0});
     await Promise.all(item.runs.filter(run => state.expandedRuns[run.id]).map(run => loadRunEvents(run.id)));
     renderDetail(item);
     await loadSelectedLogFiles();
     await fetchSelectedLog();
-    startLogPolling();
+    // 1s log polling only makes sense while the experiment can still produce
+    // logs; terminal experiments keep a single fetch (R1P2)
+    const stillActive = ["queued", "preparing", "running"].includes(item.status);
+    if (stillActive) startLogPolling();
     if (state.detailPoller) clearInterval(state.detailPoller);
-    if (["queued", "preparing", "running"].includes(item.status)) state.detailPoller = setInterval(refreshDetail, 2000);
+    if (stillActive) state.detailPoller = setInterval(refreshDetail, 2000);
   } catch (error) { toast(error.message); }
 }
 
-async function loadRunLogs(runId) { selectRunLog(runId); }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#detailModal").addEventListener("close", stopLogPolling);
+  window.addEventListener("hashchange", applyRoute);
+  $("#backToList")?.addEventListener("click", backToList);
+  applyRoute();
 });
 async function addReview(experimentId,runId){const scoreText=window.prompt("人工复核分（0–100）");if(scoreText===null)return;const score=Number(scoreText);if(!Number.isFinite(score)||score<0||score>100)return toast("请输入 0–100 的分数");const note=window.prompt("复核说明（可留空）")??"";try{await api(`/api/v1/runs/${runId}/reviews`,{method:"POST",body:JSON.stringify({score,note,reviewer:"local-user"})});toast("人工复核已保存");await showDetail(experimentId);}catch(error){toast(error.message);}}
 
 document.addEventListener("DOMContentLoaded",()=>{
   restoreRuntimeCache();
-  $$('[data-open]').forEach(button=>button.addEventListener("click",()=>$("#"+button.dataset.open).showModal()));$$('[data-close]').forEach(button=>button.addEventListener("click",()=>{const modal=$("#"+button.dataset.close);modal.close();if(modal.id==="detailModal"){clearInterval(state.detailPoller);state.detailPoller=null;state.detail=null;}}));
+  $$('[data-open]').forEach(button=>button.addEventListener("click",()=>$("#"+button.dataset.open).showModal()));$$('[data-close]').forEach(button=>button.addEventListener("click",()=>$("#"+button.dataset.close).close()));
   $("#draftButton").addEventListener("click",generateDraft);$("#saveSuiteButton").addEventListener("click",saveSuite);$("#runButton").addEventListener("click",launchExperiment);$("#refreshButton").addEventListener("click",()=>loadAll({refreshRuntime:true}).then(()=>toast("已刷新")));
   $("#expectedFile").addEventListener("change",loadExpectedMarkdown);
   $("#suiteForm").addEventListener("submit",event=>event.preventDefault());["#projectPath","#skillPath","#skillInput","#expected"].forEach(selector=>$(selector).addEventListener("input",invalidateDraft));
