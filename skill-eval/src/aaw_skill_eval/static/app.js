@@ -3,12 +3,27 @@ const state = {
   runtime: null, controlsInitialized: false, detail: null, detailPoller: null, routeId: null, lastComparison: "",
   experimentsRequestSeq: 0,
   runEvents: {}, eventCursors: {}, runLogs: {}, expandedRuns: {}, retryingExperiments: new Set(),
-  logConsole: null, logPoller: null, conversations: {}
+  logConsole: null, logPoller: null, conversations: {},
+  // detail view state (方案二)：选中 case、快照展开、视图模式在轮询刷新时保留，
+  // 仅在切换到另一个实验时重置（detailCaseFor 记录状态所属实验）。
+  // detailViewMode 是用户偏好（localStorage 持久化），不随实验切换重置。
+  detailCaseFor: null, detailCaseId: null, caseSnapshotOpen: false, lastCaseSection: "",
+  detailViewMode: null, lastComparisonToggle: "",
+  // 方案四：已展开 Trial 对照的评分维度（grader id 集合）——轮询重渲染不关闭，
+  // 切换实验或切换 case 时清空。
+  expandedDimensions: new Set()
 };
 const RUNTIME_CACHE_KEY = "aaw-skill-eval.runtime.v1";
+const COMPARISON_VIEW_KEY = "aaw-skill-eval.comparison-view.v1";
 const ROUTE_EXPERIMENT = /^#\/experiments\/([0-9a-f-]{36})$/i;
 const GROUP_ORDER = ["no_skill", "baseline", "current"];
 const GROUP_LABELS = {no_skill: "无 Skill", baseline: "上一基准", current: "当前候选"};
+// 雷达图组样式（方案三）：颜色之外同时使用不同线型与点型做双编码
+const RADAR_GROUP_STYLES = {
+  no_skill: {color: "#68716d", dash: "2 4", point: "triangle"},
+  baseline: {color: "#33507e", dash: "8 5", point: "square"},
+  current: {color: "#1d8061", dash: "", point: "circle"},
+};
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 
@@ -285,6 +300,37 @@ function renderScoreBreakdown(run){
     :"";
   return `<div class="score-breakdown"><div class="score-breakdown-head"><strong>评分构成（${components.length} 项）</strong><span class="comp-total">总分 ${fmtScore(run.quality_score)} · 硬门禁 ${gates.passed??0}/${gates.total??0}</span>${loadedNote}<span class="evidence-links"><button class="text-button" data-artifact-run="${run.id}" data-artifact="scores.json">scores.json</button><button class="text-button" data-artifact-run="${run.id}" data-artifact="changes.patch">改动 patch</button><button class="text-button" data-artifact-run="${run.id}" data-artifact="final-response.md">最终回复</button></span></div>${rows}</div>`;
 }
+function activeRunStripCard(run) {
+  // 方案一.7 / 方案五：并行执行时同时展示两个活动 Run 的
+  // 当前阶段、已运行时间、最后有效活动、stalled、取消/对话/日志入口。
+  const elapsed = run.started_at ? elapsedSince(run.started_at) : null;
+  return `<div class="active-run${run.stalled ? " is-stalled" : ""}" data-active-run="${run.id}">
+    <div class="active-run-head">
+      <span class="pill ${run.status}">${escapeHtml(experimentStatusLabel(run.status))}</span>
+      <strong>${escapeHtml(GROUP_LABELS[run.group] || run.group)} · Trial ${run.trial}</strong>
+      <span class="active-run-case" title="${escapeHtml(run.case_id)}">${escapeHtml(run.case_id)}</span>
+      ${run.stalled ? '<span class="stall-warning">活动停滞</span>' : ""}
+    </div>
+    <div class="active-run-stats">
+      <span>阶段 <strong>${escapeHtml(stageLabel(run.current_stage))}</strong></span>
+      <span>已运行 ${fmtDuration(elapsed)}</span>
+      <span class="${run.stalled ? "warn" : ""}">最后有效活动 ${fmtDuration(run.activity_age_seconds)} 前</span>
+      <span>心跳 ${fmtDuration(run.heartbeat_age_seconds)} 前</span>
+    </div>
+    <div class="active-run-actions">
+      <button class="text-button danger" data-cancel-run="${run.id}">取消</button>
+      ${run.artifact_available ? `<button class="text-button" data-conversation="${run.id}">ACP 对话</button>` : '<span class="cell-empty">对话将在运行开始后可用</span>'}
+      <button class="text-button" data-log="${run.id}">日志</button>
+    </div>
+  </div>`;
+}
+
+function activeRunsStripMarkup(item) {
+  const active = item.runs.filter(run => run.status === "running");
+  if (!active.length) return "";
+  return `<div class="active-runs" id="activeRunsStrip" aria-label="活动 Run 状态（并行执行时同时展示两组）">${active.map(activeRunStripCard).join("")}</div>`;
+}
+
 function renderRun(item,run){
   run={...run,error_message:errorText(run.error_message)};
   const defaultOpen=run.status==="running"||run.stalled||!["queued","completed","cancelled"].includes(run.status),open=state.expandedRuns[run.id]??defaultOpen;
@@ -1045,10 +1091,11 @@ function attemptsMarkup(runId, conv) {
       return `<div class="conv-attempt"><h4>尝试 #${attempt.attempt}</h4><p class="conv-missing">${escapeHtml(attempt.reason || "没有对话记录")}</p></div>`;
     }
     const session = attempt.session || {};
+    const toolCallCount = (attempt.turns || []).reduce((n, t) => n + (t.items || []).filter(i => i.type === "tool_call").length, 0);
     const meta = [
       session.model && `模型 ${escapeHtml(session.model)}`,
       session.agent && `agent ${escapeHtml(session.agent)}`,
-      session.tools != null ? `工具 ${session.tools} 个` : "",
+      toolCallCount ? `工具调用 ${toolCallCount} 次` : "",
       session.skills?.length ? `技能 ${session.skills.length} 个` : "",
     ].filter(Boolean).join(" · ");
     return `<div class="conv-attempt">
@@ -1097,8 +1144,11 @@ function conversationItemMarkup(runId, conv, attempt, turn, item, index) {
   if (item.type === "tool_call") {
     const statusLabel = TOOL_STATUS_LABELS[item.status] || item.status || "未知";
     const statusClass = item.status === "failed" ? "bad" : item.status === "completed" ? "ok" : "";
+    const resultPreview = item.result
+      ? (String(item.result).split("\n").map(l => l.trim()).find(l => l) || "").slice(0, 70)
+      : "";
     return `<details class="conv-tool" data-conv-key="${key}"${conv.expanded.has(key) ? " open" : ""}>
-      <summary><span class="conv-tool-name">${escapeHtml(item.name || item.tool_call_id || "工具调用")}</span>${item.input ? `<span class="conv-tool-input">${escapeHtml(item.input)}</span>` : ""}<span class="conv-tool-status ${statusClass}">${statusLabel}</span></summary>
+      <summary><span class="conv-tool-name">${escapeHtml(item.name || item.tool_call_id || "工具调用")}</span>${item.input ? `<span class="conv-tool-input">${escapeHtml(item.input)}</span>` : ""}<span class="conv-tool-preview">${escapeHtml(resultPreview)}</span><span class="conv-tool-status ${statusClass}">${statusLabel}</span></summary>
       <div class="conv-tool-body">
         ${item.kind ? `<p><strong>类型：</strong>${escapeHtml(item.kind)}</p>` : ""}
         ${item.input ? `<p><strong>入参：</strong>${escapeHtml(item.input)}</p>` : ""}
@@ -1382,30 +1432,148 @@ function verdictMarkup(item) {
   return `<span class="verdict-badge ${cls}">${escapeHtml(label)}</span><span class="verdict-note">${escapeHtml(note)}</span>`;
 }
 
-function groupScoreCard(item, group) {
+function groupScoreChip(item, group) {
   const info = item.conclusion?.groups?.[group];
   if (!info) return "";
   if (info.missing) {
-    return `<div class="detail-score is-missing"><small>${GROUP_LABELS[group]}</small><strong>—</strong><span class="score-note">未参与（无基准修订）</span></div>`;
+    return `<span class="group-chip is-missing"><small>${GROUP_LABELS[group]}</small><strong>—</strong><span class="chip-note">未参与（无基准修订）</span></span>`;
   }
   const notes = [];
-  if (info.provisional) notes.push(`<span class="score-note provisional">暂定 · ${info.completed_trials}/${info.expected_trials} trial，不参与正式差值</span>`);
-  else notes.push(`<span class="score-note">trial ${info.completed_trials}/${info.expected_trials}${info.gates_total ? ` · 门禁 ${info.gates_passed}/${info.gates_total}` : ""}</span>`);
-  if (info.gates_failed) notes.push(`<span class="score-note gates-failed">硬门禁未通过 · 未达标</span>`);
-  return `<div class="detail-score${info.gates_failed ? " is-gates-failed" : ""}${info.provisional ? " is-provisional" : ""}"><small>${GROUP_LABELS[group]}</small><strong>${info.score == null ? "—" : fmtScore(info.score)}</strong>${notes.join("")}</div>`;
+  notes.push(info.provisional
+    ? `<span class="chip-note provisional">暂定 ${info.completed_trials}/${info.expected_trials} trial</span>`
+    : `<span class="chip-note">${info.completed_trials}/${info.expected_trials} trial</span>`);
+  if (info.gates_total) notes.push(`<span class="chip-note${info.gates_failed ? " gates-failed" : ""}">门禁 ${info.gates_passed}/${info.gates_total}</span>`);
+  return `<span class="group-chip${info.gates_failed ? " is-gates-failed" : ""}${info.provisional ? " is-provisional" : ""}"><small>${GROUP_LABELS[group]}</small><strong>${info.score == null ? "—" : fmtScore(info.score)}</strong>${notes.join("")}</span>`;
 }
 
 function conclusionMarkup(item) {
   const conclusion = item.conclusion;
   if (!conclusion) return "";
   const deltaCell = (value, formal, label) => {
-    if (value == null) return `<span class="delta-item">${label}：<span class="delta">—</span></span>`;
+    if (value == null) return `<span class="delta-item">${label}<span class="delta">—</span></span>`;
     const tag = formal ? '<small class="delta-formal">正式比较</small>' : '<small class="delta-provisional">暂定 · 不参与正式比较</small>';
-    return `<span class="delta-item">${label}：${fmtDelta(value)}${tag}</span>`;
+    return `<span class="delta-item">${label}${fmtDelta(value)}${tag}</span>`;
   };
-  return `<div class="conclusion-strip">${verdictMarkup(item)}</div>
-    <div class="detail-scores">${GROUP_ORDER.map(group => groupScoreCard(item, group)).join("")}</div>
-    <p class="delta-row">${deltaCell(item.delta_no_skill, conclusion.formal_deltas?.no_skill, "当前 vs 无 Skill")}　${deltaCell(item.delta_baseline, conclusion.formal_deltas?.baseline, "当前 vs 基准")}</p>`;
+  // 紧凑结果带（方案二）：结论、三组总分、硬门禁、差值各出现一次，
+  // 不再使用三张大分数卡，也不再与对照表头重复。
+  return `<div class="conclusion-band">
+    <div class="conclusion-verdict">${verdictMarkup(item)}</div>
+    <div class="conclusion-groups">${GROUP_ORDER.map(group => groupScoreChip(item, group)).join("")}</div>
+    <div class="conclusion-deltas">${deltaCell(item.delta_no_skill, conclusion.formal_deltas?.no_skill, "当前 vs 无 Skill")}${deltaCell(item.delta_baseline, conclusion.formal_deltas?.baseline, "当前 vs 基准")}</div>
+  </div>`;
+}
+
+function caseRunStats(byGroup) {
+  const mean = runs => {
+    const scored = runs.filter(run => run.status === "completed" && run.quality_score != null);
+    return scored.length ? fmean(scored.map(run => run.quality_score)) : null;
+  };
+  const current = byGroup.current || [];
+  const completed = current.filter(run => run.status === "completed");
+  const gateFailed = completed.some(run => (run.hard_gates?.total || 0) > 0 && run.hard_gates.passed < run.hard_gates.total);
+  const currentMean = mean(current);
+  const noSkillMean = mean(byGroup.no_skill || []);
+  return {
+    gateFailed,
+    delta: currentMean != null && noSkillMean != null ? currentMean - noSkillMean : null,
+  };
+}
+
+function defaultCaseId(item, byGroup) {
+  const cases = item.suite_snapshot?.cases || [];
+  if (!cases.length) return null;
+  if (cases.length === 1) return cases[0].id;
+  // 方案一.3 默认选择顺序：硬门禁失败 > current 相对 no_skill 差值最差 > 套件中的第一个 case
+  const ranked = cases.map((spec, index) => {
+    const stats = caseRunStats(byGroup.get(spec.id) || {});
+    return {id: spec.id, index, gateFailed: stats.gateFailed, delta: stats.delta};
+  }).sort((a, b) =>
+    Number(b.gateFailed) - Number(a.gateFailed)
+    || (a.delta ?? Infinity) - (b.delta ?? Infinity)
+    || a.index - b.index);
+  return ranked[0].id;
+}
+
+function selectedCase(item, byGroup) {
+  const cases = item.suite_snapshot?.cases || [];
+  if (!cases.length) return null;
+  if (!state.detailCaseId || !cases.some(spec => spec.id === state.detailCaseId)) {
+    state.detailCaseId = defaultCaseId(item, byGroup);
+  }
+  return cases.find(spec => spec.id === state.detailCaseId) || cases[0];
+}
+
+function caseSelectorMarkup(item, byGroup) {
+  const cases = item.suite_snapshot?.cases || [];
+  if (cases.length < 2) return "";
+  return `<div class="case-selector" role="tablist" aria-label="选择测评用例（一次只展示一个）">${cases.map(spec => {
+    const stats = caseRunStats(byGroup.get(spec.id) || {});
+    const flag = stats.gateFailed
+      ? '<span class="case-flag is-gate" title="该用例 current 组硬门禁未通过">门禁未过</span>'
+      : stats.delta != null && stats.delta < 0
+        ? `<span class="case-flag is-drop" title="current 相对 no_skill 差值 ${stats.delta.toFixed(1)}">${fmtDelta(stats.delta)}</span>`
+        : "";
+    const active = spec.id === state.detailCaseId;
+    return `<button type="button" class="case-chip${active ? " active" : ""}" role="tab" aria-selected="${active}" data-case-select="${escapeHtml(spec.id)}"><span class="case-chip-name">${escapeHtml(spec.name || spec.id)}</span>${flag}</button>`;
+  }).join("")}</div>`;
+}
+
+const GRADER_TYPE_LABELS = {command: "命令验证器", file_exists: "文件存在检查", forbidden_changes: "禁改检查", llm_rubric: "LLM 评分"};
+
+function snapshotPre(text) {
+  // 长文本使用内部滚动（CSS max-height + overflow），不无限拉长页面（方案一.4）
+  return `<pre class="snapshot-text">${escapeHtml(text || "")}</pre>`;
+}
+
+function graderSnapshotRow(grader) {
+  const typeLabel = `${GRADER_TYPE_LABELS[grader.type] || grader.type} · 权重 ${grader.weight ?? "—"}${grader.hard_gate ? " · 硬门禁（必须通过）" : ""}`;
+  const config = [
+    grader.command ? `<span class="snap-kv"><small>command</small><code>${escapeHtml(grader.command)}</code></span>` : "",
+    grader.path ? `<span class="snap-kv"><small>path</small><code>${escapeHtml(grader.path)}</code></span>` : "",
+    Array.isArray(grader.patterns) && grader.patterns.length ? `<span class="snap-kv"><small>patterns</small><code>${escapeHtml(grader.patterns.join(" · "))}</code></span>` : "",
+    grader.rubric ? `<details class="snap-rubric"><summary>rubric（点击展开）</summary>${snapshotPre(grader.rubric)}</details>` : "",
+    `<span class="snap-kv"><small>timeout</small><code>${grader.timeout_seconds ?? "—"}s</code></span>`,
+  ].filter(Boolean).join("");
+  return `<div class="grader-snapshot${grader.hard_gate ? " is-gate" : ""}">
+    <div class="grader-snapshot-head"><strong>${escapeHtml(grader.name || grader.id)}</strong><code>${escapeHtml(grader.id)}</code><span class="dim-type${grader.hard_gate ? " gate" : ""}">${escapeHtml(typeLabel)}</span></div>
+    <div class="grader-snapshot-config">${config}</div>
+  </div>`;
+}
+
+function caseSnapshotMarkup(item, caseSpec) {
+  const graders = caseSpec.graders || [];
+  const followups = Array.isArray(caseSpec.followups) ? caseSpec.followups : [];
+  const collapsedMeta = `<span class="snap-field"><small>用例 ID</small><code>${escapeHtml(caseSpec.id)}</code></span>
+    <span class="snap-field"><small>权重</small><code>${caseSpec.weight ?? 1}</code></span>
+    <span class="snap-field"><small>评分维度</small><code>${graders.length} 项</code></span>
+    <span class="snap-field"><small>最大对话轮数</small><code>${caseSpec.max_turns ?? "—"}</code></span>`;
+  const body = `<div class="snapshot-grid">
+        <div class="snapshot-block"><h4>Agent 输入</h4>${snapshotPre(caseSpec.input)}</div>
+        <div class="snapshot-block"><h4>预期效果（仅评测器可见）</h4>${snapshotPre(caseSpec.expected)}</div>
+        ${caseSpec.agent_context ? `<div class="snapshot-block"><h4>Agent context</h4>${snapshotPre(caseSpec.agent_context)}</div>` : ""}
+        <div class="snapshot-block"><h4>对话设置</h4><div class="snap-kv-row"><span class="snap-kv"><small>最大轮数</small><code>${caseSpec.max_turns ?? "—"}</code></span><span class="snap-kv"><small>Follow-up</small><code>${followups.length} 条</code></span></div>${followups.length ? `<ul class="snap-followups">${followups.map(followup => `<li><small>触发条件（输出包含）</small><code>${escapeHtml(followup.when_output_contains)}</code><small>回复</small>${snapshotPre(followup.reply)}</li>`).join("")}</ul>` : ""}</div>
+      </div>
+      <div class="snapshot-block"><h4>评分维度（${graders.length} 项）</h4>${graders.map(graderSnapshotRow).join("")}</div>`;
+  return `<details class="case-snapshot" id="caseSnapshot"${state.caseSnapshotOpen ? " open" : ""}>
+    <summary>
+      <span class="case-snapshot-title"><strong>${escapeHtml(caseSpec.name || caseSpec.id)}</strong><span class="snapshot-badge" title="以下定义为实验创建时固化的套件快照，可能与当前套件定义不同">本次实验快照</span></span>
+      <span class="case-snapshot-meta">${collapsedMeta}</span>
+      <span class="case-snapshot-toggle">${state.caseSnapshotOpen ? "收起" : "查看用例定义"}</span>
+    </summary>
+    <div class="case-snapshot-body">${body}</div>
+  </details>`;
+}
+
+function caseSectionMarkup(item) {
+  const cases = item.suite_snapshot?.cases || [];
+  if (!cases.length) {
+    // 旧版实验缺少固化的套件快照：明确标注缺失，不补造
+    return `<div class="case-snapshot case-snapshot-empty"><p class="snap-missing">本实验缺少固化的套件快照（旧版实验记录），无法展示用例定义；结果对照与运行明细仍基于已有 run 数据。</p></div>`;
+  }
+  const grouped = runsByCaseAndGroup(item);
+  const selected = selectedCase(item, grouped);
+  if (!selected) return "";
+  return `${caseSelectorMarkup(item, grouped)}${caseSnapshotMarkup(item, selected)}`;
 }
 
 function runsByCaseAndGroup(item) {
@@ -1418,67 +1586,114 @@ function runsByCaseAndGroup(item) {
   return grouped;
 }
 
-function groupHeaderCell(byGroup, group, expectedTrials) {
+function groupHeaderCell(byGroup, group) {
+  // 方案二：表头只保留组名——总分/trial 数/门禁已在结论带与质量分行出现，
+  // 不再在顶部与对照表头之间重复。
   const runs = byGroup[group] || [];
-  if (!runs.length) return `<th class="is-missing"><span>${GROUP_LABELS[group]}</span><strong>—</strong><small>未参与</small></th>`;
-  const completed = runs.filter(run => run.status === "completed");
-  const scored = completed.filter(run => run.quality_score != null);
-  const mean = scored.length ? fmean(scored.map(run => run.quality_score)) : null;
-  const provisional = completed.length < expectedTrials;
-  const gatesFail = completed.some(run => (run.hard_gates?.total || 0) > 0 && run.hard_gates.passed < run.hard_gates.total);
-  return `<th${gatesFail ? ' class="is-gates-failed"' : ""}><span>${GROUP_LABELS[group]}</span><strong>${mean == null ? "—" : fmtScore(mean)}</strong><small class="${provisional ? "provisional" : ""}">${provisional ? `暂定 ${completed.length}/${expectedTrials}` : `${completed.length}/${expectedTrials} trial`}</small>${gatesFail ? '<small class="gates-failed-note">硬门禁未通过</small>' : ""}</th>`;
+  if (!runs.length) return `<th class="is-missing"><span>${GROUP_LABELS[group]}</span><small>未参与</small></th>`;
+  return `<th><span>${GROUP_LABELS[group]}</span></th>`;
 }
 
-function graderCell(grader, runs) {
-  const trials = runs
-    .map(run => ({run, comp: (run.scores?.components || []).find(entry => entry.grader_id === grader.id)}))
-    .filter(entry => entry.comp);
-  if (!trials.length) {
+function graderScoreStats(grader, runs) {
+  // 方案四：非完成 Run 不参与均分——均值只统计已完成 Run 的数值分数，
+  // 与雷达图 graderMeanScore 同一数据源同一算法。
+  const comps = runs
+    .filter(run => run.status === "completed")
+    .map(run => (run.scores?.components || []).find(entry => entry.grader_id === grader.id))
+    .filter(comp => comp && comp.score != null);
+  return {
+    mean: comps.length ? fmean(comps.map(comp => Number(comp.score))) : null,
+    count: comps.length,
+    gatePassed: comps.filter(comp => comp.passed).length,
+    gateTotal: comps.length,
+  };
+}
+
+function graderValueCell(grader, runs) {
+  // 方案四：删除每个分组单元格的独立 details——单元格只保留汇总值，
+  // Trial 对照统一由维度行的“展开 Trial 对照”入口提供。
+  const stats = graderScoreStats(grader, runs);
+  const isGate = !!grader.hard_gate;
+  if (!stats.count) {
     const unfinished = runs.filter(run => run.status !== "completed").length;
     return `<td><span class="cell-empty">${unfinished ? `未评分（${unfinished} 个 run 未完成）` : "—"}</span></td>`;
   }
-  const isGate = !!grader.hard_gate || !!trials[0].comp.hard_gate;
-  const scored = trials.filter(entry => entry.comp.score != null);
   let value, cls = "";
   if (isGate) {
-    const passed = trials.filter(entry => entry.comp.passed).length;
-    value = `${passed}/${trials.length} 通过`;
-    cls = passed === trials.length ? "ok" : "bad";
-  } else if (scored.length === 1) {
-    value = fmtScore(scored[0].comp.score);
+    value = `${stats.gatePassed}/${stats.gateTotal} 通过`;
+    cls = stats.gatePassed === stats.gateTotal ? "ok" : "bad";
+  } else if (stats.count === 1) {
+    value = fmtScore(stats.mean);
   } else {
-    value = scored.length ? `${fmtScore(fmean(scored.map(entry => entry.comp.score)))}（均值 ${scored.length} trial）` : "—";
+    value = `${fmtScore(stats.mean)}（均值 ${stats.count} trial）`;
   }
-  return `<td class="${cls}"><details class="cell-trials"><summary><span class="cell-value">${escapeHtml(value)}</span><span class="cell-expand">展开 trial</span></summary>${trials.map(trialDetail).join("")}</details></td>`;
+  return `<td class="${cls}"><span class="cell-value">${escapeHtml(value)}</span></td>`;
 }
 
-function trialDetail({run, comp}) {
-  const isGate = !!comp.hard_gate;
-  const value = isGate ? (comp.passed ? "通过" : "未通过") : fmtScore(comp.score);
-  const reviews = (run.reviews || []).map(review =>
-    `<div class="trial-review">人工复核 <strong>${fmtScore(review.score)}</strong> · ${escapeHtml(review.reviewer)} · ${fmtTime(review.created_at)}${review.note ? ` · “${escapeHtml(review.note)}”` : ""}</div>`
-  ).join("");
-  return `<div class="trial-detail">
-    <div class="trial-head"><span class="pill ${run.status}">${escapeHtml(experimentStatusLabel(run.status))}</span><strong>Trial ${run.trial}${run.current_attempt > 1 ? ` · 重试 #${run.current_attempt}` : ""}</strong><span class="trial-score ${comp.passed === false ? "bad" : comp.passed === true ? "ok" : ""}">${escapeHtml(value)}</span>${comp.invalid ? '<span class="trial-invalid">无效</span>' : ""}<button class="text-button" data-judge-log="${run.id}">Judge 对话</button></div>
-    ${comp.reasoning ? `<p class="trial-reasoning"><strong>评分理由：</strong>${escapeHtml(comp.reasoning)}</p>` : ""}
-    ${comp.evidence ? `<details class="trial-evidence"><summary>证据</summary><pre>${escapeHtml(comp.evidence)}</pre></details>` : ""}
-    ${reviews}
+function trialGroupCell(grader, run) {
+  // 方案四：按 trial_index 对齐后，某一组这一侧的 Trial 单元格。
+  // 失败/缺失/排队中/运行中的一侧保留占位；非完成 Run 可查看状态和错误。
+  if (!run) {
+    return `<div class="trial-cell is-missing"><span class="cell-empty">缺失（该组没有此 Trial 的 run 记录）</span></div>`;
+  }
+  const comp = (run.scores?.components || []).find(entry => entry.grader_id === grader.id);
+  const isGate = !!grader.hard_gate || (comp ? !!comp.hard_gate : false);
+  let scoreHtml;
+  if (comp && comp.score != null) {
+    const value = isGate ? (comp.passed ? "通过" : "未通过") : fmtScore(comp.score);
+    const cls = comp.passed === false ? "bad" : comp.passed === true ? "ok" : "";
+    scoreHtml = `<span class="trial-score ${cls}">${escapeHtml(value)}</span>`;
+  } else if (run.status === "running") {
+    scoreHtml = '<span class="cell-empty">运行中 · 暂无评分</span>';
+  } else if (run.status === "queued") {
+    scoreHtml = '<span class="cell-empty">排队中 · 尚未开始</span>';
+  } else {
+    scoreHtml = '<span class="cell-empty">未评分（Runner 未完成，不参与均分）</span>';
+  }
+  const judgeLog = run.artifact_available
+    ? `<button class="text-button" data-judge-log="${run.id}">Judge 对话</button>`
+    : "";
+  const error = run.status !== "completed" && run.error_message
+    ? `<p class="trial-error"><strong>${escapeHtml(run.error_kind || "error")}</strong> · ${escapeHtml(errorText(run.error_message))}</p>`
+    : "";
+  return `<div class="trial-cell${run.status !== "completed" ? " is-unfinished" : ""}">
+    <div class="trial-cell-head"><span class="pill ${run.status}">${escapeHtml(experimentStatusLabel(run.status))}</span>${scoreHtml}${run.current_attempt > 1 ? `<span class="trial-invalid">重试 #${run.current_attempt}</span>` : ""}${comp?.invalid ? '<span class="trial-invalid">无效</span>' : ""}${judgeLog}</div>
+    ${error}
+    ${comp?.reasoning ? `<p class="trial-reasoning"><strong>评分理由：</strong>${escapeHtml(comp.reasoning)}</p>` : ""}
+    ${comp?.evidence ? `<details class="trial-evidence"><summary>证据</summary><pre>${escapeHtml(comp.evidence)}</pre></details>` : ""}
   </div>`;
+}
+
+function trialComparisonRow(grader, byGroup, availableGroups) {
+  // 方案四：展开后按 Trial 分行，no_skill 与 current（及 baseline 第三列）
+  // 并排对齐；一次展开即同时展示所有参与组。
+  const trialIndexes = [...new Set(
+    availableGroups.flatMap(group => (byGroup[group] || []).map(run => run.trial))
+  )].sort((a, b) => a - b);
+  const head = `<div class="trial-comparison-grid trial-comparison-head"><span class="trial-index-label">Trial</span>${availableGroups.map(group => `<span class="trial-group-label">${GROUP_LABELS[group]}</span>`).join("")}</div>`;
+  const rows = trialIndexes.map(trial => {
+    const cells = availableGroups
+      .map(group => (byGroup[group] || []).find(run => run.trial === trial))
+      .map(run => trialGroupCell(grader, run));
+    return `<div class="trial-comparison-grid"><span class="trial-index-label">Trial ${trial}</span>${cells.join("")}</div>`;
+  }).join("");
+  return `<tr class="trial-comparison-row"><td colspan="${availableGroups.length + 1}">
+    <div class="trial-comparison" data-trial-comparison="${escapeHtml(grader.id)}" style="--trial-groups:${availableGroups.length}">${head}${rows || '<p class="cell-empty">该维度还没有任何 run 记录。</p>'}</div>
+  </td></tr>`;
 }
 
 function qualityCell(runs) {
   const completed = runs.filter(run => run.status === "completed" && run.quality_score != null);
   if (!completed.length) return `<td class="quality-cell">—</td>`;
   const gatesFail = completed.some(run => (run.hard_gates?.total || 0) > 0 && run.hard_gates.passed < run.hard_gates.total);
-  return `<td class="quality-cell${gatesFail ? " is-gates-failed" : ""}"><strong>${fmtScore(fmean(completed.map(run => run.quality_score)))}</strong><small>${completed.length}/${runs.length} trial</small>${gatesFail ? '<small class="gates-failed-note">门禁未过 · 未达标</small>' : ""}</td>`;
+  return `<td class="quality-cell${gatesFail ? " is-gates-failed" : ""}"><strong>${fmtScore(fmean(completed.map(run => run.quality_score)))}</strong><small> ${completed.length}/${runs.length} trial</small>${gatesFail ? '<small class="gates-failed-note">门禁未过 · 未达标</small>' : ""}</td>`;
 }
 
 function caseReviewsMarkup(byGroup, availableGroups) {
   const entries = [];
   availableGroups.forEach(group => (byGroup[group] || []).forEach(run => (run.reviews || []).forEach(review => entries.push({group, run, review}))));
-  if (!entries.length) {
-    return `<div class="case-reviews"><strong>人工复核</strong><span class="case-reviews-empty">暂无人工复核。自动分已保存；可点击下方运行明细中各 run 的“复核”提交人工分，人工分与自动分并列保存展示。</span></div>`;
-  }
+  // 方案二：无人工复核时不显示空白模块
+  if (!entries.length) return "";
   const means = availableGroups
     .map(group => {
       const scores = [];
@@ -1494,27 +1709,229 @@ function caseCard(caseSpec, byGroup, expectedTrials) {
   const graders = caseSpec.graders || [];
   const availableGroups = GROUP_ORDER.filter(group => (byGroup[group] || []).length);
   if (!availableGroups.length) {
-    return `<article class="case-card"><div class="case-head"><h3>${escapeHtml(caseSpec.name || caseSpec.id)}</h3><span class="case-meta">${escapeHtml(caseSpec.id)} · 权重 ${caseSpec.weight ?? 1}</span></div><p class="case-empty">该用例尚未产生 run。</p></article>`;
+    return `<article class="case-card"><p class="case-empty">该用例尚未产生 run。</p></article>`;
   }
-  const header = `<thead><tr><th class="dim-col">评分维度</th>${availableGroups.map(group => groupHeaderCell(byGroup, group, expectedTrials)).join("")}</tr></thead>`;
+  const header = `<thead><tr><th class="dim-col">评分维度</th>${availableGroups.map(group => groupHeaderCell(byGroup, group)).join("")}</tr></thead>`;
   const rows = graders.map(grader => {
     const typeLabel = grader.hard_gate ? "硬门禁（必须通过）" : grader.type === "llm_rubric" ? `LLM 评分 · 权重 ${grader.weight ?? "—"}` : `命令验证器 · 权重 ${grader.weight ?? "—"}`;
-    return `<tr><th class="dim-col"><span class="dim-name">${escapeHtml(grader.name || grader.id)}</span><span class="dim-type${grader.hard_gate ? " gate" : ""}">${escapeHtml(typeLabel)}</span></th>${availableGroups.map(group => graderCell(grader, byGroup[group])).join("")}</tr>`;
+    // 方案四：每个评分维度只提供一个“展开 Trial 对照”入口（与类型同行，保持表格紧凑）；
+    // 展开状态存于 state.expandedDimensions，轮询重渲染不关闭。
+    const expanded = state.expandedDimensions.has(grader.id);
+    return `<tr data-grader-row="${escapeHtml(grader.id)}" class="dim-row${expanded ? " is-expanded" : ""}"><th class="dim-col"><span class="dim-name">${escapeHtml(grader.name || grader.id)}</span><span class="dim-meta"><span class="dim-type${grader.hard_gate ? " gate" : ""}">${escapeHtml(typeLabel)}</span><button type="button" class="text-button dimension-trials-toggle" data-dimension-trials="${escapeHtml(grader.id)}" aria-expanded="${expanded}">${expanded ? "收起 Trial 对照" : "展开 Trial 对照"}</button></span></th>${availableGroups.map(group => graderValueCell(grader, byGroup[group])).join("")}</tr>${expanded ? trialComparisonRow(grader, byGroup, availableGroups) : ""}`;
   }).join("");
   const qualityRow = `<tr class="quality-row"><th class="dim-col"><span class="dim-name">质量分</span><span class="dim-type">加权均值 · 硬门禁不计入</span></th>${availableGroups.map(group => qualityCell(byGroup[group])).join("")}</tr>`;
+  // 用例名称/ID/权重已由 Case 选择器与测评用例查看区呈现，这里不再重复（方案二）
   return `<article class="case-card">
-    <div class="case-head"><h3>${escapeHtml(caseSpec.name || caseSpec.id)}</h3><span class="case-meta">${escapeHtml(caseSpec.id)} · 权重 ${caseSpec.weight ?? 1}</span></div>
     <div class="table-card comparison-wrap"><table class="comparison-table">${header}<tbody>${rows}${qualityRow}</tbody></table></div>
     ${caseReviewsMarkup(byGroup, availableGroups)}
   </article>`;
 }
 
-function comparisonMarkup(item) {
+function caseRunsOfGroup(byGroup, group) {
+  return byGroup[group] || [];
+}
+
+function graderMeanScore(grader, runs) {
+  // 与明细表 graderValueCell/qualityCell 同一数据源与同一算法（graderScoreStats）：
+  // 已完成 Run 中该 grader 的数值分数均值（雷达与明细表一致性的基础）
+  return graderScoreStats(grader, runs).mean;
+}
+
+function caseComparisonData(item, caseSpec, byGroup) {
+  // 方案三数据规则：坐标轴只含 hard_gate=false 且产生数值分数的 grader
+  //（command/llm_rubric 等非门禁 grader 均产出 0-100 数值分）。
+  const axes = (caseSpec.graders || []).filter(grader => !grader.hard_gate);
+  const hasGateGraders = (caseSpec.graders || []).some(grader => grader.hard_gate);
+  const expectedTrials = item.trials || 1;
+  const series = GROUP_ORDER
+    .filter(group => caseRunsOfGroup(byGroup, group).length > 0)
+    .map(group => {
+      const runs = caseRunsOfGroup(byGroup, group);
+      const completed = runs.filter(run => run.status === "completed" && run.quality_score != null);
+      const values = axes.map(axis => graderMeanScore(axis, runs));
+      const gatesPassed = completed.reduce((sum, run) => sum + (run.hard_gates?.passed || 0), 0);
+      const gatesTotal = completed.reduce((sum, run) => sum + (run.hard_gates?.total || 0), 0);
+      return {
+        group,
+        runs,
+        completedTrials: completed.length,
+        totalTrials: runs.length,
+        quality: completed.length ? fmean(completed.map(run => run.quality_score)) : null,
+        values,
+        hasAnyValue: values.some(value => value != null),
+        provisional: completed.length > 0 && completed.length < expectedTrials,
+        gatesPassed,
+        gatesTotal,
+        gatesFailed: gatesTotal > 0 && gatesPassed < gatesTotal,
+      };
+    });
+  return {axes, series, hasGateGraders};
+}
+
+function comparisonViewMode() {
+  if (state.detailViewMode !== "radar" && state.detailViewMode !== "table") {
+    // 方案一.5：首次进入默认雷达图，之后记住用户选择（localStorage）
+    let stored = null;
+    try { stored = localStorage.getItem(COMPARISON_VIEW_KEY); } catch {}
+    state.detailViewMode = stored === "table" ? "table" : "radar";
+  }
+  return state.detailViewMode;
+}
+
+function setComparisonViewMode(mode) {
+  state.detailViewMode = mode;
+  try { localStorage.setItem(COMPARISON_VIEW_KEY, mode); } catch {}
+}
+
+function radarPointMarkup(group, axisIndex, value, axis, entry) {
+  const style = RADAR_GROUP_STYLES[group] || RADAR_GROUP_STYLES.current;
+  const size = 300, cx = size / 2, cy = size / 2, radius = 96;
+  const angle = (Math.PI * 2 * axisIndex) / (axis.total) - Math.PI / 2;
+  const r = radius * Math.max(0, Math.min(100, value)) / 100;
+  const x = cx + r * Math.cos(angle), y = cy + r * Math.sin(angle);
+  const shape = style.point === "square"
+    ? `<rect x="${(x - 3.5).toFixed(1)}" y="${(y - 3.5).toFixed(1)}" width="7" height="7" fill="${style.color}" stroke="white" stroke-width="1.2"/>`
+    : style.point === "triangle"
+      ? `<path d="M ${x.toFixed(1)} ${(y - 4.5).toFixed(1)} L ${(x + 4.2).toFixed(1)} ${(y + 3.4).toFixed(1)} L ${(x - 4.2).toFixed(1)} ${(y + 3.4).toFixed(1)} Z" fill="${style.color}" stroke="white" stroke-width="1.2"/>`
+      : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="${style.color}" stroke="white" stroke-width="1.2"/>`;
+  const label = `${axis.name || axis.id} · ${GROUP_LABELS[group]}：${value.toFixed(1)}（${entry.completedTrials} 个已完成 Trial 均值）`;
+  return `<g class="radar-point" tabindex="0" role="img" aria-label="${escapeHtml(label)}" data-radar-point data-tooltip="${escapeHtml(label)}" data-group="${escapeHtml(group)}" data-axis="${escapeHtml(axis.id)}" data-value="${value.toFixed(4)}">${shape}</g>`;
+}
+
+function radarSvgMarkup(data) {
+  const size = 300, cx = size / 2, cy = size / 2, radius = 96;
+  const total = data.axes.length;
+  const angle = i => (Math.PI * 2 * i) / total - Math.PI / 2;
+  const xy = (i, value) => {
+    const r = radius * Math.max(0, Math.min(100, value)) / 100;
+    return [cx + r * Math.cos(angle(i)), cy + r * Math.sin(angle(i))];
+  };
+  const rings = [20, 40, 60, 80, 100].map(level => {
+    const points = data.axes.map((_, i) => xy(i, level).map(v => v.toFixed(1)).join(",")).join(" ");
+    return `<polygon class="radar-ring${level === 100 ? " outer" : ""}" points="${points}"/>`
+      + (level === 50 || level === 100 ? `<text class="radar-tick" x="${(cx + 3).toFixed(1)}" y="${(cy - radius * level / 100 - 3).toFixed(1)}">${level}</text>` : "");
+  }).join("")
+    + `<text class="radar-tick" x="${(cx + 3).toFixed(1)}" y="${(cy - 3).toFixed(1)}">0</text>`;
+  const spokes = data.axes.map((_, i) => {
+    const [x, y] = xy(i, 100);
+    return `<line class="radar-axis-line" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;
+  }).join("");
+  const labels = data.axes.map((axis, i) => {
+    const lx = cx + (radius + 14) * Math.cos(angle(i));
+    const ly = cy + (radius + 14) * Math.sin(angle(i));
+    const anchor = Math.abs(Math.cos(angle(i))) < 0.3 ? "middle" : Math.cos(angle(i)) > 0 ? "start" : "end";
+    const name = String(axis.name || axis.id);
+    // 长标签两行折行（在顿号/间隔符处优先断行），避免省略号截断
+    let labelLines;
+    if (name.length > 11) {
+      const sep = name.search(/[、·]|生命周期/);
+      const cut = sep > 2 && sep < name.length - 2 ? sep + 1 : Math.ceil(name.length / 2);
+      labelLines = [name.slice(0, cut), name.slice(cut)];
+    } else {
+      labelLines = [name];
+    }
+    const labelSpans = labelLines.map((line, li) => `<tspan x="${lx.toFixed(1)}" dy="${li ? 11 : 3}">${escapeHtml(line)}</tspan>`).join("");
+    return `<text class="radar-label" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}"><title>${escapeHtml(name)}</title>${labelSpans}</text>`;
+  }).join("");
+  const series = data.series.filter(entry => entry.hasAnyValue);
+  // 先绘制所有曲线，再统一绘制最上层的点位标记：否则后画组的半透明
+  // 多边形会盖住先画组的点，悬停/键盘聚焦都命不中（z 序修复）。
+  const shapes = series.map(entry => {
+    const style = RADAR_GROUP_STYLES[entry.group] || RADAR_GROUP_STYLES.current;
+    const points = entry.values
+      .map((value, i) => value == null ? null : {i, value})
+      .filter(Boolean);
+    if (points.length < 2) return "";
+    const closed = points.length === total && points.length >= 3;
+    return `<${closed ? "polygon" : "polyline"} class="radar-series" points="${points.map(p => xy(p.i, p.value).map(v => v.toFixed(1)).join(",")).join(" ")}" fill="${closed ? style.color + "1f" : "none"}" stroke="${style.color}" stroke-width="2"${style.dash ? ` stroke-dasharray="${style.dash}"` : ""}/>`;
+  }).join("");
+  const markers = series.flatMap(entry => {
+    return entry.values
+      .map((value, i) => value == null ? null : radarPointMarkup(entry.group, i, value, {...data.axes[i], total}, entry))
+      .filter(Boolean);
+  }).join("");
+  return `<svg class="radar-svg" viewBox="0 0 ${size} ${size}" role="img" aria-label="评分维度雷达图（0-100 刻度，${total} 个数值维度）">${rings}${spokes}${shapes}${markers}${labels}</svg>`;
+}
+
+function radarGatesMarkup(data) {
+  // 方案三：硬门禁显示在图表上方状态条（不是坐标轴）
+  if (!data.hasGateGraders) return "";
+  const chips = data.series.map(entry => `<span class="radar-gate${entry.gatesFailed ? " failed" : entry.gatesTotal ? " passed" : ""}"><b>${GROUP_LABELS[entry.group]}</b>${entry.completedTrials === 0 ? " 暂无完成 Run" : ` 门禁 ${entry.gatesPassed}/${entry.gatesTotal}${entry.gatesFailed ? " · 未通过" : " · 通过"}`}</span>`).join("");
+  return `<div class="radar-gates" role="status" aria-label="硬门禁状态">${chips}</div>`;
+}
+
+function radarLegendMarkup(data) {
+  // 方案三交互规则：图例显示组名、总质量分、完成 Trial 数；
+  // 无有效结果的组不绘制曲线，也不进入图例。
+  const drawn = data.series.filter(entry => entry.hasAnyValue);
+  const empty = data.series.filter(entry => !entry.hasAnyValue);
+  const legend = drawn.map(entry => {
+    const style = RADAR_GROUP_STYLES[entry.group] || RADAR_GROUP_STYLES.current;
+    const marker = style.point === "square"
+      ? `<rect x="9" y="2" width="8" height="8" fill="${style.color}"/>`
+      : style.point === "triangle"
+        ? `<path d="M 13 1 L 18 10 L 8 10 Z" fill="${style.color}"/>`
+        : `<circle cx="13" cy="6" r="4.5" fill="${style.color}"/>`;
+    return `<li class="legend-${entry.group}"><svg width="26" height="12" aria-hidden="true"><line x1="0" y1="6" x2="26" y2="6" stroke="${style.color}" stroke-width="2"${style.dash ? ` stroke-dasharray="${style.dash}"` : ""}/>${marker}</svg><span class="legend-group">${GROUP_LABELS[entry.group]}</span><strong>${entry.quality == null ? "—" : fmtScore(entry.quality)}</strong><small>${entry.completedTrials}/${entry.totalTrials} trial${entry.provisional ? ' · <em class="provisional">临时结果</em>' : ""}</small></li>`;
+  }).join("");
+  const emptyNote = empty.length
+    ? `<p class="radar-empty-note">${empty.map(entry => GROUP_LABELS[entry.group]).join("、")}暂无有效结果，未绘制曲线。</p>`
+    : "";
+  return `<ul class="radar-legend">${legend}</ul>${emptyNote}`;
+}
+
+function radarDimensionListMarkup(data) {
+  // 方案三交互规则：雷达图旁显示紧凑维度列表，点击维度打开对应 Trial 对照
+  //（与 Trial 联动领域对接：入口为 data-dimension-open，当前先切到明细表并定位到该维度行）
+  return `<ul class="radar-dimensions">${data.axes.map((axis, i) => {
+    const values = data.series
+      .map(entry => `${GROUP_LABELS[entry.group]} ${entry.values[i] == null ? "—" : entry.values[i].toFixed(1)}`)
+      .join(" · ");
+    return `<li><button type="button" class="radar-dimension" data-dimension-open="${escapeHtml(axis.id)}" title="打开该维度的 Trial 对照"><span class="radar-dimension-chevron">›</span><span class="radar-dimension-name">${escapeHtml(axis.name || axis.id)}</span><span class="radar-dimension-values">${escapeHtml(values)}</span></button></li>`;
+  }).join("")}</ul>`;
+}
+
+function radarSectionMarkup(item, caseSpec, byGroup, data) {
+  return `<div class="radar-layout" id="comparisonRadar">
+    <div class="radar-chart-col">
+      ${radarGatesMarkup(data)}
+      <div class="radar-chart-wrap">${radarSvgMarkup(data)}<div class="radar-tooltip" id="radarTooltip" role="status"></div></div>
+      ${radarLegendMarkup(data)}
+    </div>
+    <div class="radar-dimension-col">
+      <h4 class="radar-dimension-title">数值维度（点击打开 Trial 对照）</h4>
+      ${radarDimensionListMarkup(data)}
+    </div>
+  </div>`;
+}
+
+function comparisonViewParts(item) {
   const cases = item.suite_snapshot?.cases || [];
-  if (!cases.length) return "";
+  if (!cases.length) return {toggle: "", body: ""};
   const grouped = runsByCaseAndGroup(item);
+  const selected = selectedCase(item, grouped);
+  if (!selected) return {toggle: "", body: ""};
+  const byGroup = grouped.get(selected.id) || {};
   const expected = item.conclusion?.expected_trials_per_group || item.trials || 1;
-  return `<div class="comparison-cases">${cases.map(caseSpec => caseCard(caseSpec, grouped.get(caseSpec.id) || {}, expected)).join("")}</div>`;
+  const data = caseComparisonData(item, selected, byGroup);
+  // 方案三：少于三个数值维度自动切换明细表；R1P2 扩展——所有参与组都
+  // 没有有效评分（如全部 run 超时/失败）时雷达只是一张空网格，同样自动
+  // 切明细表（表内的“未评分”占位与 Trial 对照更能说明情况）。
+  const tooFewAxes = data.axes.length < 3;
+  const noValidScores = !data.series.some(entry => entry.hasAnyValue);
+  const radarUsable = !tooFewAxes && !noValidScores;
+  const reason = tooFewAxes ? "数值维度少于 3 个" : "暂无有效评分结果";
+  const mode = radarUsable && comparisonViewMode() === "radar" ? "radar" : "table";
+  const toggle = `<div class="view-toggle" role="tablist" aria-label="结果对照视图"><button type="button" class="view-toggle-button${mode === "radar" ? " active" : ""}" data-view-mode="radar" role="tab" aria-selected="${mode === "radar"}"${radarUsable ? "" : ` disabled title="${reason}，无法绘制雷达图"`}>雷达图</button><button type="button" class="view-toggle-button${mode === "table" ? " active" : ""}" data-view-mode="table" role="tab" aria-selected="${mode === "table"}">明细表</button></div>${radarUsable ? "" : `<span class="view-notice">${reason}，已自动显示明细表。</span>`}`;
+  const body = mode === "radar"
+    ? radarSectionMarkup(item, selected, byGroup, data)
+    : caseCard(selected, byGroup, expected);
+  return {toggle, body};
+}
+
+function comparisonMarkup(item) {
+  const parts = comparisonViewParts(item);
+  return `${parts.toggle}${parts.body}`;
 }
 
 function renderDetail(item, {fresh = false} = {}) {
@@ -1526,22 +1943,57 @@ function renderDetail(item, {fresh = false} = {}) {
   const retrying = state.retryingExperiments.has(item.id);
   const body = $("#detailBody");
   const rebuild = fresh || body.dataset.experimentId !== item.id || !$("#detailSummary");
-  const summary = `<div class="detail-toolbar"><div class="experiment-meta"><span class="pill ${item.status}">${escapeHtml(experimentStatusLabel(item.status))}</span><span>commit ${escapeHtml(item.project_commit.slice(0,10))}</span><span>${providerName(p.runner.provider)} ${escapeHtml(modelName(p.runner))} → ${providerName(p.judge.provider)} ${escapeHtml(modelName(p.judge))}</span>${p.self_judge?'<span class="self-judge">Self-judge</span>':""}</div><div class="detail-actions"><button class="button button-ghost button-small" data-retry-experiment="${item.id}" ${retrying?"disabled":""}>${retrying?"正在加入…":"重试实验"}</button>${active?'<button class="button button-ghost button-small danger" id="cancelExperimentButton">取消整个实验</button>':""}</div></div>${experimentLineageMarkup(item)}<div class="profile-strip"><span>Runner 隔离：${escapeHtml(p.runner.isolation)}</span><span>网络：${escapeHtml(p.runner.network_policy)}</span><span>Profile ${escapeHtml(p.hash.slice(0,10))}</span></div>${conclusionMarkup(item)}${item.error_message?`<div class="message error">${escapeHtml(item.error_message)}</div>`:""}`;
-  const comparison = comparisonMarkup(item);
-  const runs = item.runs.map(run => renderRun(item, run)).join("") || '<div class="empty">正在准备运行列表…</div>';
-  const footer = item.status === "completed" ? '<button class="button button-ghost" id="setBaselineButton">将当前修订设为基准版本</button>' : "";
+  // 方案一.1 紧凑实验标题栏：名称（页面 h1）+ 状态/模式/Runner·Judge·模型一行，
+  // commit/Profile/隔离等次要信息收进一行，保留重试/取消操作。
+  const summary = `<div class="detail-titlebar">
+    <div class="titlebar-main">
+      <span class="pill ${item.status}">${escapeHtml(experimentStatusLabel(item.status))}</span>
+      <span class="titlebar-mode">${item.mode === "formal" ? "正式" : "快速"} · ${item.trials} trial</span>
+      <span class="titlebar-models">${providerName(p.runner.provider)} ${escapeHtml(modelName(p.runner))} → ${providerName(p.judge.provider)} ${escapeHtml(modelName(p.judge))}</span>
+      ${p.self_judge ? '<span class="self-judge">Self-judge</span>' : ""}
+      <div class="detail-actions"><button class="button button-ghost button-small" data-retry-experiment="${item.id}" ${retrying ? "disabled" : ""}>${retrying ? "正在加入…" : "重试实验"}</button>${active ? '<button class="button button-ghost button-small danger" id="cancelExperimentButton">取消整个实验</button>' : ""}</div>
+    </div>
+    <div class="titlebar-meta">
+      <span>commit ${escapeHtml(item.project_commit.slice(0, 10))}</span>
+      <span>Profile ${escapeHtml(p.hash.slice(0, 10))}</span>
+      <span>Runner 隔离 ${escapeHtml(p.runner.isolation)} · 网络 ${escapeHtml(p.runner.network_policy)}</span>
+      ${item.execution_mode === "pair_parallel_v1" ? `<span>配对并行（单实验并发上限 ${item.concurrency_limit ?? 2}）</span>` : ""}
+    </div>
+  </div>${experimentLineageMarkup(item)}${conclusionMarkup(item)}${item.error_message ? `<div class="message error">${escapeHtml(item.error_message)}</div>` : ""}`;
+  const caseSection = caseSectionMarkup(item);
+  const comparisonParts = comparisonViewParts(item);
+  const runs = activeRunsStripMarkup(item) + item.runs.map(run => renderRun(item, run)).join("") || '<div class="empty">正在准备运行列表…</div>';
+  const completedRuns = (item.runs || []).filter(r => r.status === "completed");
+  const gateInfos = completedRuns.map(r => r.hard_gates).filter(Boolean);
+  const gatesAllFailed = gateInfos.length > 0 && gateInfos.every(g => (g.passed ?? 0) === 0);
+  const baselineGate = gatesAllFailed ? " disabled title=\"当前实验未达标（硬门禁未通过），设为基准可能误导后续对比\"" : "";
+  const baselineNote = gatesAllFailed ? '<p class="baseline-disabled-note">当前实验未达标（硬门禁未通过），已停用设为基准，避免误导后续对比。</p>' : "";
+  const footer = item.status === "completed" ? `<button class="button button-ghost" id="setBaselineButton"${baselineGate}>将当前修订设为基准版本</button>${baselineNote}` : "";
   if (rebuild) {
-    state.lastComparison = comparison;
-    body.innerHTML = `<div id="detailSummary">${summary}</div><section class="detail-section" id="detailComparison"><div class="section-heading"><div><p class="eyebrow">CASE COMPARISON</p><h2>结果对照</h2></div></div><div id="detailComparisonBody">${comparison}</div></section><section class="detail-section" id="detailRunsSection"><div class="section-heading"><div><p class="eyebrow">RUNS</p><h2>运行明细</h2></div></div><div class="run-grid" id="detailRunGrid">${runs}</div></section><details class="detail-section diagnostic-section" id="diagnosticSection"${active ? " open" : ""}><summary><div><p class="eyebrow">DIAGNOSTICS</p><h2>诊断 · 原始日志与调用记录</h2></div><span class="diagnostic-hint">实时日志、Agent 调用、原始输出文件</span></summary>${renderLogConsole(item)}</details><div id="detailFooter">${footer}</div>`;
+    state.lastComparison = comparisonParts.body;
+    state.lastComparisonToggle = comparisonParts.toggle;
+    state.lastCaseSection = caseSection;
+    // 方案一.8：诊断日志默认收起，继续作为排障区域（运行中也不再默认展开）
+    body.innerHTML = `<div id="detailSummary">${summary}</div><section class="detail-section" id="detailCaseSection"><div class="section-heading"><div><p class="eyebrow">CASE &amp; SNAPSHOT</p><h2>测评用例</h2></div></div><div id="detailCaseBody">${caseSection}</div></section><section class="detail-section" id="detailComparison"><div class="section-heading"><div><p class="eyebrow">CASE COMPARISON</p><h2>结果对照</h2></div><div class="comparison-heading-actions" id="comparisonViewSlot">${comparisonParts.toggle}</div></div><div id="detailComparisonBody">${comparisonParts.body}</div></section><section class="detail-section" id="detailRunsSection"><div class="section-heading"><div><p class="eyebrow">RUNS</p><h2>运行明细</h2></div></div><div class="run-grid" id="detailRunGrid">${runs}</div></section><details class="detail-section diagnostic-section" id="diagnosticSection"><summary><div><p class="eyebrow">DIAGNOSTICS</p><h2>诊断 · 原始日志与调用记录</h2></div><span class="diagnostic-hint">实时日志、Agent 调用、原始输出文件</span></summary>${renderLogConsole(item)}</details><div id="detailFooter">${footer}</div>`;
     body.dataset.experimentId = item.id;
     bindLogConsole();
     restoreLogScroll();
   } else {
     $("#detailSummary").innerHTML = summary;
+    const caseBody = $("#detailCaseBody");
+    if (caseBody && state.lastCaseSection !== caseSection) {
+      state.lastCaseSection = caseSection;
+      caseBody.innerHTML = caseSection;
+    }
+    const toggleSlot = $("#comparisonViewSlot");
+    if (toggleSlot && state.lastComparisonToggle !== comparisonParts.toggle) {
+      state.lastComparisonToggle = comparisonParts.toggle;
+      toggleSlot.innerHTML = comparisonParts.toggle;
+    }
     const comparisonBody = $("#detailComparisonBody");
-    if (comparisonBody && state.lastComparison !== comparison) {
-      state.lastComparison = comparison;
-      comparisonBody.innerHTML = comparison;
+    if (comparisonBody && state.lastComparison !== comparisonParts.body) {
+      state.lastComparison = comparisonParts.body;
+      comparisonBody.innerHTML = comparisonParts.body;
     }
     $("#detailRunGrid").innerHTML = runs;
     $("#detailFooter").innerHTML = footer;
@@ -1555,6 +2007,48 @@ function renderDetail(item, {fresh = false} = {}) {
     loadSelectedLogFiles();
     fetchSelectedLog();
   }
+}
+
+function showRadarTooltip(target) {
+  const tooltip = $("#radarTooltip");
+  const wrap = target.closest(".radar-chart-wrap");
+  if (!tooltip || !wrap) return;
+  tooltip.textContent = target.dataset.tooltip || "";
+  tooltip.classList.add("show");
+  const pointRect = target.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const left = Math.max(0, Math.min(wrapRect.width - 10, pointRect.left - wrapRect.left + pointRect.width / 2));
+  const top = Math.max(0, pointRect.top - wrapRect.top - 8);
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+  tooltip.style.transform = "translate(-50%, -100%)";
+}
+
+function hideRadarTooltip() {
+  $("#radarTooltip")?.classList.remove("show");
+}
+
+function bindRadarInteractions() {
+  // 方案三交互规则：悬停或键盘聚焦显示精确分数
+  const container = $("#comparisonRadar");
+  if (!container) return;
+  container.addEventListener("mouseover", event => {
+    const target = event.target.closest("[data-radar-point]");
+    if (target) showRadarTooltip(target);
+  });
+  container.addEventListener("mouseout", event => {
+    if (event.target.closest("[data-radar-point]")) hideRadarTooltip();
+  });
+  // R1P1：Chromium 对 SVG 元素的程序化/键盘 focus 不派发冒泡的 focusin，
+  // 事件委托收不到——focus/blur 不冒泡但可在捕获阶段于祖先监听，
+  // 因此用捕获态 focus/blur 替代 focusin/focusout，键盘聚焦同样生效。
+  container.addEventListener("focus", event => {
+    const target = event.target.closest?.("[data-radar-point]");
+    if (target) showRadarTooltip(target);
+  }, true);
+  container.addEventListener("blur", event => {
+    if (event.target.closest?.("[data-radar-point]")) hideRadarTooltip();
+  }, true);
 }
 
 function bindDetailActions(item) {
@@ -1584,6 +2078,46 @@ function bindDetailActions(item) {
     }
   }));
   $$('[data-judge-log]').forEach(button => button.addEventListener("click", () => openConversationAt(button.dataset.judgeLog, "judge")));
+  // 方案一.3：Case 选择器——一次只展示一个 case；选择在轮询刷新间保留
+  $$('[data-case-select]').forEach(button => button.addEventListener("click", () => {
+    if (state.detailCaseId === button.dataset.caseSelect) return;
+    state.detailCaseId = button.dataset.caseSelect;
+    state.expandedDimensions.clear();  // 维度的 Trial 对照展开状态随 case 重置
+    if (state.detail) renderDetail(state.detail);
+  }));
+  // 方案一.5：雷达图/明细表视图切换——记住选择（localStorage），轮询间保留
+  $$('[data-view-mode]').forEach(button => button.addEventListener("click", () => {
+    if (button.disabled) return;
+    if (comparisonViewMode() === button.dataset.viewMode) return;
+    setComparisonViewMode(button.dataset.viewMode);
+    if (state.detail) renderDetail(state.detail);
+  }));
+  bindRadarInteractions();
+  // 方案四：每个评分维度唯一的“展开 Trial 对照”入口——一次展开/收起所有参与组
+  $$('[data-dimension-trials]').forEach(button => button.addEventListener("click", () => {
+    const graderId = button.dataset.dimensionTrials;
+    if (state.expandedDimensions.has(graderId)) state.expandedDimensions.delete(graderId);
+    else state.expandedDimensions.add(graderId);
+    if (state.detail) renderDetail(state.detail);
+  }));
+  // 方案三：点击雷达旁紧凑维度列表中的维度，打开对应维度的 Trial 对照
+  //（切到明细表、展开该维度并滚动定位）。
+  $$('[data-dimension-open]').forEach(button => button.addEventListener("click", () => {
+    const graderId = button.dataset.dimensionOpen;
+    setComparisonViewMode("table");
+    state.expandedDimensions.add(graderId);
+    if (state.detail) renderDetail(state.detail);
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`tr[data-grader-row="${CSS.escape(graderId)}"]`);
+      if (!row) return;
+      row.scrollIntoView({behavior: "smooth", block: "center"});
+      row.classList.add("flash-target");
+      setTimeout(() => row.classList.remove("flash-target"), 2200);
+    });
+  }));
+  // 方案一.4：快照展开状态同步进状态模型，轮询重渲染不丢失
+  const snapshot = $("#caseSnapshot");
+  snapshot?.addEventListener("toggle", () => { state.caseSnapshotOpen = snapshot.open; });
   $("#detailSummary")?.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => navigateToExperiment(button.dataset.detail)));
   const cancel = $("#cancelExperimentButton");
   if (cancel) cancel.addEventListener("click", () => cancelExperiment(id));
@@ -1657,6 +2191,15 @@ async function showDetail(id) {
     state.runLogs = {};
     state.expandedRuns = {};
     resetConversations();
+    // 视图状态（选中 case、快照展开）只在切换到另一个实验时重置；
+    // 同一实验内的重载（如提交人工复核后的 showDetail）保留用户选择
+    if (state.detailCaseFor !== id) {
+      state.detailCaseFor = id;
+      state.detailCaseId = null;
+      state.caseSnapshotOpen = false;
+      state.lastCaseSection = "";
+      state.expandedDimensions.clear();
+    }
     item.runs.forEach(run => { if (run.status === "running" || run.stalled || !["queued","completed","cancelled"].includes(run.status)) state.expandedRuns[run.id] = true; });
     ensureLogConsole(item, {fresh: true});
     renderDetail(item, {fresh: true});
