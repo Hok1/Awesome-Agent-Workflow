@@ -174,6 +174,7 @@ class ChrysAcpSession:
         artifact_dir: Path,
         on_log: LogCallback | None = None,
         log_source: str = "runner",
+        isolated_root: Path | None = None,
     ) -> None:
         self.settings = settings
         self.agent_profile = agent_profile
@@ -181,6 +182,10 @@ class ChrysAcpSession:
         self.artifact_dir = artifact_dir
         self.on_log = on_log
         self.log_source = log_source
+        # Pre-materialized per-run config home. When set, the session uses it
+        # as-is instead of (re)writing the shared chrys-isolated directory —
+        # mandatory once no_skill/current runs execute in parallel.
+        self.isolated_root = isolated_root
         self.session_id: str | None = None
         self.models_state: dict[str, Any] | None = None
         self.process: subprocess.Popen | None = None
@@ -265,14 +270,23 @@ class ChrysAcpSession:
         # skills (~APPDATA/chrys/skills) cannot leak into evaluation runs and
         # pollute the no_skill baseline (R4P1). Fails closed: without the
         # isolation the baseline would be silently contaminated.
-        from .chrys import prepare_isolated_home
+        # With pair-parallel execution the orchestrator materializes one
+        # config home per run from the experiment template (isolated_root);
+        # the shared chrys-isolated fallback is only for standalone callers.
+        if self.isolated_root is not None:
+            isolated_root = self.isolated_root
+            isolated_root.mkdir(parents=True, exist_ok=True)
+            isolation_note = f"每 Run 独立：{isolated_root}"
+        else:
+            from .chrys import prepare_isolated_home
 
-        try:
-            isolated_root = prepare_isolated_home(self.settings)
-        except (EvalError, InfrastructureError, OSError) as exc:
-            raise InfrastructureError(
-                "CHRYS_ISOLATION_FAILED", f"Failed to prepare isolated chrys home: {exc}"
-            ) from exc
+            try:
+                isolated_root = prepare_isolated_home(self.settings)
+            except (EvalError, InfrastructureError, OSError) as exc:
+                raise InfrastructureError(
+                    "CHRYS_ISOLATION_FAILED", f"Failed to prepare isolated chrys home: {exc}"
+                ) from exc
+            isolation_note = f"共享隔离目录：{isolated_root}"
         env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
         if os.name == "nt":
             env["APPDATA"] = str(isolated_root)
@@ -299,7 +313,7 @@ class ChrysAcpSession:
         self._log(
             "acp",
             f"ACP 进程已启动 · PID {self.process.pid} · agent {self.agent_profile}"
-            f" · 工作区 {self.cwd} · chrys 运行环境已隔离（{isolated_root}），不含用户全局技能",
+            f" · 工作区 {self.cwd} · chrys 运行环境已隔离（{isolation_note}），不含用户全局技能",
         )
 
     def _read_stdout(self) -> None:

@@ -77,11 +77,36 @@ def _masked_diagnostic(value):
     return value
 
 
+def _active_run_view(run: Run) -> dict:
+    activity_age = _age_seconds(run.last_activity_at)
+    return {
+        "id": run.id,
+        "group": run.group_name,
+        "case_id": run.case_id,
+        "trial": run.trial_index,
+        "pair_id": run.pair_id,
+        "stage": run.current_stage,
+        "started_at": _iso(run.started_at),
+        "activity_age_seconds": activity_age,
+        "heartbeat_age_seconds": _age_seconds(run.last_heartbeat_at),
+        "stalled": bool(
+            run.status == "running" and activity_age is not None and activity_age >= 120
+        ),
+        "cancel_requested": run.cancel_requested_at is not None,
+    }
+
+
 def _progress_payload(experiment: Experiment) -> dict:
     counts = Counter(run.status for run in experiment.runs)
     total = len(experiment.runs)
     completed = counts["completed"]
-    active = next((run for run in experiment.runs if run.status == "running"), None)
+    # Pair-parallel execution has up to two runs active at once (the
+    # no_skill/current pair of one block). active_runs[] lists every running
+    # run; the legacy single-run fields keep describing the first one so old
+    # clients keep working.
+    active_runs = [run for run in experiment.runs if run.status == "running"]
+    active_views = [_active_run_view(run) for run in active_runs]
+    primary = active_views[0] if active_views else None
     tracked = any(run.current_stage or run.progress_events for run in experiment.runs)
     return {
         "total": total,
@@ -90,15 +115,12 @@ def _progress_payload(experiment: Experiment) -> dict:
         "queued": counts["queued"],
         "failed": total - completed - counts["running"] - counts["queued"],
         "tracking_available": tracked,
-        "active_run_id": active.id if active else None,
-        "active_stage": active.current_stage if active else None,
-        "active_activity_age_seconds": _age_seconds(active.last_activity_at) if active else None,
-        "active_heartbeat_age_seconds": _age_seconds(active.last_heartbeat_at) if active else None,
-        "stalled": bool(
-            active
-            and active.last_activity_at
-            and (_age_seconds(active.last_activity_at) or 0) >= 120
-        ),
+        "active_run_id": primary["id"] if primary else None,
+        "active_runs": active_views,
+        "active_stage": primary["stage"] if primary else None,
+        "active_activity_age_seconds": primary["activity_age_seconds"] if primary else None,
+        "active_heartbeat_age_seconds": primary["heartbeat_age_seconds"] if primary else None,
+        "stalled": any(view["stalled"] for view in active_views),
     }
 
 
@@ -225,6 +247,10 @@ def _experiment_summary(experiment: Experiment) -> dict:
         "retry_experiment_ids": [retry.id for retry in experiment.retries],
         "mode": experiment.mode,
         "trials": experiment.trials,
+        # Pair-parallel execution metadata (方案第五部分); NULL/absent on
+        # legacy experiments and reported as-is, never backfilled.
+        "execution_mode": experiment.execution_mode,
+        "concurrency_limit": experiment.concurrency_limit,
         "created_at": _iso(experiment.created_at),
         "completed_at": _iso(experiment.completed_at),
         "scores": scores,
@@ -442,6 +468,8 @@ def build_router(
                     "case_id": run.case_id,
                     "group": run.group_name,
                     "trial": run.trial_index,
+                    "pair_id": run.pair_id,
+                    "pair_launch_skew_ms": run.pair_launch_skew_ms,
                     "anonymous_id": run.anonymous_id,
                     "status": run.status,
                     "quality_score": run.quality_score,

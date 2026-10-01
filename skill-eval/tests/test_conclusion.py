@@ -3,6 +3,7 @@ group's score provisional and its deltas non-formal."""
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -95,13 +96,21 @@ def test_missing_trials_make_scores_provisional_and_deltas_non_formal(
 
     class OneTrialPerGroupRunner:
         """Runs succeed for trial 1 (both groups), then time out for the
-        remaining formal trials, leaving every group at 1/3 completed."""
+        remaining formal trials, leaving every group at 1/3 completed.
 
+        The counter is guarded by a lock: the trial-1 pair runs in two
+        threads under pair-parallel execution, and an unsynchronized
+        ``calls += 1`` can lose updates and let trial 2 succeed too.
+        """
+
+        lock = threading.Lock()
         calls = 0
 
         def run(self, **kwargs):
-            type(self).calls += 1
-            if self.calls <= 2:
+            with self.lock:
+                type(self).calls += 1
+                call_index = self.calls
+            if call_index <= 2:
                 return original.run(**kwargs)
             return RunOutcome(
                 exit_code=None,
