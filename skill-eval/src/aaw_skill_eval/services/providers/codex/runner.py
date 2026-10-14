@@ -24,7 +24,7 @@ from ..protocols.jsonl import (
 )
 
 
-def _config_args(profile: EvalProfile, *, judge: bool) -> list[str]:
+def _config_args(profile: EvalProfile, *, judge: bool, workflow: bool = False) -> list[str]:
     effort = profile.judge_reasoning_effort if judge else profile.runner_reasoning_effort
     sandbox = "read-only" if judge else "workspace-write"
     network = "true" if profile.network and not judge else "false"
@@ -46,7 +46,7 @@ def _config_args(profile: EvalProfile, *, judge: bool) -> list[str]:
         "-c",
         "features.skill_mcp_dependency_install=false",
         "-c",
-        "features.multi_agent=false",
+        f"features.multi_agent={'true' if workflow and not judge else 'false'}",
         "-c",
         'shell_environment_policy.inherit="core"',
         "-c",
@@ -67,6 +67,8 @@ def _isolated_environment(state_dir: Path) -> dict[str, str]:
     env.setdefault("CODEX_HOME", str(actual_home / ".codex"))
     env["NO_COLOR"] = "1"
     env["TERM"] = "dumb"
+    env["AAW_UPDATE_CHECK"] = "off"
+    env["AAW_TELEMETRY_ENABLED"] = "false"
     return env
 
 
@@ -151,7 +153,7 @@ class CodexRunner(Runner):
             profile.runner_model,
             "--output-last-message",
             str(last_message),
-            *_config_args(profile, judge=False),
+            *_config_args(profile, judge=False, workflow=bool(case.workflow and skill_name)),
         ]
         if not case.followups:
             arguments.append("--ephemeral")
@@ -184,7 +186,7 @@ class CodexRunner(Runner):
                     (
                         index
                         for index, item in enumerate(case.followups)
-                        if index not in used
+                        if (index not in used or item.repeat)
                         and item.when_output_contains.casefold() in final_response.casefold()
                     ),
                     None,
@@ -216,10 +218,12 @@ class CodexRunner(Runner):
                     profile.runner_model,
                     "--output-last-message",
                     str(resume_message),
-                    *_config_args(profile, judge=False),
+                    *_config_args(
+                        profile, judge=False, workflow=bool(case.workflow and skill_name)
+                    ),
                     thread_id,
                 ]
-                code, out, err, elapsed, followup_timeout, followup_cancelled = self._execute(
+                resumed = self._execute(
                     resume_args,
                     prompt=followup.reply,
                     cwd=workspace,
@@ -231,6 +235,7 @@ class CodexRunner(Runner):
                     on_log=on_log,
                     is_cancelled=is_cancelled,
                 )
+                code, out, err, elapsed, followup_timeout, followup_cancelled = resumed[:6]
                 duration_ms += elapsed
                 stdout += "\n" + out
                 stderr += "\n" + err

@@ -14,7 +14,7 @@ from time import monotonic
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -38,7 +38,13 @@ from .schemas import (
     RubricDraftRequest,
     SuiteCreateRequest,
 )
+from .services.catalog.packages import (
+    PackageImportRequest,
+    import_package,
+    standard_example_package,
+)
 from .services.catalog.suites import build_rubric_draft, create_suite, suite_definition
+from .services.evaluation.dimensions import dimension_summary, dimension_total
 from .services.observability.conversation import rebuild_conversation
 from .services.observability.logs import MAX_LOG_READ_BYTES, display_record, read_log_index
 from .services.orchestration import ExperimentOrchestrator
@@ -49,6 +55,7 @@ from .services.workspace.cleanup import (
     cleanup_run_workspace,
     workspace_usage,
 )
+from .standards import catalog_payload
 
 
 def _iso(value):
@@ -130,6 +137,8 @@ def _progress_payload(experiment: Experiment) -> dict:
 
 
 def _group_score(experiment: Experiment, definition: dict, group_name: str) -> float | None:
+    if definition.get("dimensions"):
+        return dimension_total(dimension_summary(experiment, definition, group_name))
     weights = {case["id"]: float(case.get("weight", 1)) for case in definition["cases"]}
     case_scores: list[tuple[float, float]] = []
     for case_id, weight in weights.items():
@@ -233,8 +242,18 @@ def _profile_payload(experiment: Experiment) -> dict:
 
 def _experiment_summary(experiment: Experiment) -> dict:
     definition = json.loads(experiment.suite_snapshot_json)
+    dimension_scores = (
+        {
+            group: dimension_summary(experiment, definition, group)
+            for group in ("no_skill", "baseline", "current")
+        }
+        if definition.get("dimensions")
+        else {}
+    )
     scores = {
-        group: _group_score(experiment, definition, group)
+        group: dimension_total(dimension_scores[group])
+        if dimension_scores
+        else _group_score(experiment, definition, group)
         for group in ("no_skill", "baseline", "current")
     }
     current = scores["current"]
@@ -242,8 +261,12 @@ def _experiment_summary(experiment: Experiment) -> dict:
     no_skill = scores["no_skill"]
     return {
         "id": experiment.id,
+        "evaluation_mode": experiment.evaluation_mode,
         "suite_id": experiment.suite_id,
         "suite_name": experiment.suite.name,
+        "standard_status": "standard" if definition.get("catalog_version") else "legacy",
+        "catalog_version": definition.get("catalog_version"),
+        "skill_type": definition.get("skill_type"),
         "skill_id": experiment.suite.skill_id,
         "project_path": experiment.suite.project_path,
         "project_commit": experiment.project_commit,
@@ -259,6 +282,7 @@ def _experiment_summary(experiment: Experiment) -> dict:
         "created_at": _iso(experiment.created_at),
         "completed_at": _iso(experiment.completed_at),
         "scores": scores,
+        "dimension_scores": dimension_scores,
         "conclusion": _conclusion_payload(experiment, definition, scores),
         "delta_no_skill": (
             current - no_skill if current is not None and no_skill is not None else None
@@ -396,6 +420,30 @@ def build_router(
     @router.post("/rubric-drafts")
     def rubric_draft(request: RubricDraftRequest):
         return build_rubric_draft(request, settings)
+
+    @router.get("/dimension-templates")
+    def dimension_templates():
+        return catalog_payload()
+
+    @router.post("/suite-packages/preview")
+    def preview_package(request: PackageImportRequest):
+        return import_package(request, require_standard=True)
+
+    @router.get("/suite-packages/example/{skill_type}/{dimension_id}")
+    def download_example(skill_type: str, dimension_id: str, entry: str | None = None):
+        try:
+            content = standard_example_package(skill_type, dimension_id, entry)
+        except ValueError as exc:
+            raise EvalError("INVALID_DIMENSION", str(exc), status_code=422) from exc
+        return Response(
+            content,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="skill-eval-{dimension_id}-example.zip"'
+                )
+            },
+        )
 
     @router.post("/suites", status_code=201)
     def save_suite(request: SuiteCreateRequest, session: Session = Depends(get_session)):
@@ -693,29 +741,31 @@ def build_router(
                         else:
                             fields = ("timestamp", "source", "channel", "text")
                             recent.append({key: safe[key] for key in fields})
-        return _masked_diagnostic({
-            "run_id": run.id,
-            "experiment_id": run.experiment_id,
-            "case_id": run.case_id,
-            "group": run.group_name,
-            "trial": run.trial_index,
-            "attempt": attempt or run.current_attempt,
-            "status": run.status,
-            "stage": run.current_stage,
-            "started_at": _iso(run.started_at),
-            "stage_started_at": _iso(run.stage_started_at),
-            "completed_at": _iso(run.completed_at),
-            "error_kind": run.error_kind,
-            "error_message": display_record(
-                {"text": run.error_message or ""}, mode="raw", unmasked=False
-            )["text"],
-            "heartbeat_age_seconds": _age_seconds(run.last_heartbeat_at),
-            "activity_age_seconds": _age_seconds(run.last_activity_at),
-            "output_bytes": _run_output_bytes(settings, run),
-            "profile": _profile_payload(run.experiment),
-            "invocations": invocations,
-            "recent_logs": list(recent),
-        })
+        return _masked_diagnostic(
+            {
+                "run_id": run.id,
+                "experiment_id": run.experiment_id,
+                "case_id": run.case_id,
+                "group": run.group_name,
+                "trial": run.trial_index,
+                "attempt": attempt or run.current_attempt,
+                "status": run.status,
+                "stage": run.current_stage,
+                "started_at": _iso(run.started_at),
+                "stage_started_at": _iso(run.stage_started_at),
+                "completed_at": _iso(run.completed_at),
+                "error_kind": run.error_kind,
+                "error_message": display_record(
+                    {"text": run.error_message or ""}, mode="raw", unmasked=False
+                )["text"],
+                "heartbeat_age_seconds": _age_seconds(run.last_heartbeat_at),
+                "activity_age_seconds": _age_seconds(run.last_activity_at),
+                "output_bytes": _run_output_bytes(settings, run),
+                "profile": _profile_payload(run.experiment),
+                "invocations": invocations,
+                "recent_logs": list(recent),
+            }
+        )
 
     @router.get("/experiments/{experiment_id}/log-files")
     def list_experiment_log_files(experiment_id: str, session: Session = Depends(get_session)):
@@ -931,7 +981,15 @@ def build_router(
 
 
 def _suite_payload(suite: Suite) -> dict:
+    definition = suite_definition(suite)
     return {
+        "standard_status": "standard" if definition.get("catalog_version") else "legacy",
+        "catalog_version": definition.get("catalog_version"),
+        "skill_type": definition.get("skill_type"),
+        "has_workflow": any(c.get("workflow") for c in definition["cases"]),
+        "needs_judge": any(
+            g["type"] == "llm_rubric" for c in definition["cases"] for g in c["graders"]
+        ),
         "id": suite.id,
         "name": suite.name,
         "skill_id": suite.skill_id,

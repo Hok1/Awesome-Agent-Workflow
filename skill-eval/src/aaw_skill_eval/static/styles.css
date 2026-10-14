@@ -24,7 +24,8 @@ body {
 }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
-.app-shell { max-width: 1480px; margin: auto; padding: 0 40px 56px; }
+/* 方案 B：流体全宽——容器不再设 max-width 上限 */
+.app-shell { padding: 0 18px 56px; }
 .topbar { height: 72px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(23,32,29,.1); }
 .brand { display: flex; gap: 12px; color: inherit; text-decoration: none; align-items: center; }
 .brand-mark { width: 39px; height: 39px; display: grid; place-items: center; color: white; font: 800 20px Georgia,serif; background: var(--green); border-radius: 12px 12px 4px 12px; }
@@ -53,15 +54,17 @@ button { cursor: pointer; }
 .section-heading h1 { font:500 34px/1 Georgia,"Times New Roman",serif; letter-spacing:-.035em; margin:0; }
 .experiment-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
 .experiment-actions select { width:auto; min-width:126px; margin:0; padding:9px 10px; font-size:11px; }
-.experiment-list { display:grid; gap:10px; }
-.experiment-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:center; min-height:82px; padding:15px 17px; background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:0 10px 30px rgba(34,54,47,.055); }
+.experiment-list { display:grid; gap:4px; }
+/* 方案 B：紧凑行式——行高约 44px，名称+状态点+分数+delta+操作全行内，一屏可见 8+ 个实验 */
+.experiment-item { display:flex; flex-wrap:wrap; align-items:center; gap:3px 12px; min-height:44px; padding:5px 12px; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:none; font-size:12px; }
 .experiment-item.is-stalled { border-color:#d8a44f; box-shadow:0 0 0 2px rgba(216,164,79,.12); }
-.experiment-item h3 { font-size:15px; margin:0 0 7px; }
-.experiment-meta { display:flex; flex-wrap:wrap; gap:7px 9px; color:var(--muted); font-size:11px; }
-.experiment-lineage { display:flex; flex-wrap:wrap; gap:2px 8px; margin-top:3px; }
+.experiment-item h3 { font-size:12.5px; font-weight:750; margin:0; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.experiment-meta { display:flex; flex-wrap:wrap; align-items:center; gap:2px 10px; color:var(--muted); font-size:10.5px; min-width:0; }
+.experiment-meta .stall-warning { margin-left:2px; }
+.experiment-lineage { display:flex; flex-wrap:wrap; gap:2px 8px; }
 .retry-link { padding:0; font-size:10px; }
-.experiment-result { display:flex; align-items:center; gap:10px; white-space:nowrap; }
-.score { font:500 25px Georgia,serif; }
+.experiment-result { display:flex; align-items:center; gap:10px; white-space:nowrap; margin-left:auto; }
+.score { font:600 14px Georgia,serif; font-variant-numeric:tabular-nums; }
 .pill { display:inline-flex; padding:4px 8px; border-radius:999px; background:#e9efeb; color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
 .pill.running, .pill.preparing, .pill.queued { background:#fff0d9; color:#925b1c; }
 .pill.completed { background:#ddf1e7; color:var(--green); }
@@ -117,6 +120,27 @@ tbody tr:last-child td { border-bottom:0; }
 .modal::backdrop { background:rgba(11,24,19,.56); backdrop-filter:blur(5px); }
 .modal-card { width:min(760px,calc(100vw - 80px)); max-height:calc(100vh - 60px); overflow:auto; background:#f8faf7; border:1px solid white; border-radius:22px; padding:30px; box-shadow:0 40px 100px rgba(0,0,0,.3); }
 .modal-wide .modal-card { width:min(1180px,calc(100vw - 80px)); }
+.dimension-toolbar, .dimension-editor-head, .dimension-imports, .dimension-options { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.dimension-toolbar { margin:18px 0; }
+.dimension-toolbar label { flex:1; min-width:180px; margin:0; }
+.dimension-editor { margin:14px 0; border:1px solid var(--line); border-radius:12px; padding:16px; background:white; }
+.dimension-editor-head { justify-content:space-between; margin-bottom:12px; }
+.dimension-editor-head code { color:var(--muted); font-size:11px; }
+.dimension-editor[data-selected="false"] > :not(.dimension-editor-head) { display:none; }
+.dimension-editor[data-selected="false"] { background:#f2f4f1; }
+.dimension-editor label.check { display:flex; align-items:center; gap:7px; margin:0; }
+.dimension-editor label.check input { width:auto; }
+.dimension-options label { flex:1; min-width:120px; }
+.dimension-imports label { flex:1; min-width:180px; }
+.dimension-imports a { font-size:12px; color:var(--green); }
+.dimension-editor details { margin-top:10px; }
+.standard-checkpoints { margin-bottom:14px; font-size:12px; }
+.standard-checkpoint { margin:10px 0; padding:10px; background:#f4f6f2; border-radius:8px; }
+.standard-checkpoint code { display:block; margin-top:5px; color:var(--muted); }
+.standard-checkpoint p { margin:6px 0; line-height:1.6; }
+.dimension-summary { margin:18px 0; overflow:auto; }
+.dimension-summary table { width:100%; min-width:540px; border-collapse:collapse; font-size:12px; }
+.dimension-summary th, .dimension-summary td { border-bottom:1px solid var(--line); padding:10px; text-align:left; }
 .modal-head { display:flex; justify-content:space-between; align-items:start; margin-bottom:20px; }
 .modal-head h2 { font:500 34px Georgia,serif; margin:0; }
 .icon-button { border:0; background:#e7ece8; width:38px; height:38px; border-radius:50%; font-size:25px; line-height:1; }
@@ -210,7 +234,8 @@ details { margin:16px 0; padding:14px; border:1px solid var(--line); border-radi
 summary { font-weight:800; cursor:pointer; margin-bottom:10px; }
 
 /* ---- experiment detail page (hash-routed, replaces the old modal) ---- */
-.experiment-page { max-width:1180px; margin:0 auto; }
+/* 方案 B：详情页同样流体全宽（原 1180px 上限移除） */
+.experiment-page { min-width:0; }
 .experiment-page-head { position:relative; display:flex; flex-direction:column; gap:2px; margin-bottom:2px; }
 .experiment-page-head .eyebrow { margin-bottom:2px; }
 .page-nav { position:absolute; right:0; bottom:2px; margin:0; }
@@ -218,6 +243,64 @@ summary { font-weight:800; cursor:pointer; margin-bottom:10px; }
 .detail-section { margin-top:14px; }
 .detail-section .section-heading { margin-bottom:8px; }
 .detail-section h2 { font:500 19px/1 Georgia,serif; letter-spacing:-.02em; margin:0; }
+
+/* ---- 方案 B：全宽三栏详情网格（结论带横贯顶部，分栏卡片化） ---- */
+.detail-grid { display:grid; grid-template-columns:280px minmax(0,1fr) 330px; gap:10px; align-items:start; margin-top:10px; }
+.detail-col { display:grid; gap:10px; min-width:0; align-content:start; }
+.detail-card { background:var(--surface); border:1px solid var(--line); border-radius:8px; overflow:hidden; min-width:0; }
+.detail-card-title { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin:0; padding:7px 11px 5px; border-bottom:1px solid var(--line); font-size:10px; font-weight:800; letter-spacing:.07em; color:var(--muted); text-transform:uppercase; }
+.detail-card-title .detail-card-hint { text-transform:none; letter-spacing:0; font-weight:600; color:var(--muted); }
+.detail-card-body { padding:8px 11px; font-size:12px; min-width:0; }
+.detail-card-body-flush { padding:0; }
+.detail-card-body-flush .active-runs { margin:10px 10px 0; }
+.detail-card-body-flush .empty { padding:18px; }
+/* ≥1500 三栏；1280–1499 两栏（右栏内容并入下方双列网格）；<1280 单列堆叠 */
+@media (max-width:1499px){
+  .detail-grid { grid-template-columns:280px minmax(0,1fr); }
+  .detail-col-right { grid-column:1 / -1; grid-template-columns:1fr 1fr; }
+}
+@media (max-width:1279px){
+  .detail-grid { grid-template-columns:1fr; }
+  .detail-col-right { grid-template-columns:1fr; }
+}
+
+/* ---- 方案 B：运行明细紧凑表格行（组·Trial/状态/总耗时/分数/操作） ---- */
+.runs-table { width:100%; border-collapse:collapse; font-size:11px; }
+.runs-table th, .runs-table td { padding:5px 9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+.runs-table th { font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); background:rgba(239,243,239,.7); white-space:nowrap; }
+.runs-table tbody tr:hover { background:#f8faf7; }
+.runs-table .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.runs-table .run-cell-name strong { display:block; font-size:11.5px; white-space:nowrap; }
+.runs-table .run-cell-name small { display:block; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:10px; }
+.runs-table .run-cell-status .pill { font-size:9px; padding:2px 6px; }
+.runs-table .run-cell-status small { display:block; color:var(--muted); font-size:10px; }
+.runs-table .run-cell-score strong { font-variant-numeric:tabular-nums; }
+.runs-table .run-cell-actions .run-actions { justify-content:flex-start; flex-wrap:wrap; gap:2px 8px; }
+.runs-table tr.run-row.is-stalled > td { background:#fffaf0; }
+.runs-table tr.run-detail-row > td, .runs-table tr.evidence-row > td { padding:0; }
+.runs-table tr.run-detail-row.hidden > td { border-bottom:0; }
+.runs-table .run-detail { padding:8px 12px 12px; border-top:0; background:#fafcf9; }
+.runs-table .run-detail .message, .runs-table .run-detail .skip-note, .runs-table .run-detail .stall-diagnostic { margin:8px 0; }
+.runs-table .run-detail .timeline { margin:8px 0; }
+.runs-table .evidence-row .evidence-strip { border-top:0; }
+
+/* ---- 方案 B：工作区现场卡（每 run 占用 + 清理按钮） ---- */
+.workspace-row { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:11.5px; border-bottom:1px dashed var(--line); }
+.workspace-row:last-child { border-bottom:0; }
+.workspace-run { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-size { margin-left:auto; font-variant-numeric:tabular-nums; color:var(--muted); white-space:nowrap; }
+.workspace-row .text-button { flex-shrink:0; }
+.workspace-total { font-weight:750; }
+
+/* ---- 方案 B：实验列表紧凑行式（名称+状态点+分数+delta+操作全行内） ---- */
+.status-dot { flex-shrink:0; width:8px; height:8px; border-radius:50%; background:#9aa59f; }
+.status-dot.queued, .status-dot.preparing, .status-dot.running { background:var(--orange); }
+.status-dot.completed { background:var(--green-2); }
+.status-dot.completed_with_failures, .status-dot.timeout { background:#d8a44f; }
+.status-dot.cancelled { background:#9aa59f; }
+.status-dot.failed, .status-dot.invalid, .status-dot.grader_invalid, .status-dot.infra_error, .status-dot.agent_error { background:#b44e46; }
+.experiment-delta { display:inline-flex; align-items:baseline; gap:4px; }
+.experiment-delta small { color:var(--muted); font-size:9.5px; white-space:nowrap; }
 
 /* ---- compact title bar (方案一.1)：状态/模式/Runner·Judge·模型一行，次要信息一行 ---- */
 .detail-titlebar { display:flex; flex-direction:column; gap:7px; margin:4px 0 10px; }
@@ -236,12 +319,12 @@ summary { font-weight:800; cursor:pointer; margin-bottom:10px; }
 .verdict-badge.is-no-score { background:#e7e9e7; color:#66706b; }
 .verdict-badge.is-running { background:#e3ebf6; color:#33507e; }
 .verdict-note { color:var(--muted); font-size:11px; line-height:1.45; }
-.conclusion-band { display:flex; align-items:center; gap:10px 16px; flex-wrap:wrap; margin:8px 0 12px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.conclusion-band { display:flex; align-items:center; gap:10px 16px; flex-wrap:wrap; margin:8px 0 0; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
 .conclusion-verdict { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
 .conclusion-groups { display:flex; gap:8px; flex-wrap:wrap; }
 .group-chip { display:inline-flex; align-items:baseline; gap:6px; padding:6px 10px; border-radius:10px; background:#edf2ee; }
 .group-chip small { color:var(--muted); font-size:10px; font-weight:750; white-space:nowrap; }
-.group-chip strong { font:500 19px Georgia,serif; }
+.group-chip strong { font:500 19px Georgia,serif; font-variant-numeric:tabular-nums; }
 .group-chip .chip-note { color:var(--muted); font-size:10px; white-space:nowrap; }
 .group-chip.is-missing { opacity:.6; }
 .group-chip.is-gates-failed { background:#faf0ee; box-shadow:inset 0 0 0 1px rgba(152,71,63,.35); }
@@ -249,7 +332,7 @@ summary { font-weight:800; cursor:pointer; margin-bottom:10px; }
 .chip-note.provisional { color:#925b1c; font-weight:700; }
 .chip-note.gates-failed { color:#98473f; font-weight:700; }
 .conclusion-deltas { display:flex; gap:14px; flex-wrap:wrap; margin-left:auto; }
-.conclusion-deltas .delta-item { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--muted); }
+.conclusion-deltas .delta-item { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
 .delta-item small { display:block; font-size:10px; }
 .delta-formal { color:var(--green); font-weight:700; }
 .delta-provisional { color:#925b1c; font-weight:700; }
@@ -258,8 +341,8 @@ summary { font-weight:800; cursor:pointer; margin-bottom:10px; }
   .conclusion-deltas { margin-left:0; }
 }
 
-/* case comparison matrix（一次只呈现选中的 case，方案一.3/方案二） */
-.case-card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px; box-shadow:0 10px 30px rgba(34,54,47,.055); }
+/* case comparison matrix（一次只呈现选中的 case，方案一.3/方案二）——方案 B 密度：圆角 8px、去大阴影 */
+.case-card { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:10px 12px; box-shadow:none; }
 .case-empty { color:var(--muted); font-size:12px; margin:0; padding:10px 4px; }
 .comparison-wrap { border-radius:10px; }
 .comparison-table { width:100%; border-collapse:collapse; font-size:12px; }
@@ -504,18 +587,15 @@ button.dimension-row:hover { background:rgba(29,128,97,.06); }
 .conv-error { padding:7px 11px; border-left:3px solid #a33d2d; background:#faf0ee; color:#98473f; border-radius:0 8px 8px 0; font-size:11px; }
 .conv-warning { padding:7px 11px; border-left:3px solid #bc7b29; background:#fff5e4; color:#8a5a1f; border-radius:0 8px 8px 0; font-size:11px; }
 
-/* diagnostics: raw logs demoted from the main conversation view */
-.diagnostic-section { border:1px dashed var(--line); background:rgba(255,255,255,.4); }
-.diagnostic-section > summary { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; list-style:none; cursor:pointer; padding:14px 16px; margin:0; }
-.diagnostic-section > summary::-webkit-details-marker { display:none; }
-.diagnostic-section > summary h2 { font:500 20px/1 Georgia,serif; letter-spacing:-.02em; margin:2px 0 0; }
-.diagnostic-hint { color:var(--muted); font-size:11px; }
-.diagnostic-section[open] > summary { border-bottom:1px dashed var(--line); }
-.diagnostic-section .live-log-console { margin:0; padding:16px; }
+/* diagnostics: 方案 B——诊断日志常驻右栏卡片，移除 <details> 折叠语义（id 与绑定保留） */
+.diagnostic-section { border:1px solid var(--line); background:var(--surface); border-radius:8px; overflow:hidden; }
+.diagnostic-hint { color:var(--muted); font-size:10.5px; text-transform:none; letter-spacing:0; font-weight:600; }
+.diagnostic-section .live-log-console { margin:0; padding:12px; border:0; border-radius:0; position:static; box-shadow:none; }
+.diagnostic-section .live-log-output { max-height:300px; }
 
-@media(max-width:1100px){.workbench{grid-template-columns:1fr}.launch-card{position:static}.app-shell{padding:0 20px 40px}}
+@media(max-width:1100px){.workbench{grid-template-columns:1fr}.launch-card{position:static}}
 @media(max-width:900px){.run-summary{grid-template-columns:1fr 1fr}.run-actions{justify-content:flex-start}.progress-row{flex-wrap:wrap}.log-output-grid{grid-template-columns:1fr}.snapshot-grid{grid-template-columns:1fr}.conclusion-deltas{margin-left:0}}
-@media(max-width:700px){.experiment-item{grid-template-columns:1fr}.experiment-result{justify-content:flex-start}.score{margin-right:auto}.detail-titlebar{gap:5px}.detail-actions{flex-wrap:wrap;margin-left:0}.modal-card{width:calc(100vw - 24px);padding:16px}.modal-wide .modal-card{width:calc(100vw - 24px)}.radar-layout,.radar-layout.is-list-only{grid-template-columns:minmax(0,1fr)}.radar-chart-col{border-right:0;border-bottom:1px solid var(--line);padding:0 14px 12px;margin-bottom:12px}.radar-dimension-col{padding:0 14px}}
+@media(max-width:700px){.experiment-result{justify-content:flex-start}.score{margin-right:auto}.detail-titlebar{gap:5px}.detail-actions{flex-wrap:wrap;margin-left:0}.modal-card{width:calc(100vw - 24px);padding:16px}.modal-wide .modal-card{width:calc(100vw - 24px)}.radar-layout,.radar-layout.is-list-only{grid-template-columns:minmax(0,1fr)}.radar-chart-col{border-right:0;border-bottom:1px solid var(--line);padding:0 14px 12px;margin-bottom:12px}.radar-dimension-col{padding:0 14px}}
 
 /* UX 审查修复：工具结果预览 / 维度行点击引导 / 基准停用说明 */
 .conv-tool-preview { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:var(--muted); }
@@ -524,3 +604,37 @@ button.dimension-row:hover { background:rgba(29,128,97,.06); }
 .radar-dimension:hover .radar-dimension-chevron { color:var(--green-2); transform:translateX(2px); }
 .radar-dimension { cursor:pointer; }
 .baseline-disabled-note { margin:10px 0 0; font-size:11px; color:var(--muted); }
+.dimension-group { margin:22px 0 12px; color:var(--text); font-size:16px; }
+.score-item-group { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:12px 0 5px; border-top:1px solid var(--line); }
+.score-item-group small { color:var(--muted); font-size:11px; }
+.workflow-gates h4 { margin:0 0 8px; font-size:13px; }
+.workflow-gates { margin-top:12px; }
+.workflow-group { min-width:0; flex:1 1 160px; }
+.workflow-evidence { margin-top:8px; font-size:11px; overflow-wrap:anywhere; }
+.workflow-evidence summary { cursor:pointer; }
+.workflow-evidence p { margin:6px 0; }
+.result-tree-head, .result-summary-row { display:grid; align-items:center; gap:12px; }
+.result-tree-head { padding:10px 12px; color:var(--muted); font-size:11px; background:var(--surface); }
+.result-tree-head > span:not(:first-child) { text-align:right; }
+.result-summary-row { width:100%; text-align:left; padding:13px 12px; border:0; background:transparent; color:inherit; cursor:pointer; }
+.result-summary-row:hover { background:rgba(20,100,70,.04); }
+.result-summary-row:focus-visible { outline:2px solid var(--green-2); outline-offset:-2px; }
+.result-row-name { display:flex; gap:8px; align-items:center; min-width:0; }
+.result-row-name strong { display:block; font-size:13px; overflow-wrap:anywhere; }
+.result-row-name small, .result-score small { display:block; color:var(--muted); font-size:10px; margin-top:5px; }
+.result-chevron { flex:none; width:12px; color:var(--muted); }
+.result-score { text-align:right; min-width:0; }
+.result-score strong { font-size:13px; }
+.result-dimension, .result-score-item { border-bottom:1px solid var(--line); }
+.result-dimension-content { border-left:2px solid var(--line); margin:0 0 10px 18px; }
+.result-scene-content { padding-left:14px; }
+.result-scene-caption { padding:8px 12px 0; margin:0; color:var(--muted); font-size:11px; }
+.result-case-definition { padding:6px 12px; }
+.result-definition-body { margin:8px 0; padding:12px; border:1px solid var(--line); border-radius:8px; font-size:12px; }
+.result-scoring-config { margin-top:10px; }
+.result-trial-panel { padding:0 12px 12px; }
+.workflow-case + .workflow-case { border-top:1px solid var(--line); padding-top:12px; margin-top:12px; }
+.result-gates { border:1px solid var(--line); border-radius:8px; margin-bottom:14px; background:rgba(20,100,70,.025); }
+.result-gates-content { padding:0 12px 12px; border-top:1px solid var(--line); }
+.result-gates-content > .radar-gates { margin-top:12px; }
+@media(max-width:700px){.result-tree-head,.result-summary-row{gap:6px}.result-summary-row{padding:10px 6px}.result-dimension-content{margin-left:8px}.result-tree{overflow-x:auto}}

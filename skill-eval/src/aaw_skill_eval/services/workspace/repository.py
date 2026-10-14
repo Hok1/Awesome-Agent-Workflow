@@ -193,6 +193,7 @@ def run_trusted_command(
     source: str = "validator",
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict:
     """Run a local trusted command while forwarding each output line immediately."""
 
@@ -200,6 +201,7 @@ def run_trusted_command(
     process = subprocess.Popen(
         command,
         cwd=cwd,
+        env={**os.environ, **env} if env else None,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -271,8 +273,8 @@ def run_trusted_command(
     return result
 
 
-def capture_changes(workspace: Path) -> dict:
-    patch = _git(workspace, "diff", "--binary", "HEAD", timeout=120)
+def capture_changes(workspace: Path, *, baseline: str = "HEAD") -> dict:
+    patch = _git(workspace, "diff", "--binary", baseline, timeout=120)
     raw_status = subprocess.run(
         ["git", "-C", str(workspace), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         capture_output=True,
@@ -296,6 +298,8 @@ def capture_changes(workspace: Path) -> dict:
         changed_files.append(path)
         if code == "??":
             untracked_files.append(path)
+    if baseline != "HEAD":
+        changed_files.extend(_git(workspace, "diff", "--name-only", baseline).splitlines())
     return {
         "patch": patch,
         "changed_files": sorted(set(changed_files)),

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -293,7 +294,7 @@ def test_case_section_renders_selector_and_collapsed_snapshot(tmp_path: Path):
         && section.includes('aria-selected="true"'),
       snapshotPresent: section.includes('id="caseSnapshot"'),
       snapshotBadge: section.includes("本次实验快照"),
-      collapsedFields: ["用例 ID", "权重", "评分维度", "最大对话轮数"]
+      collapsedFields: ["用例 ID", "权重", "评分项", "最大对话轮数"]
         .every(label => section.includes(label)),
       collapsedByDefault: !section.includes('id="caseSnapshot" open'),
       openWhenStateSet: openSection.includes('id="caseSnapshot" open'),
@@ -428,9 +429,13 @@ def test_detail_page_static_structure_markers():
     assert "titlebar-meta" in app
     assert "重试实验" in app and "cancelExperimentButton" in app
 
-    # 方案一.8 诊断日志默认收起：diagnosticSection 不再随运行状态默认展开
-    assert 'id="diagnosticSection"><summary' in app
-    assert 'id="diagnosticSection"${' not in app
+    # 方案 B：诊断日志常驻详情页右栏卡片——<details> 折叠语义移除，
+    # diagnosticSection id、renderLogConsole 输出与绑定全部保留
+    assert 'id="diagnosticSection"' in app
+    assert 'id="diagnosticSection"><summary' not in app
+    assert "diagnostics.open" not in app  # 折叠展开调用随 <details> 一并移除
+    assert "诊断 · 实时日志（常驻）" in app
+    assert "renderLogConsole(item)" in app
 
     # 方案二 轮询时保留选中 case 与展开状态（详情页状态模型）
     assert "state.detailCaseId" in app and "state.caseSnapshotOpen" in app
@@ -447,3 +452,107 @@ def test_detail_page_static_structure_markers():
 
     # 资源带版本参数，浏览器不会继续使用旧缓存
     assert 'app.js?v=' in index and 'styles.css?v=' in index
+
+
+def test_detail_page_layout_b_three_column_structure():
+    """方案 B（mockup variant-b）分区重排的静态结构断言。
+
+    容器流体全宽；详情页三栏：左=用例+硬门禁+工作区现场、中=结果对照明细、
+    右=雷达+运行明细+诊断日志；运行明细改紧凑表格行且行内操作全保留；
+    雷达拆分为"雷达+图例"（右栏）与"明细列表"（中栏）两部分。
+    """
+    app = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    # B.1 容器流体全宽：1480/1180 上限移除
+    assert "max-width: 1480px" not in css and "max-width:1480px" not in css
+    assert "max-width:1180px" not in css
+
+    # B.2 三栏网格断点：≥1500 三栏；1280–1499 两栏（右栏并入下方双列网格）；<1280 单列
+    assert ".detail-grid { display:grid; grid-template-columns:280px minmax(0,1fr) 330px" in css
+    assert "max-width:1499px" in css and "max-width:1279px" in css
+    assert ".detail-col-right { grid-column:1 / -1; grid-template-columns:1fr 1fr; }" in css
+
+    # B.3 结论带横贯顶部，三栏网格随后；左栏卡片顺序：用例 → 硬门禁 → 工作区现场
+    summary_at = app.index('id="detailSummary"')
+    grid_at = app.index('class="detail-grid"')
+    left_at = app.index('id="detailColLeft"')
+    mid_at = app.index('id="detailColMid"')
+    right_at = app.index('id="detailColRight"')
+    assert 0 < summary_at < grid_at < left_at < mid_at < right_at
+    assert 'id="detailCaseCard"' not in app
+    assert 'id="detailGatesCard"' not in app
+    workspace_at = app.index('id="detailWorkspaceCard"')
+    assert left_at < workspace_at < mid_at
+
+    # 中栏：结果对照明细；右栏卡片顺序：维度雷达 → 运行明细 → 诊断日志（常驻）
+    comparison_at = app.index('id="detailComparison"')
+    radar_at = app.index('id="detailRadarCard"')
+    runs_at = app.index('id="detailRunsCard"')
+    diag_at = app.index('id="diagnosticSection"')
+    assert mid_at < comparison_at < right_at
+    assert right_at < radar_at < runs_at < diag_at
+    assert "${comparisonParts.body}" in app and "${renderLogConsole(item)}" in app
+
+    # B.6 诊断日志常驻：log console 的完整 id 集合与绑定入口保留（bindLogConsole 不破坏）
+    for console_marker in (
+        'id="liveLogConsole"',
+        'id="logAttempt"',
+        'id="logChannel"',
+        'id="logSearch"',
+        'id="logPause"',
+        'id="readableLogOutput"',
+        'id="liveLogOutput"',
+        'data-log-scope="experiment"',
+        'data-log-run="${candidate.id}"',
+        "bindLogConsole();",
+    ):
+        assert console_marker in app, console_marker
+
+    # B.4 雷达拆分：图表/明细两函数取代旧 radarSectionMarkup；
+    # bindRadarInteractions 依赖的容器与属性原样保留
+    assert "function radarChartMarkup" in app and "function radarListMarkup" in app
+    assert "function comparisonViewParts" in app
+    assert "function radarSectionMarkup" not in app
+    assert 'id="comparisonRadar"' in app and '$("#comparisonRadar")' in app
+    assert 'id="radarTooltip"' in app and "data-radar-point" in app
+
+    # B.5 运行明细：紧凑表格行（组·Trial/状态/总耗时/分数/操作），
+    # activeRunsStrip 保留在表格上方；时间线仍展开 run-detail 面板
+    assert '<table class="runs-table">' in app
+    assert "<th>组 · Trial</th>" in app and "<th>状态</th>" in app
+    assert "总耗时" in app and '<th class="num">分数</th>' in app and "<th>操作</th>" in app
+    assert app.index("${activeRunsStripMarkup(item)}") < app.index('<table class="runs-table">')
+    assert 'data-run-card=' in app and 'data-toggle-run=' in app
+    assert 'id="run-detail-${run.id}"' in app
+
+    # 行内操作按钮全保留（行为断言，只增不减）：对话/日志/证据/复核/
+    # 清理现场/正式重试/取消 run/时间线
+    for marker in (
+        'data-cancel-run="${run.id}">取消 run',
+        'data-retry-run="${run.id}">正式重试',
+        'data-conversation="${run.id}"',
+        'data-log="${run.id}">日志',
+        'data-evidence="${run.id}">证据',
+        'data-clean-workspace="${run.id}">清理现场',
+        'data-review="${run.id}">复核',
+        'data-toggle-run="${run.id}">${open?"收起":"时间线"}',
+    ):
+        assert marker in app, marker
+
+    # 工作区现场卡（左栏）：每 run 占用行 + 手动清理按钮 + 合计
+    assert "function workspaceSectionMarkup" in app
+    assert 'class="workspace-row"' in app and "workspace-total" in app
+    assert 'data-clean-workspace="${run.id}">清理' in app
+
+    # B.7 仪表盘紧凑行：状态点+名称+分数+delta+操作全行内；筛选器与新建测试保留
+    assert '<article class="experiment-item ' in app
+    assert '<i class="status-dot' in app and 'class="experiment-delta"' in app
+    assert 'data-detail="${item.id}"' in app and 'data-retry-experiment="${item.id}"' in app
+    assert 'id="experimentStatusFilter"' in index and 'id="experimentModeFilter"' in index
+    assert 'data-open="newSuite"' in index and "新建测试" in index
+
+    # B.9 两项静态资源使用一致、非空的缓存版本标识。
+    versions = re.findall(r'(?:styles\.css|app\.js)\?v=([^"\']+)', index)
+    assert len(versions) == 2 and versions[0] == versions[1]

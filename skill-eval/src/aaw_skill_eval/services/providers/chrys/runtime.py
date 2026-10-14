@@ -14,6 +14,7 @@ from ....config import Settings
 from ....errors import EvalError, InfrastructureError
 from ....schemas import EvalProfile, ProviderSnapshot
 from ...storage.artifacts import atomic_write_text, content_hash
+from ..registry import RUNTIME_FACTORIES
 
 RUNNER_PROFILE_NAME = "AAW Eval Runner"
 JUDGE_PROFILE_NAME = "AAW Eval Judge"
@@ -480,15 +481,23 @@ def _codex_version(settings: Settings) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def enrich_profile(settings: Settings, profile: EvalProfile) -> EvalProfile:
+def enrich_profile(
+    settings: Settings, profile: EvalProfile, *, needs_judge: bool = True
+) -> EvalProfile:
     update: dict[str, Any] = {"schema_version": 2}
     chrys = ChrysRuntime(settings)
     for role in ("runner", "judge"):
+        if role == "judge" and not needs_judge:
+            continue
         provider = getattr(profile, f"{role}_provider")
         model = getattr(profile, f"{role}_model")
         if provider == "chrys":
             update[f"{role}_snapshot"] = chrys.snapshot(model, role=role)
-        else:
+        elif provider in RUNTIME_FACTORIES:
+            update[f"{role}_snapshot"] = RUNTIME_FACTORIES[provider](settings).snapshot(
+                model, role=role
+            )
+        elif provider == "codex":
             update[f"{role}_snapshot"] = ProviderSnapshot(
                 provider="codex",
                 runtime_version=_codex_version(settings),
@@ -499,17 +508,23 @@ def enrich_profile(settings: Settings, profile: EvalProfile) -> EvalProfile:
                 isolation="workspace-write" if role == "runner" else "read-only",
                 network_policy="enabled" if profile.network and role == "runner" else "disabled",
             )
+        else:
+            raise EvalError("UNSUPPORTED_AGENT", f"Agent 尚未接入：{provider}", status_code=422)
     return profile.model_copy(update=update)
 
 
-def verify_profile(settings: Settings, profile: EvalProfile) -> None:
+def verify_profile(settings: Settings, profile: EvalProfile, *, needs_judge: bool = True) -> None:
     chrys = ChrysRuntime(settings)
     for role in ("runner", "judge"):
-        if getattr(profile, f"{role}_provider") != "chrys":
+        if role == "judge" and not needs_judge:
+            continue
+        provider = getattr(profile, f"{role}_provider")
+        if provider not in {"chrys", *RUNTIME_FACTORIES}:
             continue
         snapshot = getattr(profile, f"{role}_snapshot")
         if snapshot is None:
             raise EvalError(
                 "CHRYS_SNAPSHOT_MISSING", f"Missing Chrys {role} configuration snapshot"
             )
-        chrys.verify_snapshot(snapshot, role=role)
+        runtime = chrys if provider == "chrys" else RUNTIME_FACTORIES[provider](settings)
+        runtime.verify_snapshot(snapshot, role=role)

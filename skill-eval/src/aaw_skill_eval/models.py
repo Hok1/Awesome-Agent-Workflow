@@ -66,6 +66,11 @@ class Suite(Base):
     definition_path: Mapped[str] = mapped_column(Text)
     definition_hash: Mapped[str] = mapped_column(String(64))
     definition_json: Mapped[str] = mapped_column(Text)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    baseline_experiment_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    baseline_group: Mapped[str] = mapped_column(
+        String(32), default="current", server_default="current"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
@@ -79,6 +84,9 @@ class Experiment(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     suite_id: Mapped[str] = mapped_column(String(36), ForeignKey("suites.id"), index=True)
+    evaluation_mode: Mapped[str] = mapped_column(
+        String(32), default="legacy", server_default="legacy"
+    )
     current_revision_id: Mapped[str] = mapped_column(String(36), ForeignKey("skill_revisions.id"))
     baseline_revision_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("skill_revisions.id"), nullable=True
@@ -126,6 +134,23 @@ class Experiment(Base):
     )
     runs: Mapped[list[Run]] = relationship(
         back_populates="experiment", cascade="all, delete-orphan"
+    )
+
+
+class SuiteDraft(Base):
+    __tablename__ = "suite_drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    data_json: Mapped[str] = mapped_column(Text, default="{}")
+    messages_json: Mapped[str] = mapped_column(Text, default="[]")
+    validation_json: Mapped[str] = mapped_column(Text, default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suite_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("suites.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
 

@@ -9,7 +9,24 @@ from fastapi.testclient import TestClient
 
 from aaw_skill_eval.config import Settings
 from aaw_skill_eval.main import create_app
+from aaw_skill_eval.schemas import SuiteCreateRequest
+from aaw_skill_eval.services.catalog.suites import create_suite
 from aaw_skill_eval.services.providers.base import JudgeOutcome, JudgeScore, RunOutcome
+
+
+def seed_legacy_suite(client: TestClient, payload: dict) -> dict:
+    """Seed historical definitions directly; the creation API accepts fixed standards only."""
+    with client.app.state.session_factory() as session:
+        suite = create_suite(
+            session,
+            client.app.state.settings,
+            SuiteCreateRequest.model_validate(payload),
+            allow_legacy=True,
+        )
+        suite_id = suite.id
+    response = client.get(f"/api/v1/suites/{suite_id}")
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _git(path: Path, *args: str) -> None:

@@ -81,7 +81,13 @@ def with_lock_retry(
 
 def migrate_schema(engine) -> None:
     additions = {
+        "suites": {
+            "archived": "BOOLEAN NOT NULL DEFAULT 0",
+            "baseline_experiment_id": "VARCHAR(36)",
+            "baseline_group": "VARCHAR(32) NOT NULL DEFAULT 'current'",
+        },
         "experiments": {
+            "evaluation_mode": "VARCHAR(32) NOT NULL DEFAULT 'legacy'",
             "cancel_requested_at": "DATETIME",
             "retry_of_experiment_id": "VARCHAR(36) REFERENCES experiments(id)",
             "execution_mode": "VARCHAR(32)",
@@ -117,12 +123,7 @@ def migrate_schema(engine) -> None:
                 )
             )
         if schema.has_table("runs"):
-            connection.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS ix_runs_pair_id "
-                    "ON runs (pair_id)"
-                )
-            )
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_runs_pair_id ON runs (pair_id)"))
 
 
 def session_dependency(factory: sessionmaker[Session]):

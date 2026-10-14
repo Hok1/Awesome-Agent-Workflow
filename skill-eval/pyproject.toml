@@ -9,6 +9,7 @@ dependencies = [
     "sqlalchemy>=2.0.36,<3",
     "pydantic-settings>=2.7,<3",
     "pyyaml>=6.0.2,<7",
+    "typer>=0.12,<1",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +31,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-aaw_skill_eval = ["static/*"]
+aaw_skill_eval = ["static/*", "static/benchmark/*", "static/benchmark/assets/*", "resources/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

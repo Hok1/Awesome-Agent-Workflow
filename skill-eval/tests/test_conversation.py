@@ -264,8 +264,8 @@ def test_conversation_panel_is_wired_into_the_page() -> None:
     assert "loadPromptInto" in app and "data-conv-prompt" in app
     # live updates while the run is active
     assert "startConversationPolling" in app
-    # raw logs demoted to a diagnostics section
-    assert 'id="diagnosticSection"' in app and "诊断 · 原始日志与调用记录" in app
+    # raw logs demoted to a diagnostics section (方案 B：常驻右栏卡片，无折叠)
+    assert 'id="diagnosticSection"' in app and "诊断 · 实时日志" in app
     # masking: replay/copy/export default to masked values with an explicit opt-out
     assert "data-conv-unmasked" in app and "toggleConversationMask" in app
     assert "copyConversation" in app and "exportConversation" in app

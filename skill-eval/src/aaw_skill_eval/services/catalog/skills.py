@@ -116,7 +116,9 @@ def inspect_skill(raw_path: str | Path, max_bytes: int) -> SkillSource:
     )
 
 
-def import_skill(session: Session, settings: Settings, raw_path: str | Path) -> SkillRevision:
+def import_skill(
+    session: Session, settings: Settings, raw_path: str | Path, *, commit: bool = True
+) -> SkillRevision:
     source = inspect_skill(raw_path, settings.max_skill_bytes)
     skill = session.scalar(select(Skill).where(Skill.name == source.name))
     if skill is None:
@@ -132,7 +134,10 @@ def import_skill(session: Session, settings: Settings, raw_path: str | Path) -> 
         )
     )
     if existing is not None:
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
         return existing
 
     destination = settings.snapshots_dir / source.name / source.content_hash
@@ -155,7 +160,10 @@ def import_skill(session: Session, settings: Settings, raw_path: str | Path) -> 
         source_path=str(source.root),
     )
     session.add(revision)
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     session.refresh(revision)
     return revision
 

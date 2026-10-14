@@ -106,7 +106,7 @@ def test_radar_axes_exclude_hard_gate_graders(tmp_path: Path):
       axisLines: (markup.match(/class="radar-axis-line"/g) || []).length,
       dimensionEntries: (markup.match(/data-dimension-open=/g) || []).length,
       gateInDimensions: markup.includes('data-dimension-open="gate-1"'),
-      gateStripPresent: markup.includes("radar-gates")
+      gateStripPresent: markup.includes("result-gates")
     }}));
     """
     result = _run_scenario(tmp_path, scenario)
@@ -391,6 +391,7 @@ def test_gates_strip_sits_above_chart_and_marks_failure(tmp_path: Path):
     ]
     scenario = f"""
     {_PRELUDE}
+    state.expandedResultNodes.add('gates/summary');
     const item = {_js(_experiment_with(case, runs))};
     const markup = comparisonMarkup(item);
     console.log(JSON.stringify({{
@@ -572,3 +573,44 @@ def test_radar_points_are_keyboard_focusable_with_exact_scores(tmp_path: Path):
     assert result["focusableCount"] == 6
     assert result["allHaveAria"] is True  # 精确分数进入 aria-label / tooltip
     assert result["ariaMatchesTooltip"] is True
+
+
+def test_radar_split_parts_route_to_their_columns(tmp_path: Path):
+    """方案 B 拆分：chart=雷达+图例（右栏雷达卡），body=明细列表（中栏结果对照），
+    gates=硬门禁条（左栏硬门禁卡）。两部分的交互属性互不混入：
+    bindRadarInteractions 所需属性（data-radar-point、#radarTooltip、图例）原样留在
+    chart 部分，data-dimension-open 明细行只出现在 body 部分。"""
+    case = _radar_case(3)
+    runs = [
+        _scored_run("case-a", "no_skill", 1,
+                    {"axis-1": 60, "axis-2": 70, "axis-3": 80}, quality=70),
+        _scored_run("case-a", "current", 1, {"axis-1": 75, "axis-2": 85, "axis-3": 95}, quality=85),
+    ]
+    scenario = f"""
+    {_PRELUDE}
+    const item = {_js(_experiment_with(case, runs))};
+    const parts = comparisonViewParts(item);
+    console.log(JSON.stringify({{
+      chartSvg: parts.chart.includes("radar-svg"),
+      chartWrap: parts.chart.includes("radar-chart-wrap"),
+      chartTooltip: parts.chart.includes('id="radarTooltip"'),
+      chartPoints: (parts.chart.match(/data-radar-point/g) || []).length,
+      chartLegend: parts.chart.includes("radar-legend"),
+      chartNoList: !parts.chart.includes("data-dimension-open"),
+      bodyList: parts.body.includes("radar-dimension-title")
+        && parts.body.includes("radar-dimensions"),
+      bodyDimensionRows: (parts.body.match(/data-dimension-open="/g) || []).length,
+      bodyNoChart: !parts.body.includes("radar-svg") && !parts.body.includes("radar-legend"),
+      gatesStrip: parts.gates.includes("radar-gates")
+    }}));
+    """
+    result = _run_scenario(tmp_path, scenario)
+    assert result["chartSvg"] is True
+    assert result["chartWrap"] is True and result["chartTooltip"] is True
+    assert result["chartPoints"] == 6  # 两组 × 3 轴
+    assert result["chartLegend"] is True  # 图例随雷达移入右栏卡
+    assert result["chartNoList"] is True  # 明细列表不再混入图表部分
+    assert result["bodyList"] is True
+    assert result["bodyDimensionRows"] == 4  # 3 数值维度 + 硬门禁
+    assert result["bodyNoChart"] is True  # 雷达与图例只渲染在图表部分
+    assert result["gatesStrip"] is True  # 硬门禁条独立成左栏卡内容
