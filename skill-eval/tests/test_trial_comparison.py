@@ -103,7 +103,7 @@ def test_single_entry_per_dimension_and_no_cell_details(tmp_path: Path):
       hasCellDetails: markup.includes("cell-trials"),
       dimensionEntries: (markup.match(/data-dimension-open="/g) || []).length,
       legacyTableRowRemoved: !markup.includes("data-grader-row"),
-      expandLabel: markup.includes("展开该维度的 Trial 对照"),
+      expandLabel: markup.includes("展开该评分项的 Trial 对照"),
       collapsedByDefault: !markup.includes("trial-comparison-grid")
     }}));
     """
@@ -345,3 +345,30 @@ def test_dimension_row_click_expands_trial_comparison_in_place(tmp_path: Path):
     assert result["noViewSwitch"] is True  # 合并视图：展开不再切换视图
     assert result["dimensionExpanded"] is True
     assert result["collapsedAgain"] is True
+
+
+def test_trial_expansion_renders_in_body_part_not_radar_card(tmp_path: Path):
+    """方案 B 分栏：Trial 对照展开区属于中栏结果对照（parts.body），
+    右栏雷达卡（parts.chart）只含雷达与图例、不混入对照网格。"""
+    case = _axis_case()
+    runs = [
+        _trial_run("case-a", "no_skill", 1, 60, quality=60),
+        _trial_run("case-a", "current", 1, 80, quality=80),
+    ]
+    scenario = f"""
+    {_PRELUDE}
+    const item = {_js(_experiment_with([case], runs))};
+    state.expandedDimensions.add("axis-1");
+    const parts = comparisonViewParts(item);
+    console.log(JSON.stringify({{
+      bodyHasGrid: parts.body.includes('data-trial-comparison="axis-1"')
+        && parts.body.includes("trial-comparison-grid"),
+      chartClean: !parts.chart.includes("trial-comparison-grid")
+        && !parts.chart.includes("data-trial-comparison"),
+      bodyStillHasListEntry: parts.body.includes('data-dimension-open="axis-1"')
+    }}));
+    """
+    result = _run_scenario(tmp_path, scenario)
+    assert result["bodyHasGrid"] is True
+    assert result["chartClean"] is True
+    assert result["bodyStillHasListEntry"] is True

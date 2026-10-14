@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import build_router
+from .benchmark import DraftJobs, build_benchmark_router
 from .config import Settings, get_settings
 from .database import (
     Base,
@@ -32,13 +33,16 @@ def create_app(settings: Settings | None = None, *, engine=None) -> FastAPI:
     get_session = session_dependency(session_factory)
     orchestrator = ExperimentOrchestrator(settings, session_factory)
     jobs = JobManager(session_factory, orchestrator)
+    designer = DraftJobs(settings, session_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        designer.recover()
         await jobs.start()
         try:
             yield
         finally:
+            await designer.stop()
             await jobs.stop()
 
     app = FastAPI(
@@ -53,6 +57,10 @@ def create_app(settings: Settings | None = None, *, engine=None) -> FastAPI:
     app.state.session_factory = session_factory
     app.state.orchestrator = orchestrator
     app.state.jobs = jobs
+    app.state.designer = designer
+    app.include_router(
+        build_benchmark_router(settings, session_factory, get_session, orchestrator, jobs, designer)
+    )
     app.include_router(
         build_router(
             settings=settings,
@@ -68,7 +76,11 @@ def create_app(settings: Settings | None = None, *, engine=None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(static_dir / "index.html", media_type="text/html; charset=utf-8")
+        built = static_dir / "benchmark" / "index.html"
+        return FileResponse(
+            built if built.exists() else static_dir / "index.html",
+            media_type="text/html; charset=utf-8",
+        )
 
     @app.get("/health", include_in_schema=False)
     def health():

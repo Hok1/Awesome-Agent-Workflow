@@ -10,15 +10,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from ...config import Settings
 from ...errors import EvalError, InfrastructureError
 from ...models import Experiment, Run, RunAttempt, RunProgressEvent, SkillRevision, Suite
-from ...schemas import CaseSpec, EvalProfile, SetupSpec
+from ...schemas import CaseSpec, DimensionSpec, EvalProfile, SetupSpec
+from ..catalog.packages import materialize_files
 from ..catalog.skills import install_snapshot, prepare_eval_workspace
 from ..evaluation.graders import (
     evaluate_deterministic,
     execution_time_component,
     merge_scores,
 )
+from ..evaluation.workflow import collect_terminal_outputs, inspect_workflow, runner_case
 from ..observability.logs import LogWriter
 from ..providers import build_judge, build_runner
+from ..providers.base import JudgeOutcome
 from ..providers.chrys.runtime import (
     materialize_run_chrys_home,
     prepare_experiment_chrys_template,
@@ -28,6 +31,7 @@ from ..storage.artifacts import archive_untracked, canonical_json, write_json
 from ..workspace.cleanup import mark_workspace_retained, remove_run_workspace_dirs
 from ..workspace.paths import experiment_workspace, run_workspace
 from ..workspace.repository import (
+    _git,
     capture_changes,
     clone_at_commit,
     file_tree_manifest,
@@ -119,20 +123,28 @@ def execute(
             item = session.get(Experiment, experiment_id)
             assert item is not None
             item.status = "running"
-            item.execution_mode = EXECUTION_MODE_PAIR_PARALLEL
-            item.concurrency_limit = PAIR_CONCURRENCY_LIMIT
+            item.execution_mode = (
+                "current_only_v1"
+                if item.evaluation_mode == "current_only"
+                else EXECUTION_MODE_PAIR_PARALLEL
+            )
+            item.concurrency_limit = (
+                1 if item.evaluation_mode == "current_only" else PAIR_CONCURRENCY_LIMIT
+            )
             session.commit()
         experiment_log.event(
             "system",
-            f"运行队列已创建，按 (case, trial) 配对并行执行"
-            f"（单实验并发上限 {PAIR_CONCURRENCY_LIMIT}）",
+            "运行队列已创建，仅执行当前 Skill（单实验并发上限 1）"
+            if experiment.evaluation_mode == "current_only"
+            else (
+                "运行队列已创建，按 (case, trial) 配对并行执行"
+                f"（单实验并发上限 {PAIR_CONCURRENCY_LIMIT}）"
+            ),
             stage="running",
         )
         for block in ordered_blocks(session_factory, experiment_id, definition):
             if experiment_cancelled(session_factory, experiment_id):
-                experiment_log.event(
-                    "system", "实验已取消，停止派发后续配对块", stage="cancelled"
-                )
+                experiment_log.event("system", "实验已取消，停止派发后续配对块", stage="cancelled")
                 break
             run_block(
                 block,
@@ -196,9 +208,7 @@ def execute_retry(
         experiment.status = "running"
         session.commit()
 
-    base = run_workspace(
-        settings, experiment.id, run.id, run.current_attempt
-    ) / "workspace"
+    base = run_workspace(settings, experiment.id, run.id, run.current_attempt) / "workspace"
     experiment_log = LogWriter(
         settings.artifacts_dir / experiment.id / "logs",
         scope="experiment",
@@ -209,7 +219,10 @@ def execute_retry(
         stage="retry_preparing",
     )
     try:
-        verify_profile(settings, profile)
+        needs_judge = any(
+            g["type"] == "llm_rubric" for c in definition["cases"] for g in c["graders"]
+        )
+        verify_profile(settings, profile, needs_judge=needs_judge)
         snapshot = inspect_clean_project(suite.project_path)
         if snapshot.commit != experiment.project_commit:
             raise EvalError(
@@ -227,7 +240,9 @@ def execute_retry(
             setup_log,
         )
         chrys_template: Path | None = None
-        if profile.runner_provider == "chrys" or profile.judge_provider == "chrys":
+        if profile.runner_provider == "chrys" or (
+            needs_judge and profile.judge_provider == "chrys"
+        ):
             chrys_template = prepare_experiment_chrys_template(settings, experiment.id)
         execute_run(
             settings,
@@ -278,8 +293,17 @@ def execute_run(
     if info is None:
         return
     execute_claimed_run(
-        settings, session_factory, runner, judge, info, base, current, baseline, profile,
-        definition, chrys_template,
+        settings,
+        session_factory,
+        runner,
+        judge,
+        info,
+        base,
+        current,
+        baseline,
+        profile,
+        definition,
+        chrys_template,
     )
 
 
@@ -298,8 +322,17 @@ def execute_claimed_run_safely(
 ) -> None:
     try:
         execute_claimed_run(
-            settings, session_factory, runner, judge, info, base, current, baseline,
-            profile, definition, chrys_template,
+            settings,
+            session_factory,
+            runner,
+            judge,
+            info,
+            base,
+            current,
+            baseline,
+            profile,
+            definition,
+            chrys_template,
         )
     except Exception as exc:  # pragma: no cover - defensive thread boundary
         artifact_dir = run_artifact_dir(
@@ -366,6 +399,21 @@ def execute_claimed_run(
         if base.resolve() != workspace.resolve():
             shutil.copytree(base, workspace)
         prepare_eval_workspace(workspace)
+        if case.files:
+            materialize_files(workspace, case.files)
+            _git(workspace, "add", "--force", "--", *(file.path for file in case.files))
+            _git(
+                workspace,
+                "-c",
+                "user.name=AAW Scene",
+                "-c",
+                "user.email=scene@aaw.local",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "Install evaluation scene inputs",
+            )
+        scene_baseline = _git(workspace, "rev-parse", "HEAD").strip()
         selected: SkillRevision | None = None
         if group == "current":
             selected = current
@@ -385,7 +433,12 @@ def execute_claimed_run(
         outcome = runner.run(
             workspace=workspace,
             artifact_dir=artifact_dir,
-            case=case,
+            case=runner_case(
+                case.model_copy(update={"expected": "", "graders": [], "files": []}),
+                with_skill=selected is not None,
+            )
+            if definition.get("dimensions")
+            else case,
             profile=profile,
             skill_name=selected.skill.name if selected else None,
             on_progress=lambda kind, message: progress.emit(
@@ -416,7 +469,20 @@ def execute_claimed_run(
             )
             return
         progress.stage("collecting_changes", "正在收集文件改动和响应证据")
-        changes = capture_changes(workspace)
+        changes = (
+            capture_changes(workspace, baseline=scene_baseline)
+            if case.workflow
+            else capture_changes(workspace)
+        )
+        (artifact_dir / "final-response.md").write_text(outcome.final_response, encoding="utf-8")
+        if definition.get("dimensions"):
+            terminal = collect_terminal_outputs(
+                workspace, case, changes["changed_files"], artifact_dir
+            )
+        workflow_result = (
+            inspect_workflow(workspace, case.workflow) if case.workflow and selected else None
+        )
+
         progress.stage("validators", "正在执行确定性验证器")
         deterministic, command_results = evaluate_deterministic(
             case,
@@ -424,6 +490,7 @@ def execute_claimed_run(
             changed_files=changes["changed_files"],
             artifact_dir=artifact_dir,
             on_log=log_writer.write,
+            evaluator_root=run_root / "evaluators",
         )
         evidence = {
             "final_response": outcome.final_response[-80_000:],
@@ -434,22 +501,30 @@ def execute_claimed_run(
             "agent_error_kind": outcome.error_kind,
             "skill_invoked": outcome.skill_invoked,
         }
-        judge_service = judge or build_judge(settings, profile.judge_provider)
-        progress.stage("judge", "Judge 正在进行盲评")
-        judge = judge_service.evaluate(
-            anonymous_id=anonymous_id,
-            case=case,
-            graders=case.graders,
-            evidence=evidence,
-            profile=profile,
-            artifact_dir=artifact_dir,
-            on_progress=lambda kind, message: progress.emit(
-                kind, message, activity=kind == "activity"
-            ),
-            on_log=log_writer.write,
-            is_cancelled=progress.cancelled,
-            chrys_home_root=chrys_home_root,
-        )
+        if definition.get("dimensions"):
+            evidence.update(terminal)
+        if workflow_result:
+            evidence["workflow_completion"] = workflow_result
+        write_json(artifact_dir / "terminal-evidence.json", evidence)
+        if any(grader.type == "llm_rubric" for grader in case.graders):
+            judge_service = judge or build_judge(settings, profile.judge_provider)
+            progress.stage("judge", "Judge 正在进行盲评")
+            judge_outcome = judge_service.evaluate(
+                anonymous_id=anonymous_id,
+                case=case,
+                graders=case.graders,
+                evidence=evidence,
+                profile=profile,
+                artifact_dir=artifact_dir,
+                on_progress=lambda kind, message: progress.emit(
+                    kind, message, activity=kind == "activity"
+                ),
+                on_log=log_writer.write,
+                is_cancelled=progress.cancelled,
+                chrys_home_root=chrys_home_root,
+            )
+        else:
+            judge_outcome = JudgeOutcome()
         if progress.cancelled():
             fail_run(
                 session_factory,
@@ -462,17 +537,38 @@ def execute_claimed_run(
             return
         progress.stage("scoring", "正在合并评分与 hard gates")
         merged = merge_scores(
-            case, deterministic, judge, extra=execution_time_component(case, outcome.duration_ms)
+            case,
+            deterministic,
+            judge_outcome,
+            extra=execution_time_component(case, outcome.duration_ms),
+            dimensions=[
+                DimensionSpec.model_validate(item) for item in definition.get("dimensions", [])
+            ],
         )
         merged["skill_invoked"] = outcome.skill_invoked
         merged["skills_loaded"] = list(outcome.skills_loaded)
+        if workflow_result:
+            merged["workflow_completion"] = workflow_result
+            merged["hard_gates_total"] += 1
+            merged["hard_gates_passed"] += int(workflow_result["passed"])
+            merged["components"].append(
+                {
+                    "grader_id": "system.workflow-completion",
+                    "name": "AAW 流程完成检查",
+                    "grader_type": "workflow",
+                    "score": 100 if workflow_result["passed"] else 0,
+                    "weight": 0,
+                    "hard_gate": True,
+                    "passed": workflow_result["passed"],
+                    "evidence": canonical_json(workflow_result),
+                    "dimension_id": None,
+                }
+            )
         write_json(
             artifact_dir / "input-and-rubric.json",
             {"case": case.model_dump(mode="json"), "anonymous_id": anonymous_id},
         )
-        (artifact_dir / "final-response.md").write_text(
-            outcome.final_response, encoding="utf-8"
-        )
+        (artifact_dir / "final-response.md").write_text(outcome.final_response, encoding="utf-8")
         (artifact_dir / "changes.patch").write_text(changes["patch"], encoding="utf-8")
         write_json(artifact_dir / "file-tree.json", file_tree_manifest(workspace))
         included = archive_untracked(
@@ -502,6 +598,9 @@ def execute_claimed_run(
         )
         write_json(artifact_dir / "scores.json", merged)
         status = outcome.error_kind or ("grader_invalid" if merged["invalid"] else "completed")
+        workflow_incomplete = bool(workflow_result and not workflow_result["passed"])
+        if workflow_incomplete and not outcome.error_kind and not merged["invalid"]:
+            status = "agent_error"
         progress.stage("persisting", "正在保存结果和证据包")
 
         def persist(session: Session) -> None:
@@ -517,8 +616,17 @@ def execute_claimed_run(
             run.exit_code = outcome.exit_code
             run.artifact_path = str(artifact_dir)
             run.score_json = canonical_json(merged)
-            run.error_kind = "grader_invalid" if merged["invalid"] else outcome.error_kind
-            run.error_message = merged.get("judge_error") or outcome.error_message
+            run.error_kind = (
+                "grader_invalid"
+                if merged["invalid"]
+                else outcome.error_kind or ("workflow_incomplete" if workflow_incomplete else None)
+            )
+            run.error_message = (
+                merged.get("judge_error")
+                or "; ".join(merged.get("evaluation_errors", []))
+                or outcome.error_message
+                or ("; ".join(workflow_result["errors"]) if workflow_incomplete else None)
+            )
             # 纯手动清理：现场一律保留在盘上，由用户在页面手动删除；
             # workspace_retained 仅表示"现场仍在磁盘上"。
             run.workspace_retained = True
@@ -626,15 +734,11 @@ def finish_experiment(
             experiment.status = "completed_with_failures" if failures else "completed"
             if failures:
                 experiment.error_kind = "run_failures"
-                experiment.error_message = (
-                    f"{len(failures)} run(s) did not complete successfully"
-                )
+                experiment.error_message = f"{len(failures)} run(s) did not complete successfully"
         experiment.completed_at = now()
         session.commit()
     for run in discarded_runs:
-        result = remove_run_workspace_dirs(
-            settings, run.experiment_id, run.id, run.current_attempt
-        )
+        result = remove_run_workspace_dirs(settings, run.experiment_id, run.id, run.current_attempt)
         mark_workspace_retained(session_factory, run.id, retained=bool(result["failed"]))
     status = experiment.status
     message = experiment.error_message or "所有 run 已完成"
@@ -683,9 +787,7 @@ def request_experiment_cancel(
         return experiment
 
 
-def prepare_retry(
-    settings: Settings, session_factory: sessionmaker[Session], run_id: str
-) -> Run:
+def prepare_retry(settings: Settings, session_factory: sessionmaker[Session], run_id: str) -> Run:
     old_attempt: int | None = None
     experiment_id: str | None = None
     with session_factory() as session:
@@ -744,12 +846,12 @@ def prepare_retry(
         experiment.completed_at = None
         session.add(
             RunProgressEvent(
-            run_id=run.id,
-            attempt=run.current_attempt,
-            kind="stage",
-            stage="queued",
-            message="正式重试已加入队列",
-        )
+                run_id=run.id,
+                attempt=run.current_attempt,
+                kind="stage",
+                stage="queued",
+                message="正式重试已加入队列",
+            )
         )
         session.commit()
         session.refresh(run)

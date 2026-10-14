@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 
+from conftest import seed_legacy_suite
 from fastapi.testclient import TestClient
 
 from aaw_skill_eval.services.observability.logs import MAX_LOG_READ_BYTES, LogWriter
@@ -40,9 +41,8 @@ def _suite(client: TestClient, project: Path, skill: Path) -> dict:
             "timeout_seconds": 300,
         },
     )
-    response = client.post(
-        "/api/v1/suites",
-        json={
+    return seed_legacy_suite(
+        client, {
             "name": "Fixture suite",
             "project_path": str(project),
             "skill_path": str(skill),
@@ -50,8 +50,6 @@ def _suite(client: TestClient, project: Path, skill: Path) -> dict:
             "cases": [draft["case"]],
         },
     )
-    assert response.status_code == 201, response.text
-    return response.json()
 
 
 def _wait(client: TestClient, experiment_id: str) -> dict:
@@ -276,12 +274,12 @@ def test_dirty_project_draft_returns_actionable_error(
     assert response.json()["code"] == "PROJECT_DIRTY"
 
 
-def test_index_supports_expected_markdown_upload(client: TestClient):
+def test_index_serves_benchmark_frontend(client: TestClient):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert 'id="expectedFile"' in response.text
-    assert 'accept=".md,.markdown,text/markdown,text/plain"' in response.text
+    assert 'id="root"' in response.text
+    assert '/assets/benchmark/assets/' in response.text
 
 
 def test_runtime_probe_is_cached_until_explicit_refresh(client: TestClient, monkeypatch):

@@ -83,6 +83,8 @@ def _acp_command(settings: Settings, agent_profile: str, cwd: Path) -> list[str]
 def _acp_environment(isolated_root: Path) -> dict[str, str]:
     """Env pointing the agent at the isolated config home (ex-session.start())."""
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+    env["AAW_UPDATE_CHECK"] = "off"
+    env["AAW_TELEMETRY_ENABLED"] = "false"
     if os.name == "nt":
         env["APPDATA"] = str(isolated_root)
     else:
@@ -213,7 +215,7 @@ class ChrysRunner(Runner):
                     (
                         index
                         for index, item in enumerate(case.followups)
-                        if index not in used
+                        if (index not in used or item.repeat)
                         and item.when_output_contains.casefold() in final.casefold()
                     ),
                     None,

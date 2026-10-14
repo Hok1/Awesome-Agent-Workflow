@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import secrets
 import shutil
@@ -45,18 +46,40 @@ def create(
                 "Evaluation suite was not found",
                 status_code=404,
             )
+        if suite.archived:
+            raise EvalError("SUITE_ARCHIVED", "测试套已归档，请先恢复", status_code=409)
         project = inspect_clean_project(suite.project_path)
         current = import_skill(session, settings, suite.skill.source_path)
         session.refresh(suite.skill)
         baseline_id = suite.skill.baseline_revision_id
+        if request.evaluation_mode == "current_only":
+            baseline_id = None
         if baseline_id == current.id:
             baseline_id = None
-        profile = enrich_profile(settings, request.profile)
+        definition = json.loads(suite.definition_json)
+        # 用户决策（2026-10-10）：workflow 套件允许 Chrys Runner——
+        # 独立 Reviewer 证据检查已在 inspect_workflow 降级为备注（Chrys 无 subagent 工具）
+        needs_judge = any(
+            g["type"] == "llm_rubric" for c in definition["cases"] for g in c["graders"]
+        )
+        profile = enrich_profile(settings, request.profile, needs_judge=needs_judge)
+        if any(c.get("workflow") for c in definition["cases"]) and profile.runner_snapshot:
+            snapshot = profile.runner_snapshot.model_copy(
+                update={
+                    "metadata": {
+                        **profile.runner_snapshot.metadata,
+                        "workflow_execution_policy": "aaw-terminal-v1",
+                        "skill_runner_multi_agent": True,
+                    }
+                }
+            )
+            profile = profile.model_copy(update={"runner_snapshot": snapshot})
         profile_data = profile.model_dump(mode="json")
         profile_identity = {key: value for key, value in profile_data.items() if key != "name"}
         profile_json = canonical_json(profile_data)
         experiment = Experiment(
             suite_id=suite.id,
+            evaluation_mode=request.evaluation_mode,
             current_revision_id=current.id,
             baseline_revision_id=baseline_id,
             project_commit=project.commit,
@@ -89,6 +112,7 @@ def create_retry(session_factory: sessionmaker[Session], experiment_id: str) -> 
         project_path = suite.project_path
         snapshot = {
             "suite_id": original.suite_id,
+            "evaluation_mode": original.evaluation_mode,
             "current_revision_id": original.current_revision_id,
             "baseline_revision_id": original.baseline_revision_id,
             "project_commit": original.project_commit,
@@ -154,7 +178,8 @@ def prepare_experiment(
     """
     chrys_template: Path | None = None
     experiment_log.event("system", "正在校验 Runner/Judge 配置", stage="preparing")
-    verify_profile(settings, profile)
+    needs_judge = any(g["type"] == "llm_rubric" for c in definition["cases"] for g in c["graders"])
+    verify_profile(settings, profile, needs_judge=needs_judge)
     experiment_log.event("system", "Runner/Judge 配置校验完成", stage="preparing")
     if experiment.retry_of_experiment_id:
         snapshot = inspect_project_commit(suite.project_path, experiment.project_commit)
@@ -173,7 +198,7 @@ def prepare_experiment(
     setup = SetupSpec.model_validate(definition.get("setup") or {})
     setup_log = prepare_base(base, setup, log_writer=experiment_log)
     write_json(settings.artifacts_dir / experiment_id / "setup.json", setup_log)
-    if profile.runner_provider == "chrys" or profile.judge_provider == "chrys":
+    if profile.runner_provider == "chrys" or (needs_judge and profile.judge_provider == "chrys"):
         chrys_template = prepare_experiment_chrys_template(settings, experiment_id)
         experiment_log.event(
             "system",
@@ -261,6 +286,8 @@ def create_runs(
         if existing is not None:
             return
         groups = ["no_skill", "current"]
+        if experiment.evaluation_mode == "current_only":
+            groups = ["current"]
         if has_baseline:
             groups.insert(1, "baseline")
         rng = random.Random(experiment.seed)

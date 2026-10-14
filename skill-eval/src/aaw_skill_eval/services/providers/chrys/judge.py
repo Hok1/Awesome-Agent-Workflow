@@ -46,7 +46,12 @@ class ChrysJudge(Judge):
             "task_input": case.input,
             "expected_effect": case.expected,
             "rubrics": [
-                {"grader_id": grader.id, "name": grader.name, "rubric": grader.rubric}
+                {
+                    "grader_id": grader.id,
+                    "name": grader.name,
+                    "rubric": grader.rubric,
+                    "allowed_scores": grader.allowed_scores,
+                }
                 for grader in llm_graders
             ],
             "evidence": evidence,
@@ -56,6 +61,7 @@ class ChrysJudge(Judge):
             "只依据任务、预期效果、Rubric 和证据评分。返回且仅返回合法 JSON："
             '{"candidate_id":"...","scores":[{"grader_id":"...","score":0,'
             '"evidence":"...","reasoning":"..."}]}。每个 grader_id 恰好一次，分数 0-100。\n\n'
+            "存在 allowed_scores 时，必须从规定档位中选择一个分数。\n\n"
             + json.dumps(payload, ensure_ascii=False, indent=2)
         )
         acp = _build_session(

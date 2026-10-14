@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from conftest import seed_legacy_suite
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 from sqlalchemy.exc import OperationalError
@@ -77,9 +78,8 @@ def _case(case_id: str) -> dict:
 
 
 def _suite(client: TestClient, project: Path, skill: Path, cases: list[dict]) -> dict:
-    response = client.post(
-        "/api/v1/suites",
-        json={
+    return seed_legacy_suite(
+        client, {
             "name": "Parallel suite",
             "project_path": str(project),
             "skill_path": str(skill),
@@ -87,8 +87,6 @@ def _suite(client: TestClient, project: Path, skill: Path, cases: list[dict]) ->
             "cases": cases,
         },
     )
-    assert response.status_code == 201, response.text
-    return response.json()
 
 
 def _experiment(
@@ -891,9 +889,9 @@ def test_chrys_experiment_gives_each_run_private_config_home(
     import aaw_skill_eval.services.orchestration.execution as execution_module
     import aaw_skill_eval.services.orchestration.prepare as prepare_module
 
-    monkeypatch.setattr(prepare_module, "enrich_profile", lambda settings, profile: profile)
-    monkeypatch.setattr(prepare_module, "verify_profile", lambda settings, profile: None)
-    monkeypatch.setattr(execution_module, "verify_profile", lambda settings, profile: None)
+    monkeypatch.setattr(prepare_module, "enrich_profile", lambda settings, profile, **kw: profile)
+    monkeypatch.setattr(prepare_module, "verify_profile", lambda settings, profile, **kw: None)
+    monkeypatch.setattr(execution_module, "verify_profile", lambda settings, profile, **kw: None)
 
     original = client.app.state.orchestrator.runner
     captured: list[dict] = []

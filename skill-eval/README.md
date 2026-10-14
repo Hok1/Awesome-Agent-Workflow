@@ -1,13 +1,23 @@
 # AAW Skill Eval
 
-AAW Skill Eval 是独立的本地 Agent Skill A/B 测试平台。它从同一个干净 Git commit
-创建一次性工作区，对比无 Skill、上一基准版本和当前候选版本，并保存盲评得分、
-hard gate、运行轨迹与证据包。Runner 和 Judge 支持 Codex 与 Chrys，默认使用同一
-平台和模型，也可以分别选择。
+AAW Skill Eval 是本地 AI Agent Skill Benchmark 平台。新版以固定测试套为入口，
+通过 Chrys 生成可编辑用例草稿、隔离校验，保存后锁定用例与项目地址。
+每次只执行当前 Skill，以指定历史执行作为基准，展示多维度分数、运行趋势、日志和证据。
+生成、执行与评分模型分别配置；Agent 接口支持扩展其他提供方。
 
-创建测试时，“预期效果”既可以直接填写，也可以导入不超过 2 MB 的 `.md` 或
-`.markdown` 文件。文件只在浏览器本地读取，Markdown 原文会填入文本框并作为
-Judge 的预期效果输入。
+新版流程、前端构建和目录说明见 [Benchmark 平台说明](docs/benchmark-platform.md)。
+下文旧 A/B 接口说明保留供脚本参考，新界面不提供 Codex 配置。
+
+创建测试时，“软件开发”和“文档与分析设计”两组固定维度同时可选。
+维度名称、代码／LLM／混合评价方式、核心检查点、检查权重和评分档位由系统统一规定，
+不能自定义。软件开发增加“架构约束符合性”，通过代码检查依赖方向、模块边界和循环依赖。
+每个维度分别导入目录／ZIP 用例包；用户可配置任务、项目约束、参考材料、验证脚本、
+用例与维度权重及硬门禁。相同场景可由多个维度共用一次 Agent 执行。
+页面提供每个固定维度的用例模板，保存时固化标准版本和全部文件快照。
+AAW 场景声明 `sr/ar/dev` 入口；流程结束后联合评价保留的文档、代码和验证记录。
+流程未完成、门禁不通过或任务验证记录缺失时不能显示正常完成；不保存阶段快照。
+详见 [用例包格式与评分规则](docs/test-packages.md)。已有自由维度和旧版套件标记为旧版，
+继续使用原定义运行；新建 API 只接受固定标准套件。
 
 ## 启动
 
@@ -25,6 +35,8 @@ aaw-skill-eval
 ## Runner 与 Judge
 
 - Codex 与 Chrys 都可独立担任 Runner 或 Judge；仅安装其中一个也可以运行；
+- 声明 `workflow` 的 AAW 场景当前要求 Codex Runner，开启真实独立 Reviewer 能力。
+  Chrys Runner 未提供 subagent，启动前明确拒绝这类场景；普通场景与 Chrys Judge 不受影响。
 - Chrys 模型从 `chrys models --json` 自动加载，实验创建时会固化模型、Runtime 版本、
   Agent 配置哈希、隔离和评分配置；排队后配置发生变化会让实验明确失败；
 - Chrys 会维护 `%APPDATA%\chrys\agents\AAW-Eval-Runner.yaml` 与
@@ -55,6 +67,7 @@ aaw-skill-eval
 Codex 默认使用 `workspace-write` 沙箱、`approval_policy=never`、禁用网络、Web Search、
 Apps、远程插件、自动安装 Skill 依赖和多 Agent。测试定义中的 setup、preflight 与
 command grader 是用户明确配置的本地可信命令，运行前会在页面展示。
+AAW 工作流场景仅对带 Skill 的 Runner 开启多 Agent，以满足 task-dev 的两名只读 Reviewer。
 
 Chrys 使用一次性 Git 工作区和受管 Agent Profile 做软隔离，但 Chrys Runtime 当前
 不提供与 Codex 等价的强制网络沙箱，因此页面会明确标记 `soft / uncontrolled`。

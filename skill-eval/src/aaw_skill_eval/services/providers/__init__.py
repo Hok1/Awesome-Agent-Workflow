@@ -15,9 +15,21 @@ from .base import (
 )
 from .chrys import ChrysJudge, ChrysRunner
 from .codex import CodexJudge, CodexRunner
+from .registry import RUNTIME_FACTORIES, AgentRuntime
 
 _RUNNERS: dict[str, type[Runner]] = {"chrys": ChrysRunner, "codex": CodexRunner}
 _JUDGES: dict[str, type[Judge]] = {"chrys": ChrysJudge, "codex": CodexJudge}
+
+
+def register_provider(
+    provider: str, *, runner: type[Runner], judge: type[Judge], runtime: type[AgentRuntime]
+) -> None:
+    """Register execution, scoring and runtime discovery without changing orchestration."""
+    if provider in _RUNNERS:
+        raise ValueError(f"Agent provider is already registered: {provider}")
+    _RUNNERS[provider] = runner
+    _JUDGES[provider] = judge
+    RUNTIME_FACTORIES[provider] = runtime
 
 
 def build_runner(settings: Settings, provider: str) -> Runner:

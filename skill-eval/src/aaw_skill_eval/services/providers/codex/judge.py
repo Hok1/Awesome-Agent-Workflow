@@ -67,13 +67,22 @@ class CodexJudge(Judge):
                 },
             },
         }
+        if all(grader.allowed_scores for grader in llm_graders):
+            schema["properties"]["scores"]["items"]["properties"]["score"]["enum"] = sorted(
+                {score for grader in llm_graders for score in grader.allowed_scores}
+            )
         write_json(schema_path, schema)
         payload = {
             "candidate_id": anonymous_id,
             "task_input": case.input,
             "expected_effect": case.expected,
             "rubrics": [
-                {"grader_id": grader.id, "name": grader.name, "rubric": grader.rubric}
+                {
+                    "grader_id": grader.id,
+                    "name": grader.name,
+                    "rubric": grader.rubric,
+                    "allowed_scores": grader.allowed_scores,
+                }
                 for grader in llm_graders
             ],
             "evidence": evidence,
@@ -82,6 +91,7 @@ class CodexJudge(Judge):
             "你是独立的 Agent Skill 评测 Judge。候选产物已匿名化，你不知道它来自哪一组。"
             "只依据给定任务、预期效果、Rubric 和证据评分。每个 grader_id 必须恰好返回一次，"
             "分数范围 0-100。不要推测候选版本，不要奖励与 Rubric 无关的内容。\n\n"
+            "存在 allowed_scores 时，必须从规定档位中选择一个分数。\n\n"
             + json.dumps(payload, ensure_ascii=False, indent=2)
         )
         last_message = judge_dir / "result.json"
