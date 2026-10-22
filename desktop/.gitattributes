@@ -1,0 +1,10 @@
+# 行尾统一为 LF。仓库的 prettier 配置要求 endOfLine=lf，但 Windows 默认
+# core.autocrlf=true 会在检出时把文件翻成 CRLF，于是本地 `npm run format:check`
+# 会对整个 desktop/ 报错（Linux/CI 上却通过）。gitattributes 的 eol 优先于
+# core.autocrlf，可消除这个平台差异。
+* text=auto eol=lf
+
+# 图片按二进制处理，不做行尾转换
+*.png binary
+*.ico binary
+*.icns binary
