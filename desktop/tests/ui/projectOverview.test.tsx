@@ -1,0 +1,322 @@
+/**
+ * 项目总览界面测试（内容区的项目视图）：
+ * - 空态引导与「添加项目」主行动入口；
+ * - 状态行：健康摘要 chip（✓ / ⚠ / ✕）+ 连接态与「新建会话」主行动按钮
+ *   （按钮不点名具体 agent：用户的心智是「开始一条会话」，不是「建立
+ *   ACP 长连接」）；
+ * - 明细默认收起、检查有问题或检查中自动展开、点 chip 可手动开合；
+ * - 健康报告渲染为 通过/失败/警告 与修复指引；
+ * - AAW 工作流状态由 AawStatusPanel 单点渲染；项目没有 .sdd/（体检结论为
+ *   警告）时收成一行，不占正文；
+ * - 已连接时给「进入会话」出口（总览不是死胡同），旁边是「新建会话」。
+ *
+ * 项目名 / 路径 / 「关闭项目」按钮已收编至内容区上下文条（ContextBar），
+ * 其行为在 workbench/ContextBar.test.tsx 覆盖。树侧的选中交互见
+ * workbench.test.tsx。
+ *
+ * 异步探测的 defaultProcessRunner 以「永不完成」的 fake 替身注入
+ * （vi.mock tauriProcessRunner 模块），保证 store 回填的数据不被真实检查
+ * 结果覆盖——真实通路已由 store 测试覆盖。
+ */
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import ProjectOverview from "../../src/ui/workbench/ProjectOverview.tsx";
+import { useWorkspaceStore } from "../../src/stores/workspaceStore.ts";
+import { useWorkbenchUiStore } from "../../src/stores/workbenchUiStore.ts";
+import type {
+  CliRunResult,
+  ProcessRunner,
+} from "../../src/aaw/processRunner.ts";
+import type { HealthCheckItem } from "../../src/aaw/healthChecks.ts";
+
+/** 永不完成的 runner：让自动检查挂起，保持注入的现场稳定。
+ * （定义在工厂内部：vi.mock 工厂被提升，不能引用外部顶层变量；
+ * 该模块仅导出 createTauriProcessRunner / defaultProcessRunner，
+ * 直接整体替换，不需要 importOriginal 保留原实现。） */
+vi.mock("../../src/aaw/tauriProcessRunner.ts", () => {
+  const neverResolvingRunner: ProcessRunner = {
+    run: () => new Promise<CliRunResult>(() => {}),
+    exists: () => new Promise<boolean>(() => {}),
+  };
+  return {
+    createTauriProcessRunner: () => neverResolvingRunner,
+    defaultProcessRunner: neverResolvingRunner,
+  };
+});
+
+const DEMO_PATH = "D:/dev/demo-project";
+
+const DEMO_HEALTH_ITEMS: readonly HealthCheckItem[] = [
+  {
+    id: "chrys",
+    label: "chrys 可执行",
+    status: "pass",
+    summary: "chrys 1.2.3（耗时 12ms）",
+    fixHint: "",
+    durationMs: 12,
+  },
+  {
+    id: "uv",
+    label: "uv 可执行",
+    status: "fail",
+    summary: "命令启动失败（不存在或不可执行）",
+    fixHint: "无法执行 uv（uv）。请到「设置」页核对 uv 工具路径。",
+    durationMs: 5,
+  },
+  {
+    id: "aaw-cli",
+    label: "aaw CLI（uv run）",
+    status: "fail",
+    summary: "已跳过：uv 不可用",
+    fixHint: "先修复上方的 uv 检查项。",
+    durationMs: 0,
+  },
+  {
+    id: "sdd-dir",
+    label: ".sdd/ 流程目录",
+    status: "warn",
+    summary: "所选目录下没有 .sdd/",
+    fixHint: "该目录尚未初始化 AAW 工作流。",
+    durationMs: 1,
+  },
+];
+
+function resetWorkspaceState(): void {
+  window.localStorage.clear();
+  useWorkbenchUiStore.setState({
+    treeView: "project-overview",
+    contextPath: null,
+    isAawOpen: false,
+  });
+  useWorkspaceStore.setState({
+    recentWorkspaces: [],
+    favoritePaths: [],
+    selectedPath: null,
+    activePath: null,
+    health: null,
+    isCheckingHealth: false,
+    toolPaths: {
+      chrysCommand: "chrys",
+      uvCommand: "uv",
+      aawScriptPath: "D:/repo/skills/aaw-workflow/scripts/aaw.py",
+    },
+  });
+}
+
+describe("ProjectOverview", () => {
+  beforeEach(() => {
+    resetWorkspaceState();
+  });
+
+  it("未选择项目（path=null）：显示引导空态", () => {
+    render(<ProjectOverview path={null} />);
+    expect(
+      screen.getByText(/从左侧选择或新建一个项目目录/),
+    ).toBeInTheDocument();
+  });
+
+  it("空态带「添加项目」主行动入口与一行价值说明（冷启动可行动）", async () => {
+    render(<ProjectOverview path={null} />);
+    const addButton = screen.getByRole("button", { name: "添加项目" });
+    expect(addButton).toBeEnabled();
+    expect(screen.getByText(/添加后自动健康检查/)).toBeInTheDocument();
+
+    // jsdom 下目录对话框不可用（pickDirectory 捕获后按取消处理）：
+    // 点击给出重试提示而非无响应
+    await userEvent.click(addButton);
+    expect(
+      await screen.findByText(/目录选择不可用或已取消/),
+    ).toBeInTheDocument();
+  });
+
+  it("未连接时主行动按钮是「新建会话」；连接后换成「进入会话」+「新建会话」两个", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    const { rerender } = render(<ProjectOverview path={DEMO_PATH} />);
+    // 未连接：唯一主动作就是新建会话（连接是它的内部步骤，不单独成按钮）
+    expect(
+      screen.getByRole("button", { name: "新建会话" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "进入会话" }),
+    ).not.toBeInTheDocument();
+
+    // 已连接：主按钮回到正在跑的会话，旁边留新建
+    useWorkspaceStore.getState().openWorkspace(DEMO_PATH);
+    rerender(<ProjectOverview path={DEMO_PATH} />);
+    expect(
+      screen.getByRole("button", { name: "进入会话" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "新建会话" }),
+    ).toBeInTheDocument();
+  });
+
+  it("界面文案不点名具体 agent（后续要接更多 agent）", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    render(<ProjectOverview path={DEMO_PATH} />);
+    expect(screen.queryByText(/连接 chrys/)).not.toBeInTheDocument();
+  });
+
+  it("所示项目变化时自动触发健康检查（永不完成的 runner 使摘要保持检查中并展开明细）", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    render(<ProjectOverview path={DEMO_PATH} />);
+    // 状态行：检查中摘要 + 新建会话主行动；检查中自动展开明细
+    expect(screen.getByText("检查中…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "新建会话" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/正在逐项探测 chrys \/ uv \/ aaw CLI/),
+    ).toBeInTheDocument();
+  });
+
+  it("回填的健康报告渲染为 通过/失败/警告 与修复指引，且明细自动展开", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    useWorkspaceStore
+      .getState()
+      .applyHealthReport(DEMO_PATH, DEMO_HEALTH_ITEMS);
+    render(<ProjectOverview path={DEMO_PATH} />);
+    // 摘要 chip 点名未通过的项（不通过时自动展开明细）
+    expect(
+      screen.getByText(/uv 可执行、aaw CLI（uv run） 未通过/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("chrys 1.2.3（耗时 12ms）")).toBeInTheDocument();
+    expect(screen.getByText("通过")).toBeInTheDocument();
+    expect(screen.getByText("警告")).toBeInTheDocument();
+    expect(screen.getAllByText("失败").length).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getByText(/请到「设置」页核对 uv 工具路径/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/该目录尚未初始化 AAW 工作流/)).toBeInTheDocument();
+  });
+
+  it("全部通过时明细默认收起，点摘要 chip 展开 / 收起", async () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    const allPass = DEMO_HEALTH_ITEMS.map((item) => ({
+      ...item,
+      status: "pass" as const,
+      fixHint: "",
+    }));
+    useWorkspaceStore.getState().applyHealthReport(DEMO_PATH, allPass);
+    render(<ProjectOverview path={DEMO_PATH} />);
+
+    // 全通过：摘要为 ✓n/n，明细收起（检查项行不在）
+    const chip = screen.getByRole("button", { name: /全部检查通过|✓/ });
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByText("chrys 1.2.3（耗时 12ms）"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("chrys 1.2.3（耗时 12ms）")).toBeInTheDocument();
+
+    await userEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("AAW 工作流状态只有一处渲染（旧的「工作流状态（aaw status）」卡已合并）", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    render(<ProjectOverview path={DEMO_PATH} />);
+    // 唯一状态面板 + 其空态引导（未绑定 loader 时）
+    expect(screen.getAllByRole("region", { name: "工作流状态" })).toHaveLength(
+      1,
+    );
+    expect(
+      screen.queryByRole("heading", { name: "工作流状态（aaw status）" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("已连接：「进入会话」与「新建会话」并列；关闭入口仍在上下文条（总览体内无关闭）", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    useWorkspaceStore.getState().openWorkspace(DEMO_PATH);
+    render(<ProjectOverview path={DEMO_PATH} />);
+    expect(
+      screen.getByRole("button", { name: "进入会话" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "新建会话" }),
+    ).toBeInTheDocument();
+    // 关闭动作在 ContextBar（见 ContextBar.test），总览体内不放
+    expect(
+      screen.queryByRole("button", { name: "关闭项目" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("「进入会话」：把内容区落到该项目的会话视图（已连接的项目一步进对话）", async () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    useWorkspaceStore.getState().openWorkspace(DEMO_PATH);
+    render(<ProjectOverview path={DEMO_PATH} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "进入会话" }));
+    const ui = useWorkbenchUiStore.getState();
+    expect(ui.treeView).toBe("session");
+    expect(ui.contextPath).toBe(DEMO_PATH);
+  });
+
+  it("没有 .sdd/（体检为警告）：工作流面板收成一行，可「仍然查看」手动展开", async () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    useWorkspaceStore
+      .getState()
+      .applyHealthReport(DEMO_PATH, DEMO_HEALTH_ITEMS);
+    render(<ProjectOverview path={DEMO_PATH} />);
+
+    // 无工作流可看：面板本体退场，只留一行说明 + 手动展开入口
+    expect(
+      screen.queryByRole("region", { name: "工作流状态" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/还没有 AAW 工作流/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "仍然查看" }));
+    expect(
+      screen.getByRole("region", { name: "工作流状态" }),
+    ).toBeInTheDocument();
+  });
+
+  it("有 .sdd/：工作流面板正常在位（不被折叠规则收走）", () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    useWorkspaceStore.getState().applyHealthReport(
+      DEMO_PATH,
+      DEMO_HEALTH_ITEMS.map((item) =>
+        item.id === "sdd-dir"
+          ? {
+              ...item,
+              status: "pass" as const,
+              summary: ".sdd/ 已存在",
+              fixHint: "",
+            }
+          : item,
+      ),
+    );
+    render(<ProjectOverview path={DEMO_PATH} />);
+    expect(
+      screen.getByRole("region", { name: "工作流状态" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/还没有 AAW 工作流/)).not.toBeInTheDocument();
+  });
+
+  it("「新建会话」走真新建通路（forceNew，不落进上一次的对话）", async () => {
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    render(<ProjectOverview path={DEMO_PATH} />);
+    await userEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    expect(useWorkspaceStore.getState().activePath).toBe(DEMO_PATH);
+  });
+
+  it("检查未通过时状态行给出「去设置工具路径」出口（点开设置覆盖层）", async () => {
+    const { useWorkbenchUiStore } =
+      await import("../../src/stores/workbenchUiStore.ts");
+    useWorkbenchUiStore.setState({ overlay: null });
+    useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+    useWorkspaceStore
+      .getState()
+      .applyHealthReport(DEMO_PATH, DEMO_HEALTH_ITEMS);
+    render(<ProjectOverview path={DEMO_PATH} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "去设置工具路径" }),
+    );
+    expect(useWorkbenchUiStore.getState().overlay).toBe("settings");
+  });
+});

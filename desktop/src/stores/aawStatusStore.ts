@@ -1,0 +1,256 @@
+/**
+ * AAW 工作流状态 store：`aaw status / next --json` 只读视图的唯一状态源。
+ *
+ * 数据流（与 architecture.md 的上行数据流一致）：
+ *   数据源 loader（src/aaw/statusLoader.ts 的 CLI 封装，由组装层在
+ *   选定工作区后注入）→ 领域解析器（src/aaw）→ 本 store → 面板组件按
+ *   选择器渲染。
+ *
+ * 严格只读：本 store 的所有读取走 `next --peek` 语义（loader 契约由注入方
+ * 保证），不提供任何推进 / 回退 / 放行类写操作。
+ */
+import { create } from "zustand";
+import { createLogger } from "../core/logger.ts";
+import type { AcpSessionEvent } from "../acp/session.ts";
+import type { AawStatusLoader } from "../aaw/statusLoader.ts";
+import {
+  parseCliError,
+  parseNextPayload,
+  parseSrList,
+  parseWorkflowStatus,
+  type AawNextPayload,
+  type AawSrList,
+  type AawWorkflowStatus,
+} from "../aaw/workflowModel.ts";
+
+/** loader 注入接口归 aaw 层所有（src/aaw/statusLoader.ts）；此处再导出
+ * 供既有调用方（测试、组装层）按原路径引用。 */
+export type { AawStatusLoader };
+
+const logger = createLogger("aaw");
+
+interface AawStatusStoreState {
+  /** 注入的数据源；null 时面板呈「未连接」空态。 */
+  loader: AawStatusLoader | null;
+  /** 项目内全部 SR 编号（status --json）。 */
+  srs: readonly string[];
+  /** 面板当前跟踪的 SR。 */
+  currentSr: string | null;
+  /** 当前 SR 的 status 解析结果。 */
+  status: AawWorkflowStatus | null;
+  /** 当前 SR 的 next（--peek）解析结果。 */
+  next: AawNextPayload | null;
+  isLoading: boolean;
+  /** 最近一次刷新的错误（loader 异常或输出无法解析）；成功时清空。 */
+  lastError: string | null;
+  /** 最近一次成功刷新的 ISO 时间戳。 */
+  lastRefreshedAt: string | null;
+  /** 会话事件自动刷新开关。 */
+  autoRefresh: boolean;
+  /** 绑定 / 解绑数据源。 */
+  bindLoader: (loader: AawStatusLoader | null) => void;
+  /** 切换当前跟踪的 SR（并立即刷新该 SR）。 */
+  selectSr: (sr: string) => void;
+  /** 手动刷新：srs 列表 + 当前 SR 的 status / next。 */
+  refresh: () => Promise<void>;
+  setAutoRefresh: (enabled: boolean) => void;
+  /**
+   * 会话事件入口：由会话层把 AcpSession 事件流接到这里，面板据此自动
+   * 刷新（节流）。任何事件都可能意味着 agent 在推进工作流，统一节流
+   * 而不细分类型。
+   */
+  handleSessionEvent: (event: AcpSessionEvent) => void;
+  /** 清空全部状态（测试现场清理用）。 */
+  reset: () => void;
+}
+
+/** 自动刷新的最小间隔（会话事件密集，尾随节流防止刷新风暴）。 */
+const AUTO_REFRESH_MIN_INTERVAL_MS = 2_000;
+
+// 节流器是模块级私有状态，不进 store（不是 UI 状态）
+let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let lastAutoRefreshAt = 0;
+/** refresh 重入保护（手动刷新与自动刷新并发时只跑一份）。 */
+let refreshInFlight = false;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function describeUnparsable(source: string, raw: unknown): string {
+  const cliError = parseCliError(raw);
+  if (cliError !== null) {
+    return `${source}：${cliError.message}（${cliError.code}）`;
+  }
+  return `${source} 输出无法解析`;
+}
+
+export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
+  /** 解析结果 → store（refresh 的唯一写入口）。 */
+  function applySrList(parsed: AawSrList): void {
+    const { currentSr } = get();
+    // 当前 SR 不在列表中（或尚未选择）时回落到首个 SR
+    const next =
+      currentSr !== null && parsed.srs.includes(currentSr)
+        ? currentSr
+        : (parsed.srs[0] ?? null);
+    set({
+      srs: parsed.srs,
+      ...(next === currentSr ? {} : { currentSr: next }),
+    });
+  }
+
+  /** status/next 原样入 store：currentSr 是 UI 的选择，不被数据回写。 */
+  function applyStatus(parsed: AawWorkflowStatus): void {
+    set({ status: parsed });
+  }
+
+  function applyNext(parsed: AawNextPayload): void {
+    set({ next: parsed });
+  }
+
+  return {
+    loader: null,
+    srs: [],
+    currentSr: null,
+    status: null,
+    next: null,
+    isLoading: false,
+    lastError: null,
+    lastRefreshedAt: null,
+    autoRefresh: true,
+
+    bindLoader: (loader) => {
+      set({ loader });
+      logger.info(loader === null ? "AAW 数据源已解绑" : "AAW 数据源已绑定");
+    },
+
+    selectSr: (sr) => {
+      if (get().currentSr === sr) {
+        return;
+      }
+      set({ currentSr: sr, status: null, next: null });
+      void get().refresh();
+    },
+
+    refresh: async () => {
+      const { loader } = get();
+      if (loader === null) {
+        logger.debug("未绑定 AAW 数据源，跳过刷新");
+        return;
+      }
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      set({ isLoading: true });
+      const errors: string[] = [];
+      try {
+        try {
+          const rawSrs = await loader.listSrs();
+          const parsed = parseSrList(rawSrs);
+          if (parsed === null) {
+            errors.push(describeUnparsable("status", rawSrs));
+          } else {
+            applySrList(parsed);
+          }
+        } catch (error) {
+          errors.push(`status 读取失败：${errorMessage(error)}`);
+        }
+        const sr = get().currentSr;
+        if (sr !== null) {
+          const [statusResult, nextResult] = await Promise.allSettled([
+            loader.readStatus(sr),
+            loader.readNext(sr),
+          ]);
+          if (statusResult.status === "fulfilled") {
+            const parsed = parseWorkflowStatus(statusResult.value);
+            if (parsed === null) {
+              errors.push(
+                describeUnparsable(`status --sr ${sr}`, statusResult.value),
+              );
+            } else {
+              applyStatus(parsed);
+            }
+          } else {
+            errors.push(
+              `status --sr ${sr} 读取失败：${errorMessage(statusResult.reason)}`,
+            );
+          }
+          if (nextResult.status === "fulfilled") {
+            const parsed = parseNextPayload(nextResult.value);
+            if (parsed === null) {
+              errors.push(
+                describeUnparsable(`next --sr ${sr}`, nextResult.value),
+              );
+            } else {
+              applyNext(parsed);
+            }
+          } else {
+            errors.push(
+              `next --sr ${sr} 读取失败：${errorMessage(nextResult.reason)}`,
+            );
+          }
+        }
+        set({
+          isLoading: false,
+          lastError: errors.length === 0 ? null : errors.join("；"),
+          ...(errors.length === 0
+            ? { lastRefreshedAt: new Date().toISOString() }
+            : {}),
+        });
+      } finally {
+        refreshInFlight = false;
+      }
+    },
+
+    setAutoRefresh: (enabled) => {
+      set({ autoRefresh: enabled });
+    },
+
+    handleSessionEvent: () => {
+      // 事件内容本身不消费：任何会话活动都可能是工作流推进的信号，
+      // 统一进入节流器决定是否刷新（签名见 AawStatusStoreState）。
+      scheduleAutoRefresh();
+    },
+
+    reset: () => {
+      set({
+        srs: [],
+        currentSr: null,
+        status: null,
+        next: null,
+        isLoading: false,
+        lastError: null,
+        lastRefreshedAt: null,
+      });
+    },
+  };
+});
+
+/** 节流自动刷新：首个事件立即触发，冷却期内的后续事件尾随补一次。 */
+function scheduleAutoRefresh(): void {
+  if (autoRefreshTimer !== null) {
+    return;
+  }
+  const elapsed = Date.now() - lastAutoRefreshAt;
+  const wait = Math.max(0, AUTO_REFRESH_MIN_INTERVAL_MS - elapsed);
+  if (wait === 0) {
+    fireAutoRefresh();
+    return;
+  }
+  autoRefreshTimer = setTimeout(() => {
+    autoRefreshTimer = null;
+    fireAutoRefresh();
+  }, wait);
+}
+
+function fireAutoRefresh(): void {
+  const state = useAawStatusStore.getState();
+  if (!state.autoRefresh || state.loader === null || state.currentSr === null) {
+    return;
+  }
+  lastAutoRefreshAt = Date.now();
+  logger.debug("会话事件触发自动刷新");
+  void state.refresh();
+}

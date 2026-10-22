@@ -1,0 +1,290 @@
+@import "tailwindcss";
+/* highlight.js 主题：配合 rehype-highlight 渲染代码块。
+   基底引入 github-dark（暗夜为默认主题）；暖白下的 token 覆盖见文件末尾
+   的 `html.theme-warm` 作用域块。 */
+@import "highlight.js/styles/github-dark.css";
+
+/**
+ * 原生控件配色与全局滚动条（一次收口，组件不再各自写滚动条样式）：
+ *
+ * - color-scheme 告知浏览器表单控件 / 滚动条的深浅底：默认（暗夜）为
+ *   dark，暖白主题随 `theme-warm` 根类切换为 light——否则暗底下会露出
+ *   浅色滚动条与原生控件（select 下拉、input 光标等）；
+ * - 滚动条统一为 8px 细条：Firefox 走 scrollbar-width/-color，WebKit 系
+ *   走 ::-webkit-scrollbar 伪元素，颜色引用语义 token（随主题切换）。
+ */
+/**
+ * 文档层不滚动（应用外壳自己管滚动）。
+ *
+ * 桌面应用是固定视口的三栏工作台，不是文档页：文档一旦成为滚动容器，
+ * 触摸板双指横扫 / 滚轮就会把**整页**（含左侧图标窄栏与项目树）一起
+ * 平移出视口，露出窗口底色——界面看起来能「被划走」。
+ *
+ * 因此这里把三层（html / body / #root）的高度锁成视口高、滚动一并关闭，
+ * 并关掉滚动链（overscroll-behavior: none），让滚轮 / 触摸板手势只在
+ * 应用内部的滚动容器里生效，不再外溢带动整页。
+ */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* 桌面外壳不是可缩放文档：pinch 手势不参与缩放，避免界面被放大后
+     只剩一部分可见、需要靠平移去找内容 */
+  touch-action: pan-x pan-y;
+}
+
+html {
+  color-scheme: dark;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+html.theme-warm {
+  color-scheme: light;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/**
+ * 内部滚动容器：
+ * - 滚到自己尽头就停（overscroll-behavior: contain），手势不继续传给
+ *   祖先，也就不会「滚完列表接着把整页带走」；
+ * - 纵向滚动容器一律禁止横向滚动。CSS 里 overflow-y 为 auto 而
+ *   overflow-x 为 visible 时，overflow-x 会被计算成 auto——一条超长的
+ *   Windows 路径、URL 或代码行就足以让**整个内容区横向可拖**，触摸板
+ *   横扫即把界面拖偏。真正的横向滚动（代码块、表格）都显式写
+ *   `overflow-x-auto`，不在这一档里。
+ * 用属性选择器一次覆盖，组件不必逐个补类。
+ */
+[class*="overflow-y-auto"],
+[class*="overflow-auto"] {
+  overscroll-behavior: contain;
+}
+
+[class*="overflow-y-auto"] {
+  overflow-x: hidden;
+}
+
+/**
+ * 双主题语义 token（Tailwind v4 CSS-first）：
+ *
+ * `@theme` 里的 `--color-*` 会被 Tailwind 生成同名工具类
+ * （bg-base / bg-surface / border-line / text-ink / text-ok-ink …），
+ * 且工具类引用的是 `var(--color-*)` 本身——因此只要在
+ * `html.theme-warm` 作用域覆盖这些变量，全部工具类即运行时切换，
+ * 无需任何 JS 参与或双份样式。
+ *
+ * 默认值 = 暗夜（沿用原 neutral 950/900/800 体系）；暖白 = 米白基底 +
+ * 暖灰墨色文字。语义分层：
+ * - base：页面底 / surface：面板植面 / raised：浮起元素（输入框、chip）
+ * - line / line-strong：描边两级（对应原 neutral 系 800 与 700 / 600）
+ * - ink·soft·mute·faint·ghost：文字五级（对应原 neutral 系 100 → 600）
+ * - ok / warn / danger / info：状态徽标三件套（bg / ink / line），
+ *   暗夜为深底亮字，暖白为浅底深字（emerald-100/800 一类）；
+ * - accent-ink：accent 文字级（暗夜 sky-300 / 暖白 sky-700）——纯
+ *   sky-300 在浅底下对比不足，故单列一个随主题取值的文字 token；
+ *   accent 实底（bg-sky-600 系）两主题均可读，不设 token。
+ *
+ * 字号刻度（`--text-*`）同样收在这里：全站只允许**四档**——
+ *
+ * | 工具类     | 值   | 用途                                   |
+ * | text-2xs   | 11px | 最次要小字：时间戳 / 徽标 / 角标        |
+ * | text-xs    | 12px | 默认 UI 字：控件 / 列表项 / 正文小字    |
+ * | text-md    | 13px | 强调小字：行标题 / 区块标题 / 输入框    |
+ * | text-sm    | 14px | 主操作字：主按钮 / 面板标题             |
+ *
+ * 之前是 nine 档碎片（9 / 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 14），
+ * 因为缺刻度，每次「看着差一点」就手写一个 `text-[11.5px]`——感觉每次
+ * 都不太一样，于是同一行里出现三种字号、视觉重心乱飘。新增档位一律往
+ * 这四档里并，不再引入任意值。
+ */
+@theme {
+  /* 字号刻度（见上方说明；text-xs / text-sm 用 Tailwind 原生值） */
+  --text-2xs: 0.6875rem; /* 11px · 最次要小字 */
+  --text-md: 0.8125rem; /* 13px · 强调小字 */
+
+  /* 层级底色 */
+  --color-base: #0a0a0a; /* 页面底（对应原 neutral 系 950 底色） */
+  --color-surface: #171717; /* 面板植面（对应原 neutral 系 900 底色） */
+  --color-raised: #262626; /* 浮起元素（对应原 neutral 系 800 底色） */
+
+  /* 描边 */
+  --color-line: #262626; /* 常规描边（对应原 neutral 系 800 描边） */
+  --color-line-strong: #404040; /* 强描边 / hover（对应原 neutral 系 700 / 600 描边） */
+
+  /* 文字五级 */
+  --color-ink: #f5f5f5; /* 主文字（对应原 neutral 系 100 / 200 文字） */
+  --color-ink-soft: #d4d4d4; /* 次级（对应原 neutral 系 300 文字） */
+  --color-ink-mute: #a3a3a3; /* 弱化（对应原 neutral 系 400 文字） */
+  --color-ink-faint: #737373; /* 更弱（对应原 neutral 系 500 文字） */
+  --color-ink-ghost: #525252; /* 最弱（对应原 neutral 系 600 文字） */
+
+  /* 状态：通过（emerald 系） */
+  --color-ok-bg: #022c22;
+  --color-ok-ink: #6ee7b7;
+  --color-ok-line: #065f46;
+
+  /* 状态：警告（amber 系） */
+  --color-warn-bg: #451a03;
+  --color-warn-ink: #fbbf24;
+  --color-warn-line: #92400e;
+
+  /* 状态：危险（red / rose 系） */
+  --color-danger-bg: #450a0a;
+  --color-danger-ink: #f87171;
+  --color-danger-line: #7f1d1d;
+
+  /* 状态：信息（sky 系徽标） */
+  --color-info-bg: #082f49;
+  --color-info-ink: #7dd3fc;
+  --color-info-line: #075985;
+
+  /* accent 文字级（accent 实底保持 bg-sky-600 原样） */
+  --color-accent-ink: #7dd3fc;
+  --color-accent-ink-strong: #bae6fd;
+}
+
+/** 暖白主题：米白基底 + 暖灰墨色（根元素挂 `theme-warm` 类即生效）。 */
+html.theme-warm {
+  --color-base: #f7f5f2;
+  --color-surface: #ffffff;
+  --color-raised: #f0ede8;
+
+  --color-line: #e5e1da;
+  --color-line-strong: #d3cdc2;
+
+  --color-ink: #2d2a26;
+  --color-ink-soft: #4a453e;
+  --color-ink-mute: #6e675c;
+  --color-ink-faint: #8d8578;
+  --color-ink-ghost: #b5ada0;
+
+  --color-ok-bg: #d1fae5;
+  --color-ok-ink: #065f46;
+  --color-ok-line: #6ee7b7;
+
+  --color-warn-bg: #fef3c7;
+  --color-warn-ink: #92400e;
+  --color-warn-line: #fcd34d;
+
+  --color-danger-bg: #fee2e2;
+  --color-danger-ink: #b91c1c;
+  --color-danger-line: #fca5a5;
+
+  --color-info-bg: #e0f2fe;
+  --color-info-ink: #075985;
+  --color-info-line: #7dd3fc;
+
+  --color-accent-ink: #0369a1;
+  --color-accent-ink-strong: #0284c7;
+}
+
+/* 代码块外层容器由 UI 控制，主题只负责 token 颜色 */
+.hljs {
+  background: transparent;
+}
+
+/**
+ * highlight.js 暖白适配：在 `html.theme-warm` 作用域内覆盖各 token
+ * 颜色（取自 highlight.js 官方 github-light 主题）。
+ *
+ * 实现取舍：不用「动态切换样式表引入」——那需要 JS 增删 <link>、
+ * 处理加载完成前的闪烁（FOUC）与双份网络请求；这里纯 CSS 按根类
+ * 作用域覆盖，主题切换零延迟、构建期合入同一产物，token 类名集合
+ * 有限且稳定（hljs 官方类名十年未变），维护成本可控。
+ */
+html.theme-warm .hljs {
+  color: #24292e;
+}
+html.theme-warm .hljs-doctag,
+html.theme-warm .hljs-keyword,
+html.theme-warm .hljs-meta .hljs-keyword,
+html.theme-warm .hljs-template-tag,
+html.theme-warm .hljs-template-variable,
+html.theme-warm .hljs-type,
+html.theme-warm .hljs-variable.language_ {
+  color: #d73a49;
+}
+html.theme-warm .hljs-title,
+html.theme-warm .hljs-title.class_,
+html.theme-warm .hljs-title.class_.inherited__,
+html.theme-warm .hljs-title.function_ {
+  color: #6f42c1;
+}
+html.theme-warm .hljs-attr,
+html.theme-warm .hljs-attribute,
+html.theme-warm .hljs-literal,
+html.theme-warm .hljs-meta,
+html.theme-warm .hljs-number,
+html.theme-warm .hljs-operator,
+html.theme-warm .hljs-variable,
+html.theme-warm .hljs-selector-attr,
+html.theme-warm .hljs-selector-class,
+html.theme-warm .hljs-selector-id {
+  color: #005cc5;
+}
+html.theme-warm .hljs-regexp,
+html.theme-warm .hljs-string,
+html.theme-warm .hljs-meta .hljs-string {
+  color: #032f62;
+}
+html.theme-warm .hljs-built_in,
+html.theme-warm .hljs-symbol {
+  color: #e36209;
+}
+html.theme-warm .hljs-comment,
+html.theme-warm .hljs-code,
+html.theme-warm .hljs-formula {
+  color: #6a737d;
+}
+html.theme-warm .hljs-name,
+html.theme-warm .hljs-quote,
+html.theme-warm .hljs-selector-tag,
+html.theme-warm .hljs-selector-pseudo {
+  color: #22863a;
+}
+html.theme-warm .hljs-subst {
+  color: #24292e;
+}
+html.theme-warm .hljs-section {
+  color: #005cc5;
+  font-weight: bold;
+}
+html.theme-warm .hljs-bullet {
+  color: #735c0f;
+}
+html.theme-warm .hljs-emphasis {
+  color: #24292e;
+  font-style: italic;
+}
+html.theme-warm .hljs-strong {
+  color: #24292e;
+  font-weight: bold;
+}
+html.theme-warm .hljs-addition {
+  color: #22863a;
+  background-color: #f0fff4;
+}
+html.theme-warm .hljs-deletion {
+  color: #d73a49;
+  background-color: #ffeef0;
+}

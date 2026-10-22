@@ -1,0 +1,259 @@
+/**
+ * src/stores/settingsStore 测试：默认值、持久化读写、损坏数据回落、
+ * 测试连接（内存宿主脚本化）与真实 setter 通路、chrys 路径自动探测。
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { demoHost } from "../../src/core/host";
+import { appLogSink } from "../../src/core/logger";
+import {
+  defaultChrysPath,
+  defaultSkillsSourceDir,
+  probeChrysPath,
+  useSettingsStore,
+} from "../../src/stores/settingsStore";
+
+const storageKey = "aaw-desktop.settings.v1";
+
+/** 测试用的具体 chrys 路径（默认值已改为空 + 启动探测，用例显式布置）。 */
+const TEST_CHRYS_PATH = "X:/tools/chrys.exe";
+
+function readPersisted(): unknown {
+  const raw = window.localStorage.getItem(storageKey);
+  return raw === null ? null : (JSON.parse(raw) as unknown);
+}
+
+describe("useSettingsStore", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    demoHost.reset();
+    // 每个用例从默认值出发：把状态重置回默认（持久化项随之落回默认）
+    useSettingsStore.getState().resetToDefaults();
+    useSettingsStore.setState({
+      connection: { status: "idle", message: "尚未检测", checkedAt: null },
+      isProbingChrysPath: false,
+    });
+  });
+
+  it("缺省状态为任务指定默认值（chrys 路径为空，待启动探测）", () => {
+    const state = useSettingsStore.getState();
+    // 默认不硬编码开发者本机路径：留空待探测，已有用户持久化值不受影响
+    expect(defaultChrysPath).toBe("");
+    expect(state.chrysPath).toBe(defaultChrysPath);
+    expect(state.chrysPath).toBe("");
+    expect(state.approvalMode).toBe("ask");
+    expect(state.language).toBe("zh-CN");
+    expect(state.skillsSourceDir).not.toBe("");
+    // 主题默认暗夜
+    expect(state.theme).toBe("dark");
+  });
+
+  it("设置变更即写入本地持久化", () => {
+    useSettingsStore.getState().setChrysPath("X:/tools/chrys.exe");
+    useSettingsStore.getState().setApprovalMode("auto-allow");
+    useSettingsStore.getState().setLanguage("en-US");
+    useSettingsStore.getState().setSkillsSourceDir("X:/repo/skills");
+    useSettingsStore.getState().setTheme("warm");
+    expect(readPersisted()).toEqual({
+      chrysPath: "X:/tools/chrys.exe",
+      approvalMode: "auto-allow",
+      language: "en-US",
+      skillsSourceDir: "X:/repo/skills",
+      theme: "warm",
+    });
+  });
+
+  it("路径变更后旧连接检测结果失效", () => {
+    useSettingsStore.getState().setChrysPath("X:/tools/chrys.exe");
+    const { connection } = useSettingsStore.getState();
+    expect(connection.status).toBe("idle");
+    expect(connection.message).toContain("路径已变更");
+  });
+
+  it("持久化数据在模块重新加载时读回", async () => {
+    useSettingsStore.getState().setChrysPath("X:/tools/chrys.exe");
+    useSettingsStore.getState().setApprovalMode("auto-reject");
+    vi.resetModules();
+    const { useSettingsStore: freshStore } =
+      await import("../../src/stores/settingsStore");
+    expect(freshStore.getState().chrysPath).toBe("X:/tools/chrys.exe");
+    expect(freshStore.getState().approvalMode).toBe("auto-reject");
+  });
+
+  it("损坏或越界的持久化数据逐项回落默认", async () => {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        chrysPath: 123,
+        approvalMode: "yolo",
+        language: "fr-FR",
+        skillsSourceDir: "  ",
+        theme: "sepia",
+      }),
+    );
+    vi.resetModules();
+    const { useSettingsStore: freshStore } =
+      await import("../../src/stores/settingsStore");
+    const state = freshStore.getState();
+    expect(state.chrysPath).toBe(defaultChrysPath);
+    expect(state.approvalMode).toBe("ask");
+    expect(state.language).toBe("zh-CN");
+    expect(state.skillsSourceDir).toBe(defaultSkillsSourceDir);
+    // 非法主题值（sepia）同样回落默认暗夜
+    expect(state.theme).toBe("dark");
+  });
+
+  it("持久化为已下线的 en-US 预留项时，启动回落 zh-CN 并记日志", async () => {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        chrysPath: defaultChrysPath,
+        approvalMode: "ask",
+        language: "en-US",
+        skillsSourceDir: defaultSkillsSourceDir,
+      }),
+    );
+    vi.resetModules();
+    // resetModules 后 logger 也是新实例：取新 sink 断言回落日志
+    const { useSettingsStore: freshStore } =
+      await import("../../src/stores/settingsStore");
+    const { appLogSink: freshSink } = await import("../../src/core/logger");
+    expect(freshStore.getState().language).toBe("zh-CN");
+    expect(
+      freshSink
+        .snapshot()
+        .some(
+          (entry) => entry.level === "warn" && entry.message.includes("en-US"),
+        ),
+    ).toBe(true);
+  });
+
+  it("testConnection 成功：--version 输出进入状态与日志", async () => {
+    // 默认路径为空：用例先显式布置路径再脚本化命令
+    useSettingsStore.getState().setChrysPath(TEST_CHRYS_PATH);
+    demoHost.scriptCommand(TEST_CHRYS_PATH, ["--version"], {
+      code: 0,
+      stdout: "0.25.1\n",
+      stderr: "",
+    });
+    await useSettingsStore.getState().testConnection();
+    const { connection } = useSettingsStore.getState();
+    expect(connection.status).toBe("ok");
+    expect(connection.message).toContain("0.25.1");
+    expect(connection.checkedAt).not.toBeNull();
+    expect(
+      appLogSink
+        .snapshot()
+        .some((entry) => entry.message === "chrys 连接检测完成"),
+    ).toBe(true);
+  });
+
+  it("testConnection 失败：stderr 进入错误信息", async () => {
+    useSettingsStore.getState().setChrysPath(TEST_CHRYS_PATH);
+    demoHost.scriptCommand(TEST_CHRYS_PATH, ["--version"], {
+      code: 1,
+      stdout: "",
+      stderr: "无法识别的命令",
+    });
+    await useSettingsStore.getState().testConnection();
+    const { connection } = useSettingsStore.getState();
+    expect(connection.status).toBe("error");
+    expect(connection.message).toContain("无法识别的命令");
+  });
+
+  it("路径为空时测试连接直接失败收口（不执行空命令）", async () => {
+    await useSettingsStore.getState().testConnection();
+    const { connection } = useSettingsStore.getState();
+    expect(connection.status).toBe("error");
+    expect(connection.message).toContain("未配置 chrys 可执行路径");
+  });
+
+  it("probeChrysPath：PATH 命中（where/which 首行）即返回", async () => {
+    demoHost.scriptCommand("where", ["chrys"], {
+      code: 0,
+      stdout: "C:/tools/bin/chrys.exe\nC:/other/chrys.exe\n",
+      stderr: "",
+    });
+    expect(await probeChrysPath(demoHost)).toBe("C:/tools/bin/chrys.exe");
+  });
+
+  it("probeChrysPath：PATH 落空回落常见安装位置（pathExists 命中）", async () => {
+    demoHost.scriptCommand("where", ["chrys"], {
+      code: 1,
+      stdout: "",
+      stderr: "找不到文件",
+    });
+    // 内存宿主以文件节点表达可执行文件的存在
+    await demoHost.writeTextFile(
+      "C:/Program Files/chrys/chrys.exe",
+      "fake-binary",
+    );
+    expect(await probeChrysPath(demoHost)).toBe(
+      "C:/Program Files/chrys/chrys.exe",
+    );
+  });
+
+  it("probeChrysPath：全部落空返回 null，不猜路径", async () => {
+    const found = await probeChrysPath(demoHost);
+    expect(found).toBeNull();
+  });
+
+  it("probeChrysPathIfNeeded：探测命中写入并持久化；已有持久化值不覆盖", async () => {
+    // 探测命中：写入 chrysPath
+    demoHost.scriptCommand("where", ["chrys"], {
+      code: 0,
+      stdout: "C:/probed/chrys.exe\n",
+      stderr: "",
+    });
+    await useSettingsStore.getState().probeChrysPathIfNeeded();
+    expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/chrys.exe");
+    expect(useSettingsStore.getState().isProbingChrysPath).toBe(false);
+    expect(readPersisted()).toMatchObject({ chrysPath: "C:/probed/chrys.exe" });
+
+    // 已有持久化值：再次探测不覆盖（也不发命令）
+    demoHost.scriptCommand("where", ["chrys"], {
+      code: 0,
+      stdout: "C:/other/chrys.exe\n",
+      stderr: "",
+    });
+    await useSettingsStore.getState().probeChrysPathIfNeeded();
+    expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/chrys.exe");
+  });
+
+  it("probeChrysPathIfNeeded：探测不到保持为空", async () => {
+    await useSettingsStore.getState().probeChrysPathIfNeeded();
+    expect(useSettingsStore.getState().chrysPath).toBe("");
+    expect(useSettingsStore.getState().isProbingChrysPath).toBe(false);
+  });
+
+  it("主题选择持久化并在重载后读回（warm）", async () => {
+    useSettingsStore.getState().setTheme("warm");
+    expect(useSettingsStore.getState().theme).toBe("warm");
+    vi.resetModules();
+    const { useSettingsStore: freshStore } =
+      await import("../../src/stores/settingsStore");
+    expect(freshStore.getState().theme).toBe("warm");
+  });
+
+  it("持久化数据缺 theme 字段（旧版本）时回落默认暗夜", async () => {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        chrysPath: defaultChrysPath,
+        approvalMode: "ask",
+        language: "zh-CN",
+        skillsSourceDir: defaultSkillsSourceDir,
+      }),
+    );
+    vi.resetModules();
+    const { useSettingsStore: freshStore } =
+      await import("../../src/stores/settingsStore");
+    expect(freshStore.getState().theme).toBe("dark");
+  });
+
+  it("resetToDefaults 恢复默认并持久化", () => {
+    useSettingsStore.getState().setChrysPath("Z:/chrys.exe");
+    useSettingsStore.getState().resetToDefaults();
+    expect(useSettingsStore.getState().chrysPath).toBe(defaultChrysPath);
+    expect(readPersisted()).toMatchObject({ chrysPath: defaultChrysPath });
+  });
+});

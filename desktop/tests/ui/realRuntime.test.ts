@@ -1,0 +1,443 @@
+/**
+ * realRuntime 装配测试（F1 会话历史持久化的协议侧装配）：
+ *
+ * - initialize 后先 session/list；有历史会话则 loadSession 恢复最近一个，
+ *   且会话列表不含 UUID 标题（首条用户消息 / 时间兜底）；
+ * - loadSession 失败（会话过期 / 能力缺失）回落 newSession，打开不失败；
+ * - 无历史会话直接新建，并把本地消息快照灌回（专用 restore action）；
+ * - loadSession 已回放历史时，本地快照不覆盖回放结果；
+ * - switchRealSession：切换历史会话成功；失败回滚当前视图且不聚焦；
+ * - P0-1：早退 / spawn 失败一律解除「连接中」并回填连接失败态（UI 横幅
+ *   / 徽标数据源），成功连接清除失败态；
+ * - P0-4：权限请求按设置的「审批默认模式」分派（ask 弹窗 / auto-allow
+ *   放行 / auto-reject 拒绝，白名单落空回退弹窗）；
+ * - P1-8：恢复历史会话后内容区自动切到会话视图，全新会话保持总览。
+ *
+ * 替身说明：AcpSession 以脚本化 fake 替换（tests/fixtures/fakeAcpSession.ts），
+ * transport 打桩，宿主经 window.__TAURI_INTERNALS__ 伪装成 Tauri 环境。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../src/acp/session.ts", async () => {
+  const { FakeAcpSession } = await import("../fixtures/fakeAcpSession.ts");
+  return { AcpSession: FakeAcpSession };
+});
+
+vi.mock("../../src/acp/transport/tauriStdioTransport.ts", () => ({
+  createTauriStdioTransport: vi.fn(() =>
+    Promise.resolve({ fake: true, onExit: () => () => undefined }),
+  ),
+}));
+
+import {
+  closeRealRuntime,
+  openRealWorkspace,
+  switchRealSession,
+} from "../../src/ui/realRuntime.ts";
+import { useApprovalStore } from "../../src/stores/approvalStore.ts";
+import { useSessionStore } from "../../src/stores/sessionStore.ts";
+import { useSettingsStore } from "../../src/stores/settingsStore.ts";
+import { useWorkspaceStore } from "../../src/stores/workspaceStore.ts";
+import { useWorkbenchUiStore } from "../../src/stores/workbenchUiStore.ts";
+import {
+  fakeSessionControl,
+  resetFakeSessionControl,
+} from "../fixtures/fakeAcpSession.ts";
+import { createTauriStdioTransport } from "../../src/acp/transport/tauriStdioTransport.ts";
+
+// transport 工厂的打桩句柄：按用例脚本化 spawn 失败
+const spawnTransport = vi.mocked(createTauriStdioTransport);
+
+const WORKSPACE = "D:/demo-project";
+const LOG_KEY = `aaw-desktop/session-log/${encodeURIComponent(WORKSPACE)}`;
+
+/** chrys 实际下发的两项权限选项（server.py _request_permission）。 */
+const CHRYS_PERMISSION_OPTIONS = [
+  { optionId: "allow", name: "Allow once", kind: "allow_once" as const },
+  { optionId: "reject", name: "Reject once", kind: "reject_once" as const },
+];
+
+const TOOL_CALL = { toolCallId: "call-1", title: "执行命令" };
+
+type MutableWindow = Record<string, unknown>;
+
+function resetAll(): void {
+  window.localStorage.clear();
+  resetFakeSessionControl();
+  spawnTransport.mockClear();
+  const session = useSessionStore.getState();
+  session.setSessionLogTarget(null);
+  session.clear();
+  session.bindSession(null);
+  session.setSessions([]);
+  useSessionStore.setState({
+    activeSessionId: null,
+    modelLabel: null,
+    approvalMode: null,
+  });
+  const workspace = useWorkspaceStore.getState();
+  workspace.closeWorkspace();
+  workspace.clearSelection();
+  useWorkspaceStore.setState({ lastConnectError: null });
+  useApprovalStore.getState().clear();
+  useWorkbenchUiStore.setState({
+    treeView: "project-overview",
+    contextPath: null,
+    overlay: null,
+    expandedOverrides: {},
+    sidebarCollapsed: false,
+    treeViewMode: "projects",
+    isAddPanelOpen: false,
+  });
+  // 审批默认模式复位为 ask（人工弹窗）
+  useSettingsStore.getState().resetToDefaults();
+}
+
+beforeEach(() => {
+  resetAll();
+  // 伪装 Tauri 宿主（realRuntime 的 isTauriEnv 探测点）
+  (window as unknown as MutableWindow).__TAURI_INTERNALS__ = {};
+});
+
+afterEach(async () => {
+  // 收掉模块级单例，避免用例间互串（幂等跳过路径）
+  await closeRealRuntime();
+});
+
+function seedLocalLog(items: readonly unknown[]): void {
+  window.localStorage.setItem(
+    LOG_KEY,
+    JSON.stringify({ version: 1, savedAt: "2026-10-20T10:00:00Z", items }),
+  );
+}
+
+describe("openRealWorkspace：会话恢复装配", () => {
+  it("有历史会话时 loadSession 恢复最近一个，列表标题不含 UUID", async () => {
+    // updatedAt 用无时区后缀的本地时间串：列表标题的 HH:MM 按本地时区格式化
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-old",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-19T09:00:00",
+      },
+      {
+        sessionId: "sess-latest",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T11:30:00",
+      },
+    ];
+
+    await openRealWorkspace(WORKSPACE);
+
+    // 恢复的是 updatedAt 最新的那个
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-latest"]);
+    const state = useSessionStore.getState();
+    expect(state.activeSessionId).toBe("sess-latest");
+    expect(state.sessions[0]?.id).toBe("sess-latest");
+    // 无首条用户消息时标题回落时间，绝不露出 UUID
+    expect(state.sessions[0]?.title).toMatch(/^会话 · \d{2}:\d{2}$/);
+    // 其余历史会话在列表中（无 title 用 updatedAt 时间兜底）
+    const old = state.sessions.find((entry) => entry.id === "sess-old");
+    expect(old?.title).toBe("会话 · 09:00");
+  });
+
+  it("loadSession 失败（会话过期）回落 newSession，打开工作区不失败", async () => {
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-expired",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T08:00:00",
+      },
+    ];
+    fakeSessionControl.loadShouldFail = true;
+
+    await openRealWorkspace(WORKSPACE);
+
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-expired"]);
+    const state = useSessionStore.getState();
+    expect(state.activeSessionId).toBe("new-session-id");
+    // 新建会话置顶；过期的历史条目保留在列表中（点击可重试，失败不致命）
+    expect(state.sessions.map((entry) => entry.id)).toEqual([
+      "new-session-id",
+      "sess-expired",
+    ]);
+  });
+
+  it("session/list 失败同样回落新建会话", async () => {
+    fakeSessionControl.listShouldFail = true;
+    await openRealWorkspace(WORKSPACE);
+    expect(fakeSessionControl.loadCalls).toEqual([]);
+    expect(useSessionStore.getState().activeSessionId).toBe("new-session-id");
+  });
+
+  it("无历史会话直接新建，并把本地消息快照灌回（含流式封口）", async () => {
+    seedLocalLog([
+      {
+        kind: "user",
+        id: "u1",
+        text: "上次的问题",
+        createdAt: "2026-10-19T10:00:00Z",
+      },
+      { kind: "assistant", id: "a1", text: "上次的回答", isStreaming: true },
+    ]);
+
+    await openRealWorkspace(WORKSPACE);
+
+    expect(fakeSessionControl.loadCalls).toEqual([]);
+    const items = useSessionStore.getState().items;
+    expect(items.map((item) => item.kind)).toEqual(["user", "assistant"]);
+    expect(items[1]).toMatchObject({ text: "上次的回答", isStreaming: false });
+    // 列表标题取快照里的首条用户消息
+    expect(useSessionStore.getState().sessions[0]?.title).toBe(
+      "会话 · 上次的问题",
+    );
+  });
+
+  it("loadSession 已回放历史时，本地快照不覆盖回放结果", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    fakeSessionControl.replayOnLoad = [
+      {
+        type: "agent_message_chunk",
+        sessionId: "sess-latest",
+        text: "回放的回复",
+      },
+    ];
+    seedLocalLog([
+      { kind: "user", id: "u1", text: "本地快照消息", createdAt: "" },
+    ]);
+
+    await openRealWorkspace(WORKSPACE);
+
+    const items = useSessionStore.getState().items;
+    expect(
+      items.some(
+        (item) => item.kind === "assistant" && item.text === "回放的回复",
+      ),
+    ).toBe(true);
+    expect(
+      items.some(
+        (item) => item.kind === "user" && item.text === "本地快照消息",
+      ),
+    ).toBe(false);
+  });
+
+  it("非 Tauri 环境：不启动会话，store 保持空", async () => {
+    delete (window as unknown as MutableWindow).__TAURI_INTERNALS__;
+    await openRealWorkspace(WORKSPACE);
+    expect(useSessionStore.getState().sessions).toEqual([]);
+    expect(useSessionStore.getState().items).toEqual([]);
+  });
+});
+
+describe("openRealWorkspace：新建会话语义（forceNew）", () => {
+  it("forceNew 跳过历史恢复：直接走 session/new，仍回填完整历史列表", async () => {
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-latest",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T11:30:00",
+      },
+    ];
+    seedLocalLog([
+      { kind: "user", id: "u1", text: "上次的问题", createdAt: "" },
+    ]);
+
+    await openRealWorkspace(WORKSPACE, { forceNew: true });
+
+    // 不恢复历史（这是「新建」与「打开」的分水岭）
+    expect(fakeSessionControl.loadCalls).toEqual([]);
+    const state = useSessionStore.getState();
+    expect(state.activeSessionId).toBe("new-session-id");
+    // 历史列表照旧完整（列表数据不能少，只是不自动载入任何一条）
+    expect(state.sessions.map((entry) => entry.id)).toEqual([
+      "new-session-id",
+      "sess-latest",
+    ]);
+    // 上一条会话的本地快照绝不灌进新会话（那是内容错位）
+    expect(state.items).toEqual([]);
+  });
+
+  it("同一路径已打开时默认幂等跳过，forceNew 下重新新建", async () => {
+    await openRealWorkspace(WORKSPACE);
+    const firstId = useSessionStore.getState().activeSessionId;
+
+    // 默认：同路径幂等——不重连、不换会话
+    await openRealWorkspace(WORKSPACE);
+    expect(useSessionStore.getState().activeSessionId).toBe(firstId);
+
+    // forceNew：真的另开一条
+    await openRealWorkspace(WORKSPACE, { forceNew: true });
+    const state = useSessionStore.getState();
+    expect(state.activeSessionId).toBe("new-session-id");
+  });
+
+  it("forceNew 不把内容区自动切到会话视图（是否进会话由调用方决定）", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    await openRealWorkspace(WORKSPACE, { forceNew: true });
+    expect(useWorkbenchUiStore.getState().treeView).toBe("project-overview");
+  });
+});
+
+describe("switchRealSession：左栏点击历史会话的切换", () => {
+  it("切换成功载入目标会话；失败回滚当前视图且不切换聚焦", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    await openRealWorkspace(WORKSPACE);
+
+    // 当前视图有一份内容
+    useSessionStore.getState().beginTurn("当前会话内容");
+    useSessionStore.getState().endTurn({ stopReason: "end_turn" });
+
+    // 失败路径：loadSession 抛错 → 返回 false，视图按快照回滚
+    fakeSessionControl.loadShouldFail = true;
+    const failed = await switchRealSession("sess-other");
+    expect(failed).toBe(false);
+    const afterFailure = useSessionStore.getState();
+    expect(afterFailure.activeSessionId).toBe("sess-latest");
+    expect(afterFailure.items.map((item) => item.kind)).toEqual(["user"]);
+    expect(afterFailure.items[0]).toMatchObject({ text: "当前会话内容" });
+
+    // 成功路径：协议会话切到目标 id
+    fakeSessionControl.loadShouldFail = false;
+    const ok = await switchRealSession("sess-2");
+    expect(ok).toBe(true);
+    expect(fakeSessionControl.lastInstance?.sessionId).toBe("sess-2");
+  });
+
+  it("切换到当前已绑定的会话为幂等（不重复 load）", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    await openRealWorkspace(WORKSPACE);
+    const ok = await switchRealSession("sess-latest");
+    expect(ok).toBe(true);
+    // 打开工作区时已 load 过一次，幂等切换不再追加
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-latest"]);
+  });
+});
+
+describe("openRealWorkspace：失败收口（P0-1）", () => {
+  it("非 Tauri 环境早退：解除「连接中」并回填带指引的连接失败态", async () => {
+    delete (window as unknown as MutableWindow).__TAURI_INTERNALS__;
+    await openRealWorkspace(WORKSPACE);
+
+    // 早退不复位 connecting 是本项修复的根因：现在必须复位
+    expect(useSessionStore.getState().isConnecting).toBe(false);
+    const error = useWorkspaceStore.getState().lastConnectError;
+    expect(error?.path).toBe(WORKSPACE);
+    expect(error?.message).toContain("无法启动 chrys 进程");
+    expect(error?.message).toContain("请在设置中检查 agent 可执行路径");
+  });
+
+  it("spawn 失败：解除「连接中」、回填失败态并清理现场", async () => {
+    spawnTransport.mockRejectedValueOnce(new Error("chrys.exe 不存在"));
+    await openRealWorkspace(WORKSPACE);
+
+    expect(useSessionStore.getState().isConnecting).toBe(false);
+    expect(useSessionStore.getState().isBound).toBe(false);
+    const error = useWorkspaceStore.getState().lastConnectError;
+    expect(error?.path).toBe(WORKSPACE);
+    expect(error?.message).toContain("chrys.exe 不存在");
+    expect(error?.message).toContain("请在设置中检查 agent 可执行路径");
+  });
+
+  it("成功连接后清除该项目此前的失败态", async () => {
+    useWorkspaceStore
+      .getState()
+      .reportConnectFailure(
+        WORKSPACE,
+        "上一次失败：请在设置中检查 agent 可执行路径",
+      );
+    await openRealWorkspace(WORKSPACE);
+    expect(useWorkspaceStore.getState().lastConnectError).toBeNull();
+    expect(useSessionStore.getState().isConnecting).toBe(false);
+  });
+});
+
+describe("openRealWorkspace：恢复后切会话视图（P1-8）", () => {
+  it("恢复历史会话后内容区自动切到该项目会话视图", async () => {
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-latest",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T11:30:00",
+      },
+    ];
+    await openRealWorkspace(WORKSPACE);
+    const ui = useWorkbenchUiStore.getState();
+    expect(ui.treeView).toBe("session");
+    expect(ui.contextPath).toBe(WORKSPACE);
+  });
+
+  it("全新 newSession 不切视图（保持项目总览）", async () => {
+    // 无历史（list 空）→ 直接新建
+    await openRealWorkspace(WORKSPACE);
+    const ui = useWorkbenchUiStore.getState();
+    expect(ui.treeView).toBe("project-overview");
+
+    // 有历史但 load 失败回落新建，同样保持总览
+    useWorkbenchUiStore.setState({ treeView: "project-overview" });
+    fakeSessionControl.listed = [{ sessionId: "sess-expired", cwd: WORKSPACE }];
+    fakeSessionControl.loadShouldFail = true;
+    await openRealWorkspace("D:/other-project");
+    expect(useWorkbenchUiStore.getState().treeView).toBe("project-overview");
+  });
+});
+
+describe("openRealWorkspace：审批默认模式分派（P0-4）", () => {
+  /** 打开会话并取出装配时注入的权限审批回调。 */
+  async function openAndGetResponder() {
+    await openRealWorkspace(WORKSPACE);
+    const responder = fakeSessionControl.lastPermissionResponder;
+    if (responder === null) {
+      throw new Error("装配应注入权限审批回调");
+    }
+    return responder;
+  }
+
+  it("ask（默认）：走人工弹窗（offerPermission 挂起待办）", async () => {
+    useSettingsStore.getState().setApprovalMode("ask");
+    const responder = await openAndGetResponder();
+
+    const pending = responder("s1", TOOL_CALL, CHRYS_PERMISSION_OPTIONS);
+    // 挂起进 approvalStore（人工决策），不自动应答
+    expect(useApprovalStore.getState().pending).toHaveLength(1);
+    useApprovalStore.getState().decidePermission("permission:call-1", "allow");
+    await expect(pending).resolves.toEqual({
+      outcome: "selected",
+      optionId: "allow",
+    });
+  });
+
+  it("auto-allow：自动回 allow_once 选项（不弹窗）", async () => {
+    useSettingsStore.getState().setApprovalMode("auto-allow");
+    const responder = await openAndGetResponder();
+
+    const outcome = await responder("s1", TOOL_CALL, CHRYS_PERMISSION_OPTIONS);
+    expect(outcome).toEqual({ outcome: "selected", optionId: "allow" });
+    expect(useApprovalStore.getState().pending).toHaveLength(0);
+  });
+
+  it("auto-reject：自动回 reject_once 选项（不弹窗）", async () => {
+    useSettingsStore.getState().setApprovalMode("auto-reject");
+    const responder = await openAndGetResponder();
+
+    const outcome = await responder("s1", TOOL_CALL, CHRYS_PERMISSION_OPTIONS);
+    expect(outcome).toEqual({ outcome: "selected", optionId: "reject" });
+    expect(useApprovalStore.getState().pending).toHaveLength(0);
+  });
+
+  it("白名单落空（只有未知 kind 选项）：回退人工弹窗，绝不静默取消", async () => {
+    useSettingsStore.getState().setApprovalMode("auto-allow");
+    const responder = await openAndGetResponder();
+
+    const pending = responder("s1", TOOL_CALL, [
+      { optionId: "mystery", name: "Unknown", kind: "unknown" },
+    ]);
+    expect(useApprovalStore.getState().pending).toHaveLength(1);
+    useApprovalStore
+      .getState()
+      .decidePermission("permission:call-1", "mystery");
+    await expect(pending).resolves.toEqual({
+      outcome: "selected",
+      optionId: "mystery",
+    });
+  });
+});
