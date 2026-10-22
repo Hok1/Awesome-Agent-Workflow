@@ -38,8 +38,11 @@ import { NodeStdioTransport } from "../src/acp/transport/nodeStdioTransport.ts";
 import type { InitializeResult } from "../src/acp/types.ts";
 import { findAgentAdapter } from "../src/agents/registry.ts";
 
-/** 任务指定的 chrys 可执行文件（可被 CHRYS_ACP_EXE 覆盖）。 */
-const CHRYS_EXE_DEFAULT = "D:/dev/workspace-ai/chrys/.venv/Scripts/chrys.exe";
+/**
+ * 任务指定的 iCode 可执行文件（可被 CHRYS_ACP_EXE 覆盖）。默认指向开发机
+ * chrys 仓库 venv 内的 icode.exe——iCode 0.30 起包里只装 `icode` 命令。
+ */
+const CHRYS_EXE_DEFAULT = "D:/dev/workspace-ai/chrys/.venv/Scripts/icode.exe";
 /** 冒烟请求超时：本机 chrys、无模型调用，30s 足够宽且失败时不用等 90s。 */
 const REQUEST_TIMEOUT_MS = 30_000;
 

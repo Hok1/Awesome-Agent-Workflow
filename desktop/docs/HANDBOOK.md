@@ -8,7 +8,7 @@
 ## 1. 项目定位与当前状态
 
 通过 ACP（Agent Client Protocol，JSON-RPC over stdio）连接本机 chrys
-（`chrys acp`）的桌面工作台，承载 AAW 工作流的开发交互。核心流程是
+（`icode acp`，原 `chrys acp`）的桌面工作台，承载 AAW 工作流的开发交互。核心流程是
 「指定项目 → 创建会话 → 通过 ACP 与 Agent 交互」——AAW 是挂在这条骨架
 上的增强（状态显示、入口向导、命令下发），不是必经的强制流程。
 

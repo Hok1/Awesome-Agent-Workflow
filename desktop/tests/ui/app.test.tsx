@@ -61,7 +61,7 @@ describe("App 主布局", () => {
     render(<App />);
     // 顶栏去重：应用名只在窗口标题栏，页面内不再渲染
     expect(screen.queryByText("AAW 桌面客户端")).not.toBeInTheDocument();
-    expect(screen.getByText("agent · chrys")).toBeInTheDocument();
+    expect(screen.getByText("agent · iCode")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "待办" })).toBeInTheDocument();
     // 视图路由退役：没有「开发」「项目」路由按钮，也没有路由 tablist
     expect(
@@ -129,7 +129,7 @@ describe("App 主布局", () => {
 
     // 全屏语义：只渲染设置页（页面自带 header），树列与顶栏按钮组隐藏；
     // 图标窄栏常驻（入口仍可点）
-    expect(await screen.findByText("chrys 可执行路径")).toBeInTheDocument();
+    expect(await screen.findByText("iCode 可执行路径")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "设置" })).toBeInTheDocument();
     expect(screen.queryByLabelText("项目树")).not.toBeInTheDocument();
     expect(
@@ -141,7 +141,7 @@ describe("App 主布局", () => {
 
     // 「← 返回」退出全屏，回到树选中视图（此前的基底视图为空态）
     await userEvent.click(backButton);
-    expect(screen.queryByText("chrys 可执行路径")).not.toBeInTheDocument();
+    expect(screen.queryByText("iCode 可执行路径")).not.toBeInTheDocument();
     expect(screen.getByLabelText("项目树")).toBeInTheDocument();
     expect(
       screen.getByText(/从左侧选择或新建一个项目目录/),
@@ -183,7 +183,7 @@ describe("App 主布局", () => {
 
     const rail = screen.getByLabelText("主导航");
     await userEvent.click(within(rail).getByRole("button", { name: "设置" }));
-    expect(screen.getByText("chrys 可执行路径")).toBeInTheDocument();
+    expect(screen.getByText("iCode 可执行路径")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(
       screen.getByRole("heading", { name: "demo-project" }),

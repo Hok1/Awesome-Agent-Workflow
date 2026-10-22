@@ -2,7 +2,7 @@
  * 工作区健康检查（src/aaw 领域逻辑）。
  *
  * 对所选目录逐项探测：
- * - chrys 可执行（用设置里的路径，`chrys --version`）；
+ * - iCode（原 chrys）可执行（用设置里的路径，`--version` 探测）；
  * - uv 可执行（`uv --version`）；
  * - aaw CLI（`uv run <aaw.py> --help`，在所选目录下执行；只读探测，
  *   不触发 status 的自动更新逻辑）；
@@ -58,7 +58,9 @@ export interface WorkspaceHealthCheckOptions {
 
 /** 缺省工具路径。 */
 export const defaultToolPaths: WorkspaceToolPaths = {
-  chrysCommand: "chrys",
+  // iCode 0.30 起命令改名为 icode（旧版安装的 chrys 由设置页探测兜住）；
+  // 持久化里等于旧缺省值 "chrys" 的按未配置处理（见 workspaceStore 读取迁移）
+  chrysCommand: "icode",
   uvCommand: "uv",
   aawScriptPath: "",
 };
@@ -121,7 +123,7 @@ async function checkChrys(
   const durationMs = Date.now() - startedAt;
   return {
     id: "chrys",
-    label: "chrys 可执行",
+    label: "iCode 可执行",
     ...summarizeVersionProbe("chrys", chrysCommand, result, durationMs),
     durationMs,
   };
@@ -257,7 +259,7 @@ function summarizeVersionProbe(
   const hint =
     result.failure === "spawn"
       ? name === "chrys"
-        ? `无法执行 chrys（${command}）。请到「设置」页核对 chrys 可执行路径（可写绝对路径），或将其所在目录加入 PATH 后重新检查。`
+        ? `无法执行 iCode（${command}）。iCode 0.30 起命令名从 chrys 改为 icode——请到「设置」页核对 iCode 可执行路径（可写绝对路径，旧版安装也可填 chrys 的完整路径），或将其所在目录加入 PATH 后重新检查。`
         : `无法执行 ${name}（${command}）。请到「设置」页核对 ${name} 工具路径（可写绝对路径），或将其所在目录加入 PATH 后重新检查。`
       : `${name} 探测超时或异常退出。请手动执行 \`${command} --version\` 确认其可用后重试。`;
   return {

@@ -322,7 +322,7 @@ describe("openRealWorkspace：失败收口（P0-1）", () => {
     expect(useSessionStore.getState().isConnecting).toBe(false);
     const error = useWorkspaceStore.getState().lastConnectError;
     expect(error?.path).toBe(WORKSPACE);
-    expect(error?.message).toContain("无法启动 chrys 进程");
+    expect(error?.message).toContain("无法启动 iCode 进程");
     expect(error?.message).toContain("请在设置中检查 agent 可执行路径");
   });
 

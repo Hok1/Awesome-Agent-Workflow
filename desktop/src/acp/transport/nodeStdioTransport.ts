@@ -34,7 +34,7 @@ const KILL_GRACE_MS = 5_000;
 const DEFAULT_CLOSE_GRACE_MS = 5_000;
 
 export interface StdioSpawnOptions {
-  /** 完整 argv，如 ["chrys", "acp"]。 */
+  /** 完整 argv，如 ["icode", "acp"]。 */
   readonly command: readonly string[];
   /** 工作目录。 */
   readonly cwd?: string;

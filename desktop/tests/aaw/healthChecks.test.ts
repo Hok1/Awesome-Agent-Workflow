@@ -141,10 +141,10 @@ describe("runWorkspaceHealthChecks", () => {
     expect(aawCall?.cwd).toBe("D:/dev/demo");
   });
 
-  it("chrys 启动失败：fail + 指向设置页的修复指引", async () => {
+  it("chrys 启动失败：fail + 指向设置页的修复指引（缺省命令已是 icode）", async () => {
     const runner = scriptedRunner({
       run: (command) =>
-        (command[0] ?? "") === "chrys" ? spawnFail("ENOENT") : passVersion("x"),
+        (command[0] ?? "") === "icode" ? spawnFail("ENOENT") : passVersion("x"),
       existsMap: {},
     });
     const items = await runWorkspaceHealthChecks({
@@ -155,6 +155,7 @@ describe("runWorkspaceHealthChecks", () => {
     const chrys = items.find((item) => item.id === "chrys");
     expect(chrys?.status).toBe("fail");
     expect(chrys?.fixHint).toContain("设置");
+    expect(chrys?.fixHint).toContain("icode");
   });
 
   it("uv 失败时 aaw 项直接短路（不执行 uv run）并给出依赖指引", async () => {

@@ -23,7 +23,7 @@ import { isTauriEnv } from "../core/host.ts";
 import { AcpSession } from "../acp/session.ts";
 import type { SessionInfo } from "../acp/types.ts";
 import { createTauriStdioTransport } from "../acp/transport/tauriStdioTransport.ts";
-import { findAgentAdapter } from "../agents/registry.ts";
+import { DEFAULT_AGENT_ID, findAgentAdapter } from "../agents/registry.ts";
 import { useApprovalStore } from "../stores/approvalStore.ts";
 import {
   sessionTitleOf,
@@ -91,7 +91,7 @@ function pickLatestSession(
 const CONNECT_FAILURE_HINT = "请在设置中检查 agent 可执行路径";
 
 /**
- * 打开（或切换到）一个真实工作区会话：spawn chrys → 握手 →
+ * 打开（或切换到）一个真实工作区会话：spawn iCode → 握手 →
  * 恢复最近会话（session/list + session/load）或新建（session/new）。
  * 同一路径已打开时幂等跳过（forceNew 下不跳过——「新建」要真的另开一条）；
  * 不同路径先关旧会话。
@@ -133,14 +133,14 @@ export async function openRealWorkspace(
       );
   };
 
-  const adapter = findAgentAdapter("chrys");
+  const adapter = findAgentAdapter(DEFAULT_AGENT_ID);
   if (adapter === null) {
     reportFailure("注册表中没有 agent 适配项");
     useSessionStore.getState().setConnecting(false);
     return null;
   }
   if (!isTauriEnv()) {
-    reportFailure("当前环境无法启动 chrys 进程（需要桌面宿主）");
+    reportFailure("当前环境无法启动 iCode 进程（需要桌面宿主）");
     useSessionStore.getState().setConnecting(false);
     return null;
   }

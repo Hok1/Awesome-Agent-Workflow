@@ -168,7 +168,7 @@ describe("ProjectOverview", () => {
       screen.getByRole("button", { name: "新建会话" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/正在逐项探测 chrys \/ uv \/ aaw CLI/),
+      screen.getByText(/正在逐项探测 iCode \/ uv \/ aaw CLI/),
     ).toBeInTheDocument();
   });
 

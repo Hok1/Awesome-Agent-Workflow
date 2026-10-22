@@ -193,6 +193,48 @@ describe("useWorkspaceStore", () => {
     ]);
     expect(state.favoritePaths).toEqual([DEMO_PATH]);
     expect(state.toolPaths.uvCommand).toBe("C:/tools/uv.exe");
+    // 裸 "chrys" 是旧缺省值：读取时归一为新缺省，不当作用户配置
+    expect(state.toolPaths.chrysCommand).toBe(defaultToolPaths.chrysCommand);
+  });
+
+  it("toolPaths 持久化里的旧缺省值 chrys 读取时归一为新缺省 icode（iCode 改名）", () => {
+    window.localStorage.setItem(
+      "aaw-desktop/workspace/v1",
+      JSON.stringify({
+        version: 1,
+        recent: [],
+        favorites: [],
+        toolPaths: {
+          chrysCommand: "chrys",
+          uvCommand: "uv",
+          aawScriptPath: "",
+        },
+      }),
+    );
+    useWorkspaceStore.getState().hydrateFromStorage();
+    expect(useWorkspaceStore.getState().toolPaths.chrysCommand).toBe(
+      defaultToolPaths.chrysCommand,
+    );
+    expect(useWorkspaceStore.getState().toolPaths.chrysCommand).toBe("icode");
+
+    // 用户显式配置的绝对路径不迁移
+    window.localStorage.setItem(
+      "aaw-desktop/workspace/v1",
+      JSON.stringify({
+        version: 1,
+        recent: [],
+        favorites: [],
+        toolPaths: {
+          chrysCommand: "D:/Program Files/Chrys/icode.exe",
+          uvCommand: "uv",
+          aawScriptPath: "",
+        },
+      }),
+    );
+    useWorkspaceStore.getState().hydrateFromStorage();
+    expect(useWorkspaceStore.getState().toolPaths.chrysCommand).toBe(
+      "D:/Program Files/Chrys/icode.exe",
+    );
   });
 
   it("损坏的持久化数据按无历史处理，不抛出", () => {

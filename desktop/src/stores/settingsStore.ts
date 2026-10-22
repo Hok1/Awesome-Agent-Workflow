@@ -1,5 +1,5 @@
 /**
- * 设置 store（src/stores）：chrys 路径、审批默认模式、界面语言、
+ * 设置 store（src/stores）：iCode（原 chrys）路径、审批默认模式、界面语言、
  * skills 安装源目录、界面主题（暗夜/暖白），以及「测试连接」状态。
  *
  * 持久化：每项设置变更即写入 localStorage（Tauri WebView 的本地存储，
@@ -52,17 +52,26 @@ export const approvalModeOptions: readonly {
 ];
 
 /**
- * chrys 可执行路径默认值：留空（不硬编码开发者本机路径）。启动时若为空
- * 会异步探测（PATH 查找与常见安装位置，见 probeChrysPath）；探测不到
+ * iCode（原 chrys）可执行路径默认值：留空（不硬编码开发者本机路径）。启动时若
+ * 为空会异步探测（PATH 查找与常见安装位置，见 probeChrysPath）；探测不到
  * 保持为空，设置页提示手动指定。已有用户持久化值不受影响。
  */
 export const defaultChrysPath = "";
 
-/** 探测不到 PATH 时依次尝试的常见安装位置（存在即采纳）。 */
+/**
+ * 探测的命令名与顺序：iCode 0.30 起只安装 `icode` 命令，旧版装的是
+ * `chrys`——先找新名，找不到再回落旧名，两种安装都能命中。
+ */
+const PROBE_PROGRAM_NAMES: readonly string[] = ["icode", "chrys"];
+
+/** 探测不到 PATH 时依次尝试的常见安装位置（存在即采纳；新名在前）。 */
 const CHRYS_FALLBACK_CANDIDATES: readonly string[] = [
-  "C:/Program Files/chrys/chrys.exe",
-  "C:/Program Files (x86)/chrys/chrys.exe",
-  "D:/Program Files/chrys/chrys.exe",
+  "C:/Program Files/Chrys/icode.exe",
+  "C:/Program Files (x86)/Chrys/icode.exe",
+  "D:/Program Files/Chrys/icode.exe",
+  "C:/Program Files/Chrys/chrys.exe",
+  "C:/Program Files (x86)/Chrys/chrys.exe",
+  "D:/Program Files/Chrys/chrys.exe",
 ];
 
 /** AAW skills 安装源目录默认值（本仓库 skills/ 全集；可在设置页修改）。 */
@@ -130,9 +139,13 @@ function loadPersistedSettings(): PersistedSettings {
       language = defaultLanguage;
     }
     return {
-      chrysPath: isNonEmptyString(record["chrysPath"])
-        ? record["chrysPath"]
-        : defaultSettings.chrysPath,
+      // 裸命令名 "chrys" 是改名前的旧值（iCode 0.30 起命令叫 icode）：清空
+      // 以触发启动探测重新找 icode；绝对路径不受影响——老安装的 chrys.exe
+      // 仍可用，探测也保留了对旧名的回落
+      chrysPath:
+        isNonEmptyString(record["chrysPath"]) && record["chrysPath"] !== "chrys"
+          ? record["chrysPath"]
+          : defaultSettings.chrysPath,
       approvalMode: isApprovalMode(record["approvalMode"])
         ? record["approvalMode"]
         : defaultSettings.approvalMode,
@@ -173,26 +186,29 @@ function firstOutputLine(stdout: string): string | null {
 }
 
 /**
- * 异步探测 chrys 可执行路径：先在 PATH 里找（Windows 的 where 与
- * 类 Unix 的 which 各试一次，spawn 失败按未命中处理），再回落常见安装
- * 位置与用户级 chrys 目录。找到返回绝对路径，探测不到返回 null。
- * 宿主可注入（测试用内存宿主布置现场）。
+ * 异步探测 iCode（原 chrys）可执行路径：先在 PATH 里找（Windows 的 where
+ * 与类 Unix 的 which 各试一次，spawn 失败按未命中处理；命令名先 icode 后
+ * chrys，覆盖新旧两种安装），再回落常见安装位置与用户级 chrys 目录。
+ * 找到返回绝对路径，探测不到返回 null。宿主可注入（测试用内存宿主布置
+ * 现场）。
  */
 export async function probeChrysPath(
   host: HostRuntime = hostRuntime,
 ): Promise<string | null> {
   // PATH 查找：where / which 谁可用用谁（失败一律继续，不猜测平台）
-  for (const lookup of ["where", "which"]) {
-    try {
-      const result = await host.runCommand(lookup, ["chrys"]);
-      if (result.code === 0) {
-        const found = firstOutputLine(result.stdout);
-        if (found !== null) {
-          return found;
+  for (const program of PROBE_PROGRAM_NAMES) {
+    for (const lookup of ["where", "which"]) {
+      try {
+        const result = await host.runCommand(lookup, [program]);
+        if (result.code === 0) {
+          const found = firstOutputLine(result.stdout);
+          if (found !== null) {
+            return found;
+          }
         }
+      } catch {
+        // 该查找命令不存在 / 宿主不支持：继续下一个探测手段
       }
-    } catch {
-      // 该查找命令不存在 / 宿主不支持：继续下一个探测手段
     }
   }
   // 常见安装位置
@@ -205,12 +221,15 @@ export async function probeChrysPath(
       // pathExists 失败按未命中处理
     }
   }
-  // 用户级 chrys 目录的同名可执行（%APPDATA%/chrys/chrys.exe 等）
+  // 用户级 chrys 目录下的可执行（%APPDATA%/chrys/icode.exe 等；目录名
+  // 保持 chrys 是上游约定——包名与配置目录不随品牌改名）
   try {
     const skillsDir = await host.chrysSkillsDir();
-    const candidate = joinPath(skillsDir, "..", "chrys.exe");
-    if (await host.pathExists(candidate)) {
-      return candidate;
+    for (const name of PROBE_PROGRAM_NAMES) {
+      const candidate = joinPath(skillsDir, "..", `${name}.exe`);
+      if (await host.pathExists(candidate)) {
+        return candidate;
+      }
     }
   } catch {
     // 宿主不支持：忽略
@@ -269,7 +288,7 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
                 : `命令以退出码 ${result.code} 结束`,
             checkedAt: new Date().toISOString(),
           };
-    logger.info("chrys 连接检测完成", {
+    logger.info("iCode 连接检测完成", {
       code: result.code,
       ok: next.status === "ok",
     });
@@ -331,7 +350,7 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
           connection: {
             status: "error",
             message:
-              "未配置 chrys 可执行路径，请手动填写或重新打开应用自动探测",
+              "未配置 iCode 可执行路径，请手动填写或重新打开应用自动探测",
             checkedAt: new Date().toISOString(),
           },
         });
@@ -344,7 +363,7 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
           checkedAt: null,
         },
       });
-      logger.info("测试 chrys 连接", { program });
+      logger.info("测试 iCode 连接", { program });
       let result: CommandResult;
       try {
         result = await hostRuntime.runCommand(program, ["--version"]);
@@ -368,9 +387,11 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
         if (found !== null && get().chrysPath.trim() === "") {
           // 探测结果写入并持久化（用户在探测期间手动填写的值不覆盖）
           applySettings({ chrysPath: found });
-          logger.info("已自动探测到 chrys 路径", { chrysPath: found });
+          logger.info("已自动探测到 iCode 路径", { chrysPath: found });
         } else if (found === null) {
-          logger.warn("未在 PATH 与常见位置找到 chrys，请在设置中手动指定路径");
+          logger.warn(
+            "未在 PATH 与常见位置找到 iCode（icode/chrys），请在设置中手动指定路径",
+          );
         }
       } finally {
         set({ isProbingChrysPath: false });

@@ -34,7 +34,7 @@ describe("agentAdapters 注册表", () => {
       workspacePath: null,
       executablePath: "   ",
     });
-    expect(fallback.command).toEqual(["chrys", "acp"]);
+    expect(fallback.command).toEqual(["icode", "acp"]);
     expect(fallback.cwd).toBeNull();
   });
 });

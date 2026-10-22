@@ -41,7 +41,7 @@ flowchart TB
 
     Core["src/core：appLogSink · acpTraffic 环形缓冲 · host 运行时抽象"]
     Rust["src-tauri（Rust 薄壳）<br/>run_command 等七命令<br/>acp_spawn / stdin_write / stdin_close / kill_tree"]
-    Chrys[("chrys acp 子进程")]
+    Chrys[("icode acp 子进程（原 chrys acp）")]
 
     UI -->|读状态 / action| Stores
     Stores --> AAW
@@ -59,7 +59,7 @@ flowchart TB
 
 ## 事件数据流
 
-1. **上行（agent → 界面）**：`chrys acp` 的 stdout 行 → transport（分帧）
+1. **上行（agent → 界面）**：`icode acp`（原 `chrys acp`）的 stdout 行 → transport（分帧）
    → `AcpConnection`（JSON 解析、请求响应关联、wire 登记 `acpTraffic`）
    → `AcpSession`（通知翻译为类型化事件 `AcpSessionEvent`，chrys 私有
    通知经方言钩子 `AcpDialect` 翻译）→

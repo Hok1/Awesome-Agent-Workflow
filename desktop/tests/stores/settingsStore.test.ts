@@ -143,7 +143,7 @@ describe("useSettingsStore", () => {
     expect(
       appLogSink
         .snapshot()
-        .some((entry) => entry.message === "chrys 连接检测完成"),
+        .some((entry) => entry.message === "iCode 连接检测完成"),
     ).toBe(true);
   });
 
@@ -164,31 +164,40 @@ describe("useSettingsStore", () => {
     await useSettingsStore.getState().testConnection();
     const { connection } = useSettingsStore.getState();
     expect(connection.status).toBe("error");
-    expect(connection.message).toContain("未配置 chrys 可执行路径");
+    expect(connection.message).toContain("未配置 iCode 可执行路径");
   });
 
-  it("probeChrysPath：PATH 命中（where/which 首行）即返回", async () => {
+  it("probeChrysPath：PATH 命中（icode 优先，where/which 首行）", async () => {
+    demoHost.scriptCommand("where", ["icode"], {
+      code: 0,
+      stdout: "C:/tools/bin/icode.exe\nC:/other/icode.exe\n",
+      stderr: "",
+    });
+    expect(await probeChrysPath(demoHost)).toBe("C:/tools/bin/icode.exe");
+  });
+
+  it("probeChrysPath：icode 落空回落旧命令名 chrys（老安装）", async () => {
+    demoHost.scriptCommand("where", ["icode"], {
+      code: 1,
+      stdout: "",
+      stderr: "找不到文件",
+    });
     demoHost.scriptCommand("where", ["chrys"], {
       code: 0,
-      stdout: "C:/tools/bin/chrys.exe\nC:/other/chrys.exe\n",
+      stdout: "C:/tools/bin/chrys.exe\n",
       stderr: "",
     });
     expect(await probeChrysPath(demoHost)).toBe("C:/tools/bin/chrys.exe");
   });
 
   it("probeChrysPath：PATH 落空回落常见安装位置（pathExists 命中）", async () => {
-    demoHost.scriptCommand("where", ["chrys"], {
-      code: 1,
-      stdout: "",
-      stderr: "找不到文件",
-    });
-    // 内存宿主以文件节点表达可执行文件的存在
+    // 内存宿主以文件节点表达可执行文件的存在；候选表首项是 icode
     await demoHost.writeTextFile(
-      "C:/Program Files/chrys/chrys.exe",
+      "C:/Program Files/Chrys/icode.exe",
       "fake-binary",
     );
     expect(await probeChrysPath(demoHost)).toBe(
-      "C:/Program Files/chrys/chrys.exe",
+      "C:/Program Files/Chrys/icode.exe",
     );
   });
 
@@ -199,24 +208,24 @@ describe("useSettingsStore", () => {
 
   it("probeChrysPathIfNeeded：探测命中写入并持久化；已有持久化值不覆盖", async () => {
     // 探测命中：写入 chrysPath
-    demoHost.scriptCommand("where", ["chrys"], {
+    demoHost.scriptCommand("where", ["icode"], {
       code: 0,
-      stdout: "C:/probed/chrys.exe\n",
+      stdout: "C:/probed/icode.exe\n",
       stderr: "",
     });
     await useSettingsStore.getState().probeChrysPathIfNeeded();
-    expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/chrys.exe");
+    expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/icode.exe");
     expect(useSettingsStore.getState().isProbingChrysPath).toBe(false);
-    expect(readPersisted()).toMatchObject({ chrysPath: "C:/probed/chrys.exe" });
+    expect(readPersisted()).toMatchObject({ chrysPath: "C:/probed/icode.exe" });
 
     // 已有持久化值：再次探测不覆盖（也不发命令）
-    demoHost.scriptCommand("where", ["chrys"], {
+    demoHost.scriptCommand("where", ["icode"], {
       code: 0,
-      stdout: "C:/other/chrys.exe\n",
+      stdout: "C:/other/icode.exe\n",
       stderr: "",
     });
     await useSettingsStore.getState().probeChrysPathIfNeeded();
-    expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/chrys.exe");
+    expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/icode.exe");
   });
 
   it("probeChrysPathIfNeeded：探测不到保持为空", async () => {
@@ -248,6 +257,23 @@ describe("useSettingsStore", () => {
     const { useSettingsStore: freshStore } =
       await import("../../src/stores/settingsStore");
     expect(freshStore.getState().theme).toBe("dark");
+  });
+
+  it("持久化里的裸命令名 chrys（旧值）读取时清空以触发启动探测（iCode 改名）", async () => {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        chrysPath: "chrys",
+        approvalMode: "ask",
+        language: "zh-CN",
+        skillsSourceDir: defaultSkillsSourceDir,
+        theme: "dark",
+      }),
+    );
+    vi.resetModules();
+    const { useSettingsStore: freshStore } =
+      await import("../../src/stores/settingsStore");
+    expect(freshStore.getState().chrysPath).toBe("");
   });
 
   it("resetToDefaults 恢复默认并持久化", () => {

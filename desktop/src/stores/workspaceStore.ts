@@ -156,8 +156,12 @@ function sanitizePersisted(
   if (typeof record["toolPaths"] === "object" && record["toolPaths"] !== null) {
     const paths = record["toolPaths"] as Record<string, unknown>;
     out.toolPaths = {
+      // 持久化里的裸 "chrys" 是旧版缺省值（整包 toolPaths 落盘时被顺带写
+      // 入）：iCode 0.30 起命令改名 icode，按未配置处理回落新缺省；用户显
+      // 式写过的绝对路径或其他命令名原样保留
       chrysCommand:
-        typeof paths["chrysCommand"] === "string"
+        typeof paths["chrysCommand"] === "string" &&
+        paths["chrysCommand"] !== "chrys"
           ? paths["chrysCommand"]
           : defaultToolPaths.chrysCommand,
       uvCommand:

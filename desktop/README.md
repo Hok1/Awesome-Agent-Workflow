@@ -1,7 +1,8 @@
 # AAW 桌面客户端
 
-通过 ACP（Agent Client Protocol，JSON-RPC over stdio）连接本机 chrys
-（`chrys acp`），承载 AAW 工作流（AAW skills + aaw CLI，流程状态在项目
+通过 ACP（Agent Client Protocol，JSON-RPC over stdio）连接本机 iCode
+（原 chrys，命令 `icode acp`；iCode 0.30 起命令由 chrys 改名 icode，配置目录
+仍为 %APPDATA%/chrys），承载 AAW 工作流（AAW skills + aaw CLI，流程状态在项目
 `.sdd/` 下）开发交互的桌面应用。
 
 技术栈：Tauri 2 + React + TypeScript（strict）+ Vite；状态管理 zustand；

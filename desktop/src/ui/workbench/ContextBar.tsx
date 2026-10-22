@@ -32,7 +32,7 @@ import {
   type OverlayView,
 } from "../../stores/workbenchUiStore.ts";
 import { deriveStepPhases } from "../../aaw/workflowModel.ts";
-import { findAgentAdapter } from "../../agents/registry.ts";
+import { defaultAgentLabel } from "../../agents/registry.ts";
 import {
   btnPrimary,
   btnSecondary,
@@ -87,7 +87,8 @@ function BackButton({
  * 收起（只留 agent 标识这一句事实）。
  */
 function GlobalActions() {
-  const agentLabel = findAgentAdapter("chrys")?.displayName ?? "chrys";
+  // 注册表的默认 agent 展示名（iCode 改名只动 registry 一处）
+  const agentLabel = defaultAgentLabel();
   const pendingCount = useApprovalStore((state) => state.pending.length);
   const overlay = useWorkbenchUiStore((state) => state.overlay);
   const [isInboxOpen, setInboxOpen] = useState(false);

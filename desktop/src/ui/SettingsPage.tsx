@@ -1,5 +1,5 @@
 /**
- * 设置页：工具路径（chrys / uv / aaw 脚本，全站唯一配置点）、审批默认
+ * 设置页：工具路径（iCode / uv / aaw 脚本，全站唯一配置点）、审批默认
  * 模式、界面语言、界面主题（外观区块）、AAW skills 安装源目录，以及内置
  * skills 安装器区块。
  *
@@ -47,7 +47,7 @@ function ResetConfirm({
       className="flex items-center gap-2 rounded-md border border-line-strong bg-raised px-2 py-1 shadow-lg"
     >
       <span className="text-xs text-ink">
-        将清除 chrys 路径、uv / aaw 路径、审批模式、语言、主题与 skills
+        将清除 iCode 路径、uv / aaw 路径、审批模式、语言、主题与 skills
         源目录，确认？
       </span>
       <button
@@ -121,7 +121,7 @@ function SettingsPage() {
         )}
       </header>
 
-      {/* 工具路径：chrys / uv / aaw 脚本一处配置。项目总览的健康检查与
+      {/* 工具路径：iCode / uv / aaw 脚本一处配置。项目总览的健康检查与
           AAW 状态查询都用这里的三条路径执行。 */}
       <div className="space-y-4 rounded-lg border border-line bg-surface p-4">
         <div>
@@ -166,7 +166,7 @@ function SettingsPage() {
           {/* 路径为空（未配置且自动探测未命中）：提示手动指定 */}
           {toolPaths.chrysPath.trim() === "" && (
             <p role="alert" className="mt-1.5 text-xs text-warn-ink">
-              未找到 chrys，请手动指定路径
+              未找到 iCode，请手动指定路径
             </p>
           )}
           {connection.status !== "idle" && connection.status !== "testing" && (

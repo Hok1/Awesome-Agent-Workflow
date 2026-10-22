@@ -38,14 +38,14 @@ describe("SettingsPage", () => {
 
   it("渲染各设置区块与默认 chrys 路径", async () => {
     await renderSettingsPage();
-    expect(screen.getByText("chrys 可执行路径")).toBeInTheDocument();
+    expect(screen.getByText("iCode 可执行路径")).toBeInTheDocument();
     expect(screen.getByText("审批默认模式")).toBeInTheDocument();
     expect(screen.getByText("界面语言")).toBeInTheDocument();
     expect(screen.getByText("AAW skills 安装源目录")).toBeInTheDocument();
     // 默认路径为空（不硬编码开发者本机路径），并提示手动指定
-    expect(screen.getByLabelText("chrys 可执行路径")).toHaveValue("");
+    expect(screen.getByLabelText("iCode 可执行路径")).toHaveValue("");
     expect(
-      screen.getByText("未找到 chrys，请手动指定路径"),
+      screen.getByText("未找到 iCode，请手动指定路径"),
     ).toBeInTheDocument();
     // 内置 skills 安装器作为设置页区块存在
     expect(screen.getByText("AAW skills 安装器")).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe("SettingsPage", () => {
 
   it("修改 chrys 路径写入 store 并持久化", async () => {
     await renderSettingsPage();
-    const input = screen.getByLabelText("chrys 可执行路径");
+    const input = screen.getByLabelText("iCode 可执行路径");
     await userEvent.clear(input);
     await userEvent.type(input, "X:/chrys.exe");
     expect(useSettingsStore.getState().chrysPath).toBe("X:/chrys.exe");
@@ -92,21 +92,21 @@ describe("SettingsPage", () => {
     await renderSettingsPage();
     await userEvent.click(screen.getByRole("button", { name: "测试连接" }));
     expect(
-      await screen.findByText(/未配置 chrys 可执行路径/),
+      await screen.findByText(/未配置 iCode 可执行路径/),
     ).toBeInTheDocument();
   });
 
   it("配置路径后「未找到 chrys」提示消失", async () => {
     await renderSettingsPage();
     expect(
-      screen.getByText("未找到 chrys，请手动指定路径"),
+      screen.getByText("未找到 iCode，请手动指定路径"),
     ).toBeInTheDocument();
     await userEvent.type(
-      screen.getByLabelText("chrys 可执行路径"),
+      screen.getByLabelText("iCode 可执行路径"),
       CHRYS_TEST_PATH,
     );
     expect(
-      screen.queryByText("未找到 chrys，请手动指定路径"),
+      screen.queryByText("未找到 iCode，请手动指定路径"),
     ).not.toBeInTheDocument();
   });
 

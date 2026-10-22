@@ -21,7 +21,7 @@ import { createChrysDialect, type QuestionResponder } from "./chrysDialect.ts";
 
 /** 一次 agent 启动的完整描述（transport 工厂的入参形状）。 */
 export interface AgentLaunch {
-  /** 完整 argv，如 ["C:/path/chrys.exe", "acp"]。 */
+  /** 完整 argv，如 ["C:/path/icode.exe", "acp"]。 */
   readonly command: readonly string[];
   /** 工作目录；null 表示继承宿主。 */
   readonly cwd: string | null;
@@ -63,14 +63,20 @@ export interface AgentAdapter {
 
 /**
  * chrys 适配项。权威定义：D:/dev/workspace-ai/chrys/src/chrys/app/acp/
- * （server.py 的 initialize 能力声明、_request_permission 与
+ * （server.py 的 initialize 能力声明与扩展清单、_request_permission 与
  * _chrys/request_input 结构化提问、session_manager.py、content.py）。
+ *
+ * 命名事实（iCode 0.30 起）：产品与命令叫 iCode（`icode acp`），但包名、
+ * 配置目录（%APPDATA%/chrys）、线上的扩展前缀（chrys/*）保持 chrys——
+ * 适配项沿用同一分工：id/dialect 留 chrys（内部代号与线上前缀），displayName
+ * 与启动命令用 iCode（用户所见）。旧安装（只有 chrys 命令）由设置页的
+ * 路径探测兜住（probeChrysPath 先找 icode 再找 chrys）。
  */
 export const chrysAgentAdapter: AgentAdapter = {
   id: "chrys",
-  displayName: "chrys",
+  displayName: "iCode",
   buildLaunch(context) {
-    const program = context.executablePath?.trim() || "chrys";
+    const program = context.executablePath?.trim() || "icode";
     return {
       command: [program, "acp"],
       cwd: context.workspacePath,
@@ -82,7 +88,7 @@ export const chrysAgentAdapter: AgentAdapter = {
     return createChrysDialect({ onQuestion: hooks.onQuestion });
   },
   notes: [
-    "扩展通知：_chrys/runtime_update、_chrys/usage_update、_chrys/error、_chrys/warning",
+    "扩展通知：_chrys/runtime_update、_chrys/usage_update、_chrys/error、_chrys/warning（其余 _chrys/* 透传；0.30 起 initialize 的 field_meta 声明全部扩展方法/通知，apiVersion=1）",
     "反向请求：session/request_permission（allow_once / reject_once）、_chrys/request_input（结构化提问）",
     "能力（server.py）：loadSession、promptCapabilities.embeddedContext、sessionCapabilities.{close,list,additionalDirectories}",
   ],
