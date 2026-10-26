@@ -6,17 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from aaw_skill_eval.models import Experiment, Run
-from aaw_skill_eval.services.orchestration.execution import finish_experiment, prepare_retry
-from aaw_skill_eval.services.workspace import cleanup as cleanup_module
-from aaw_skill_eval.services.workspace.cleanup import (
+from aaw_skill_eval.contracts.entities import Experiment, Run
+from aaw_skill_eval.modules.executions.execution import finish_experiment
+from aaw_skill_eval.infrastructure.workspace import cleanup as cleanup_module
+from aaw_skill_eval.infrastructure.workspace.cleanup import (
     cleanup_orphan_workspaces,
     cleanup_run_workspace,
     mark_workspace_retained,
     remove_run_workspace_dirs,
     workspace_usage,
 )
-from aaw_skill_eval.services.workspace.paths import run_workspace
+from aaw_skill_eval.infrastructure.workspace.paths import run_workspace
 
 
 def _create_experiment_with_run(
@@ -28,7 +28,7 @@ def _create_experiment_with_run(
     error_kind: str | None = None,
     cancel_requested: bool = False,
 ) -> tuple[str, str]:
-    from aaw_skill_eval.models import Skill, SkillRevision, Suite
+    from aaw_skill_eval.contracts.entities import Skill, SkillRevision, Suite
 
     snapshot = tmp_path / "snapshot-fixture"
     snapshot.mkdir(exist_ok=True)
@@ -152,22 +152,8 @@ def test_remove_run_workspace_dirs_retries_through_file_locks(client, tmp_path: 
     assert not root.exists()
 
 
-def test_prepare_retry_deletes_old_attempt_workspace(client, tmp_path: Path):
-    settings = client.app.state.settings
-    factory = client.app.state.session_factory
-    experiment_id, run_id = _create_experiment_with_run(
-        factory, tmp_path, run_status="failed", error_kind="timeout"
-    )
-    old_root = _write_workspace(settings, experiment_id, run_id)
-
-    run = prepare_retry(settings, factory, run_id)
-
-    assert run.current_attempt == 2 and run.status == "queued"
-    assert not old_root.exists()  # 重试入队即废弃旧现场
-
-
 def test_mark_service_restart_discards_interrupted_workspaces(client, tmp_path: Path):
-    from aaw_skill_eval.jobs import mark_service_restart
+    from aaw_skill_eval.infrastructure.jobs import mark_service_restart
 
     settings = client.app.state.settings
     factory = client.app.state.session_factory
@@ -291,32 +277,3 @@ def test_workspace_cleanup_api_skips_running(client, tmp_path: Path):
 
     assert response.status_code == 200
     assert "不能清理现场" in response.json()["skipped"]
-
-
-@pytest.mark.parametrize(
-    "scenario,status,expected_button",
-    [
-        ("retained-terminal", "completed", True),
-        ("running", "running", False),
-    ],
-)
-def test_run_actions_show_workspace_cleanup_button(
-    scenario, status, expected_button, tmp_path: Path
-):
-    """前端：终态且现场在盘的 run 显示"清理现场"，运行中的不显示。"""
-    from test_detail_page_structure import _node_available, _run_scenario
-
-    if not _node_available():
-        pytest.skip("node is required to load app.js")
-    scenario_js = f"""
-    const run = {{
-      id: "run-1", status: {status!r}, error_kind: null, current_attempt: 1,
-      artifact_available: true, reviews: [], workspace_retained: true,
-    }};
-    const markup = runActions({{runs: []}}, run);
-    console.log(JSON.stringify({{
-      hasCleanButton: markup.includes('data-clean-workspace="run-1"')
-    }}));
-    """
-    result = _run_scenario(tmp_path, scenario_js)
-    assert result["hasCleanButton"] is expected_button

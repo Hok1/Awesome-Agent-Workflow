@@ -1,76 +1,75 @@
-# AI Agent Skill Benchmark Platform
+# Benchmark 平台流程
 
-## 产品流程
+## 测试套与执行对象
 
-首页以测试套为入口，而不是以单次实验为入口。测试套卡片展示指定历史基准、最新执行分数、状态和能力雷达图；支持搜索、筛选、排序、分页、归档及恢复。
+测试套保存业务任务、参考材料、预期结果、固定评价维度、验证脚本、项目地址和创建时提交。软件开发及文档与分析设计维度可以组合，同一个完整任务只执行一次，各维度评价同一份产出。维度标准、核心检查项和评分档位由平台规定。
 
-首页点击创建测试套，通过紧凑弹框只填写名称，立即保存待配置草稿并留在首页显示卡片。待配置卡片参与搜索、创建时间排序及分页，可筛选“待配置”；点击“去配置”进入用例配置页，刷新仍保留卡片和已保存内容。
+创建时只需名称，首页即出现待配置卡片。配置中的 Skill 路径是可选设计参考，不决定之后的执行对象。配置锁定后不可原地修改，修改需复制成新草稿。
 
-用例配置页填写干净 Git 项目、目标 Skill、需求和固定评价维度，使用独立的生成模型与 Chrys 对话，或按维度导入目录/ZIP。Agent 读取项目副本和 Skill 副本，在独立目录产出真实场景、参考材料及验证代码。平台通过原有标准包导入协议编译，不接受 Agent 改写核心评分标准。
+每次执行选择：
 
-同一场景跨维度共享时，任务、输入文件、预期和流程配置必须一致；只执行一次，分别评分。草稿支持多轮生成与编辑，异步任务期间锁定编辑；revision 防止过期请求覆盖内容。服务重启会将未完成生成/校验标记为中断，保留草稿。
+| 选择 | 行为 |
+| --- | --- |
+| no_skill | 相同业务任务、Runner、模型及基础工具，不加载任何 Skill |
+| Skill 路径 | 导入目录内容快照，记录内容哈希，再执行 |
+| 已保存 Skill 版本 | 使用所选历史快照，不读取当前目录的新内容 |
 
-隔离校验克隆固定提交的项目副本，并按正式执行协议运行 Setup 和验证脚本。评分脚本位于独立 evaluator 目录，使用 `AAW_WORKSPACE` 读取被测项目、`AAW_FINAL_RESPONSE` 读取最终回复。没有候选产出的预检中最终回复为空。正常质量失败必须输出低分 JSON 并退出 0；异常退出、JSON 协议错误、缺失检查点或权重改变不能通过试验证。校验只证明结构与脚本可运行，不证明断言合理或 Skill 已通过。用户检查并确认有效性后点击保存测试套。
+快速模式执行 1 Trial，正式模式 3 Trial。一次执行只有一个候选，不附带无 Skill 对照运行。更新 Skill 后再次选择路径，会保存新内容版本。项目始终从测试套锁定的提交克隆。
 
-正式保存锁定项目地址、用例、维度和阈值；需要修改时复制为新草稿。保存和草稿锁定在同一数据库事务完成。保存不自动执行。
+## 用例设计
 
-执行页使用 Chrys 的执行模型和独立评分模型，仅运行当前 Skill。快速模式 1 Trial，正式模式 3 Trial。每次执行保留项目提交、Skill 内容版本、测试套定义和完整模型/运行配置快照。页面可停止执行，切换历史记录，逐维度查看用例与评分项、Trial 证据、日志和产出文件。硬门禁位于结果对照中，默认折叠；用例定义默认隐藏。
+顶部持续展示四步：分析项目 → 设计用例 → 配置评价方式 → 确认使用。保留对话和结构化预览，各阶段、各维度显示状态与耗时。
 
-用户选择本套件的执行记录及结果组作为对比基线：Skill 执行（`current`）或已有的无 Skill 结果（`no_skill`）。所选组必须 Trial 齐全、评分完整且门禁通过；新执行仍只运行当前 Skill，不因选择基线而额外执行无 Skill。基线以 `baseline_experiment_id` 与 `baseline_group` 持久保存，旧指针默认指向 `current`。
+先发布完整任务草案，再逐维度准备评价方式。LLM 维度采用固定规则；代码/混合维度独立生成脚本、隔离试运行。内容错误最多局部修复两次，成功维度不重做。超时、连接失败可停止/重试；普通讨论不取消正在生成的脚本。操作 ID 与 revision 防止旧任务或过期请求覆盖新内容。
 
-总分、分差、雷达图、维度、评分项和门禁均比较本次执行与同一所选基线；未选择时只显示本次结果，不额外固定展示无 Skill 列。项目提交、用例定义、运行配置或 Trial 模式变化时，分差作为参考，不给正式提升结论。不完整结果保留暂定得分并标识状态。用例 Pass 要求关联维度全部达到各自阈值且门禁通过；执行错误与未完成分别标识。
+校验克隆固定项目，运行 Setup 与检查脚本。脚本通过 `AAW_WORKSPACE` 和 `AAW_FINAL_RESPONSE` 读取产出；预检没有候选最终回复。低分但协议正确属于有效检查，不因低分自动降低标准。校验仅证明结构和脚本协议有效，用户仍需审核断言。确认后锁定，不自动执行。
 
-测评用例是完整任务，单独展示一次需求、参考材料与预期结果，默认收起；一个任务执行后可由多个维度分别评价。单用例的结果层次为“评价维度 → 检查项 → Trial 评分与证据”，不在各维度内重复嵌套用例定义。多用例时保留用例名称以区分评分来源。
-
-归档保留测试套和执行记录，支持恢复；有活动执行时需要先停止。已有旧数据兼容不是本次验收要求。旧接口暂保留供脚本使用，新界面不提供 Codex 配置。
-
-## 代码目录
+## 执行、评分和基线
 
 ```text
-skill-eval/
-├─ frontend/                         React + TypeScript 应用与构建
-│  ├─ src/pages/
-│  │  ├─ Dashboard.tsx              测试套管理
-│  │  ├─ SuitePage.tsx              执行分析及只读用例设置
-│  │  └─ DesignerPage.tsx           草稿、生成、导入、校验、保存
-│  ├─ src/components/               shadcn 风格 Radix 基础组件与业务组件
-│  │  ├─ TestSuiteCard.tsx
-│  │  ├─ ScoreRadar.tsx             Recharts 雷达图
-│  │  ├─ EvaluationChart.tsx        Recharts 历史柱状图
-│  │  ├─ TestCaseList.tsx           维度→用例→评分项→Trial 证据
-│  │  ├─ AgentChat.tsx
-│  │  ├─ ProgressSteps.tsx
-│  │  └─ ExecutionLog.tsx
-│  └─ src/lib/                      API 与用例判定
-├─ src/aaw_skill_eval/
-│  ├─ benchmark.py                  测试套聚合、历史基准、草稿任务及归档 API
-│  ├─ models.py                     SuiteDraft、归档与历史基准指针、执行模式
-│  ├─ database.py                   增量数据库迁移
-│  ├─ services/catalog/designer.py  包编译、Chrys 设计 Agent、隔离校验
-│  ├─ services/providers/
-│  │  ├─ __init__.py                Runner / Judge 工厂与公开注册函数
-│  │  └─ registry.py                AgentRuntime 扩展协议
-│  ├─ services/orchestration/       复用执行管线，支持 current_only
-│  └─ static/benchmark/             构建产物，由 FastAPI 提供
-└─ tests/test_benchmark.py           新流程的集成测试
+固定测试套
+├─ Execution 1：no_skill       → Assessment 1（可设为基线）
+├─ Execution 2：AAW 内容版本 1 → Assessment 2
+│                            └─ Assessment 3（重新评分）
+└─ Execution 3：AAW 内容版本 2 → Assessment 4
 ```
 
-## 接入其他 Agent
+执行记录保存候选、模型/运行环境、项目提交、Trial、Agent 输出和冻结证据。评分记录保存 Judge 配置、每个 Trial 的评分状态、分数、日志和证据引用。重新评分只新增 Assessment；执行次数及趋势中的运行条目不会增加。评分启动/执行失败不改写 Agent 已完成状态。
 
-实现既有 `Runner` 与 `Judge` 契约，以及 `AgentRuntime` 的 runtime payload、模型配置 snapshot、snapshot verification；通过 `register_provider` 注册。需要用例生成时另外实现 `DesignerAgent.generate`，注册到 `DESIGNER_PROVIDERS`，输出统一的维度包。Chrys 使用已有 ACP transport；其他 Agent 不必使用 ACP。编排不依赖模型品牌。
+基线指向 `baseline_experiment_id` 和 **`baseline_assessment_id`**。可以选择任何符合完整性要求的历史评分，包括 no_skill、旧 Skill、新 Skill；重新评分不会移动基线。总分、雷达图、维度及评分项均与同一基线比较。项目、用例、模型/环境配置、Trial 模式不一致时仅展示参考分差。评分不完整时显示有效的部分维度，不把缺失评分当作零分。
 
-当前交付的界面默认使用 Chrys；后续新增 Agent 时，从 `/api/v1/benchmark/agents` 获取可用角色与模型列表。Codex 后端代码保留为旧脚本兼容路径，不属于新产品流程。
+结果页面保留紧凑布局：能力图/趋势图 → 测评用例（默认收起，只出现一次）→ 结果对照（维度展开检查项、评分、证据）。共同门禁在结果对照中；AAW Reviewer/工作流合规单独展示，不改变共同质量分及共同门禁。
 
-## 构建与运行
+## 失败恢复
 
-```powershell
-cd skill-eval/frontend
-npm ci
-npm run build
-cd ..
-.venv/Scripts/python.exe -m aaw_skill_eval.cli
-```
+- **重新执行**：从相同测试套、项目提交及候选快照重新运行，创建新执行，保留旧记录；刷新运行环境快照。
+- **重新评分**：读取已完成 Trial 的冻结证据和确定性检查结果，不运行 Runner、Setup 或验证器。源证据哈希不符会拒绝评分。
+- **评分版本选择**：查看同一次执行的任一历史评分，可独立设为基线。
+- **服务重启**：排队任务恢复；活动执行和评分分别标记中断，保留可恢复的证据。执行完成但尚未开始评分的中断也记录为评分失败，可重新评分。
 
-构建产物包含在 Python 包中，不需要生产环境另起 Node 服务。开发可运行 `npm run dev`，代理 API 到 `127.0.0.1:18110`。已有原生前端源码保留用于旧测试参考，根页面优先提供 React 构建产物。
+Judge 按评价维度最多并发两组，默认单维度 300 秒、单 Trial 整体 900 秒。每维度保存进度、输入规模、文件选择、耗时及错误；允许一次全文证据补充。相同模型配置、判据及证据指纹才复用成功维度缓存，更换模型会重新评分全部 LLM 维度。两名 AAW Reviewer 使用独立只读上下文，模型跟随 Runner。
 
-Chrys 的运行时可用不代表每个模型 Profile 的凭证可用；错误会显示在生成对话或执行结果中。默认选中当前激活的模型 Profile。
+## HTTP 边界
+
+保留 `experiments` 作为执行的 API 路径名称；它不再表示配对 A/B 执行。
+
+| 接口 | 职责 |
+| --- | --- |
+| `POST /api/v1/benchmark/drafts` | 名称创建草稿 |
+| `/api/v1/benchmark/drafts/{id}/messages` | 分阶段设计与对话 |
+| `POST /api/v1/benchmark/suites/{id}/execute` | `candidate_kind`、`skill_path` 或 `skill_revision_id` 启动执行 |
+| `GET /api/v1/benchmark/skill-revisions` | 可复用的候选快照 |
+| `GET /api/v1/experiments/{id}?assessment_id=...` | 指定评分的结果投影；省略时使用最新评分 |
+| `POST /api/v1/benchmark/suites/{id}/experiments/{execution}/rejudge` | 新增评分；返回原执行 ID 与新 assessment_id |
+| `POST /api/v1/benchmark/suites/{id}/experiments/{execution}/retry` | 新增执行 |
+| `POST /api/v1/benchmark/suites/{id}/baseline` | 固定执行及评分 ID |
+| `/api/v1/benchmark/assessments/{id}/runs/{run}/logs` | 评分日志 |
+| `/api/v1/benchmark/assessments/{id}/runs/{run}/artifacts` | 评分产物 |
+
+## 数据切换与回退
+
+新版数据库为 `.skill-eval-data/skill-eval-v2.db`，执行目录为 `v2/workspaces`，证据目录为 `v2/artifacts`。历史定义的迁移在单个事务中完成并记录版本，只执行一次；原数据库以只读方式打开。已保存测试套和未保存草稿均转为未确认草稿，保留原定义和迁移提醒，不复制历史执行。
+
+导入后先检查任务/预期中是否夹带 AAW 指定目录、Reviewer 或入口等专属要求，把共同质量要求留在任务中，专属规则放到流程合规检查；勾选确认、重新校验、锁定后才能执行。迁移不会自动改写这些语义。
+
+回退时先停止新版服务，恢复升级前源码及原 `skill-eval.db`，使用旧数据目录启动。新版数据库和 `v2` 目录单独保留；不要用新版数据库覆盖旧文件。升级前应保存源码和数据库备份，新旧服务不同时写同一数据目录。

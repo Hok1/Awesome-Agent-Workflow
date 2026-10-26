@@ -1,7 +1,7 @@
 [project]
 name = "aaw-skill-eval"
 version = "0.1.0"
-description = "Local A/B evaluation studio for AAW agent skills"
+description = "Local single-candidate Agent Skill benchmark platform"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",

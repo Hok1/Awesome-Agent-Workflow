@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from aaw_skill_eval.schemas import CaseSpec, GraderSpec, TimeScoringSpec
-from aaw_skill_eval.services.evaluation.graders import (
+from aaw_skill_eval.contracts.schemas import CaseSpec, GraderSpec, TimeScoringSpec
+from aaw_skill_eval.modules.evaluations.graders import (
     EXECUTION_TIME_GRADER_ID,
     evaluate_deterministic,
     execution_time_component,
     merge_scores,
 )
-from aaw_skill_eval.services.providers.base import JudgeOutcome, JudgeScore
+from aaw_skill_eval.contracts.agents import JudgeOutcome, JudgeScore
 
 
 def test_quality_score_and_hard_gate_are_independent(tmp_path: Path):

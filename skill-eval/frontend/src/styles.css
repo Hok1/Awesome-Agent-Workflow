@@ -936,6 +936,14 @@ h1 {
   padding: 18px;
   border-top: 1px solid #e2e8f0;
 }
+.chat-config-hint {
+  padding: 10px 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #475569;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
 .chat-input textarea {
   flex: 1;
   resize: vertical;
@@ -1206,6 +1214,145 @@ h1 {
 .case-definitions {
   padding: 12px;
   min-width: 0;
+}
+.generated-cases {
+  padding: 16px;
+  min-width: 0;
+}
+.designer-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+  min-width: 0;
+  min-height: calc(100vh - 250px);
+}
+.designer-workbench.chat-primary .agent-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.designer-workbench.chat-primary .chat-messages {
+  flex: 1;
+  overflow: auto;
+}
+@media (min-width: 1280px) {
+  .designer-workbench.chat-primary {
+    grid-template-rows: minmax(0, calc(100vh - 252px));
+  }
+  .designer-workbench.chat-primary .cases-rail {
+    overflow: auto;
+  }
+}
+.config-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  margin-bottom: 12px;
+  font-size: 11.5px;
+}
+.config-strip .cf-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #64748b;
+}
+.config-strip .cf-field input,
+.config-strip .cf-field select {
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  width: 190px;
+}
+.config-strip .cf-field input[readonly] {
+  background: #f8fafc;
+}
+.config-strip .cf-status {
+  font-weight: 700;
+}
+.config-strip .cf-status.ok {
+  color: #059669;
+}
+.config-strip .cf-status.warn {
+  color: #b45309;
+}
+.config-strip .cf-toggle {
+  margin-left: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.config-form {
+  margin-bottom: 12px;
+}
+.path-browse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748b;
+}
+.cases-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.designer-workbench .agent-chat .section-heading {
+  flex-wrap: wrap;
+  padding: 14px;
+}
+@media (max-width: 1100px) {
+  .designer-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.generated-case {
+  border-top: 1px solid #e2e8f0;
+  padding: 12px 0;
+  min-width: 0;
+}
+.generated-case-text {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 16px;
+  margin: 12px 0;
+}
+.generated-case-text p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.generated-evaluations {
+  margin: 10px 0;
+}
+.generated-cases .definition > summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+}
+.designer-advanced > summary {
+  padding: 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #475569;
 }
 .case-definitions .section-heading {
   margin-bottom: 6px;
@@ -1569,4 +1716,154 @@ h1 {
   .chat-message {
     max-width: 95%;
   }
+}
+.designer-flow {
+  position: sticky;
+  top: 8px;
+  z-index: 10;
+  padding: 12px 16px;
+  box-shadow: 0 4px 18px #14233c0b;
+}
+.designer-flow-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.designer-flow-stages button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+}
+.designer-flow-stages button > span {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  text-align: center;
+  line-height: 22px;
+  flex-shrink: 0;
+}
+.designer-flow-stages small {
+  color: #64748b;
+  font-size: 11px;
+}
+.designer-flow-stages .selected {
+  border-color: #818cf8;
+  background: #eef2ff;
+}
+.designer-flow-stages .done > span {
+  color: #047857;
+  background: #d1fae5;
+}
+.designer-flow-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  font-size: 12px;
+}
+.designer-flow-current p {
+  color: #64748b;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.designer-flow-warning {
+  color: #92400e;
+  background: #fffbeb;
+  padding: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.designer-flow-history {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.designer-flow-history p {
+  margin-top: 6px;
+  color: #64748b;
+}
+.designer-suggestions {
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  padding: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.designer-suggestions > div {
+  border-top: 1px solid #fde68a;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.designer-suggestions p {
+  margin: 6px 0;
+}
+@media (max-width: 1100px) {
+  .designer-flow-stages button {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+}
+@media (max-width: 640px) {
+  .designer-flow {
+    position: static;
+  }
+  .designer-flow-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .designer-flow-current {
+    flex-wrap: wrap;
+  }
+}
+.execution-failure {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+.execution-failure .section-heading p {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 4px;
+}
+.run-failure {
+  border-top: 1px solid #fee2e2;
+  padding-top: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.run-failure > p {
+  color: #991b1b;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 6px;
+}
+.judge-status-panel > div > p {
+  font-size: 12px;
+  margin: 8px 0;
+  color: #475569;
+}
+.judge-dimension-state {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid #e2e8f0;
+  padding: 7px 0;
+  font-size: 12px;
+}
+.judge-dimension-state > strong {
+  min-width: 150px;
+}
+.judge-dimension-state > p {
+  flex-basis: 100%;
+  color: #991b1b;
 }

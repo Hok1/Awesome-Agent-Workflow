@@ -18,20 +18,20 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=lambda: Path.cwd() / ".skill-eval-data")
     host: str = "127.0.0.1"
     port: int = 18110
-    codex_command: str = "codex"
     chrys_command: str = "chrys"
     chrys_home: Path | None = None
     default_timeout_seconds: int = 1800
+    runner_turn_timeout_seconds: int = Field(default=10800, ge=60)
     setup_timeout_seconds: int = 900
     max_skill_bytes: int = 25 * 1024 * 1024
 
     @property
     def database_url(self) -> str:
-        return f"sqlite+pysqlite:///{(self.data_dir / 'skill-eval.db').as_posix()}"
+        return f"sqlite+pysqlite:///{(self.data_dir / 'skill-eval-v2.db').as_posix()}"
 
     @property
     def artifacts_dir(self) -> Path:
-        return self.data_dir / "artifacts"
+        return self.data_dir / "v2" / "artifacts"
 
     @property
     def snapshots_dir(self) -> Path:
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     @property
     def workspaces_dir(self) -> Path:
-        return self.data_dir / "workspaces"
+        return self.data_dir / "v2" / "workspaces"
 
     @property
     def chrys_config_dir(self) -> Path:
