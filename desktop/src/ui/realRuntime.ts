@@ -5,8 +5,8 @@
  *
  * - agent 选择与启动描述来自 agents 注册表（findAgentAdapter +
  *   buildLaunch），不在本层手写 argv；
- * - 进程承载走 Tauri IPC transport（仅桌面宿主可用；浏览器/vitest 下
- *   如实报告不可用，不伪造会话）；
+ * - 进程承载走 AcpTransport（Tauri webview 用 IPC 实现；dev 浏览器
+ *   用 dev bridge 实现；vitest 等其余环境如实报告不可用，不伪造会话）；
  * - AcpSession 走完整握手（initialize → 恢复或新建会话）：
  *   先 session/list 找该 cwd 的历史会话并 loadSession 恢复最近一个，
  *   无历史或恢复失败一律回落 session/new（绝不阻断打开项目）；
@@ -23,6 +23,7 @@ import { isTauriEnv } from "../core/host.ts";
 import { AcpSession } from "../acp/session.ts";
 import type { SessionInfo } from "../acp/types.ts";
 import { createTauriStdioTransport } from "../acp/transport/tauriStdioTransport.ts";
+import { createBridgeAcpTransport } from "../dev/bridgeClient.ts";
 import { DEFAULT_AGENT_ID, findAgentAdapter } from "../agents/registry.ts";
 import { useApprovalStore } from "../stores/approvalStore.ts";
 import {
@@ -112,9 +113,19 @@ const CONNECT_FAILURE_HINT = "请在设置中检查 agent 可执行路径";
  */
 export async function openRealWorkspace(
   workspacePath: string,
-  options: { readonly forceNew?: boolean } = {},
+  options: {
+    readonly forceNew?: boolean;
+    /**
+     * 指定要恢复的会话（冷连接时点开某条历史会话的场景）：连接后直接
+     * 载入它，而不是先恢复「最近一个」再让调用方切换——后者是两次全量
+     * 回放，用户会看到别的会话内容先涌进来再被换掉。运行时已在目标
+     * 项目上时本参数无意义（就地切换是 switchRealSession 的职责）。
+     */
+    readonly sessionId?: string;
+  } = {},
 ): Promise<string | null> {
   const forceNew = options.forceNew === true;
+  const preferredSessionId = options.sessionId ?? null;
   if (!forceNew && activeRuntime?.workspacePath === workspacePath) {
     return activeRuntime.session.sessionId;
   }
@@ -139,12 +150,6 @@ export async function openRealWorkspace(
     useSessionStore.getState().setConnecting(false);
     return null;
   }
-  if (!isTauriEnv()) {
-    reportFailure("当前环境无法启动 iCode 进程（需要桌面宿主）");
-    useSessionStore.getState().setConnecting(false);
-    return null;
-  }
-
   // 启动描述全部来自注册表：可执行路径用「设置里的路径」与工具路径
   // 合并后的 chrysCommand，cwd 即工作区 activePath
   const override = settingsPathsOverride();
@@ -156,11 +161,28 @@ export async function openRealWorkspace(
   });
 
   try {
-    const transport = await createTauriStdioTransport({
-      command: launch.command,
-      cwd: launch.cwd ?? undefined,
-      extraEnv: launch.extraEnv,
-    });
+    // 进程承载：Tauri webview 走 IPC transport；dev 浏览器
+    // （npm run dev:web）走 dev bridge（vite 内嵌插件代为拉起，见
+    // src/dev/bridgeClient.ts）；其余环境如实报告不可用，不伪造会话。
+    // 生产构建把 DEV 折叠为 false，bridge 分支成为死代码。
+    const transport = isTauriEnv()
+      ? await createTauriStdioTransport({
+          command: launch.command,
+          cwd: launch.cwd ?? undefined,
+          extraEnv: launch.extraEnv,
+        })
+      : import.meta.env.DEV && !import.meta.env.VITEST
+        ? await createBridgeAcpTransport({
+            command: launch.command,
+            cwd: launch.cwd ?? undefined,
+            extraEnv: launch.extraEnv,
+          })
+        : null;
+    if (transport === null) {
+      reportFailure("当前环境无法启动 iCode 进程（需要桌面宿主或 dev bridge）");
+      useSessionStore.getState().setConnecting(false);
+      return null;
+    }
     const approval = useApprovalStore.getState();
     // 崩溃侦测：进程退出且非用户主动关闭（closeRealRuntime 已把
     // activeRuntime 置空）→ 会话视图呈现崩溃卡；连接建立时会清除
@@ -182,13 +204,16 @@ export async function openRealWorkspace(
     const session = new AcpSession(transport, {
       clientInfo: adapter.clientInfo,
       dialect: adapter.createDialect?.({
-        onQuestion: (sessionId, requestId, questions, callerName) =>
-          approval.offerQuestions({
+        onQuestion: (sessionId, requestId, questions, callerName) => {
+          // agent 已停下等你回答：流式消息落定，「生成中…」不再空挂
+          useSessionStore.getState().sealStreamingItems();
+          return approval.offerQuestions({
             sessionId,
             requestId,
             questions,
             callerName,
-          }),
+          });
+        },
       }),
       // 审批请求的默认应答按设置的「审批默认模式」分派：ask 走人工弹窗，
       // auto-allow / auto-reject 按 kind 白名单自动应答（见 permissionPolicy），
@@ -204,6 +229,8 @@ export async function openRealWorkspace(
           });
           return Promise.resolve(auto);
         }
+        // 人工审批同因：agent 暂停等决定，流式指示器落定
+        useSessionStore.getState().sealStreamingItems();
         return approval.offerPermission({ sessionId, toolCall, options });
       },
     });
@@ -235,22 +262,30 @@ export async function openRealWorkspace(
     // loadSession 失败回落新建时的用户公告（快照目标就位后写入消息流）
     let pendingRestoreNotice: string | null = null;
     if (!forceNew && listed.length > 0) {
-      const latest = pickLatestSession(listed);
-      if (latest !== null) {
+      // 恢复目标：调用方点名的那条优先（点开历史会话的冷连接场景——
+      // 只回放用户要的那一条），否则回落「最近一个」（重启回上次的会话）
+      const preferred =
+        preferredSessionId === null
+          ? null
+          : (listed.find((info) => info.sessionId === preferredSessionId) ??
+            null);
+      const target = preferred ?? pickLatestSession(listed);
+      if (target !== null) {
         try {
-          await session.loadSession(latest.sessionId, workspacePath);
-          restoredId = latest.sessionId;
+          await session.loadSession(target.sessionId, workspacePath);
+          restoredId = target.sessionId;
           restoredHistoric = true;
           logger.info("已恢复历史会话", {
             workspacePath,
             sessionId: restoredId,
+            preferred: preferred !== null,
           });
         } catch (error) {
           const loadFailReason =
             error instanceof Error ? error.message : String(error);
           logger.warn("session/load 失败，回落新建会话", {
             workspacePath,
-            sessionId: latest.sessionId,
+            sessionId: target.sessionId,
             reason: loadFailReason,
           });
           pendingRestoreNotice =

@@ -15,7 +15,7 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { NodeStdioTransport } from "../../src/acp/transport/nodeStdioTransport.ts";
 import type { TransportExit } from "../../src/acp/transport/acpTransport.ts";
@@ -207,6 +207,22 @@ describe("NodeStdioTransport 行为", () => {
     expect(exit.code).toBe(0);
     // exit 回调也触发了（close 的返回与 onExit 是两条独立通路）
     expect(exits[0]?.code).toBe(0);
+  }, 15_000);
+
+  it("endStdin：只发 EOF 不等待——退出由 onExit 通路报告（dev bridge 的 /acp/close 语义）", async () => {
+    const transport = new NodeStdioTransport({
+      command: runNode(`
+        process.stdin.resume();
+        process.stdin.on("end", () => process.exit(4));
+      `),
+    });
+    const exits: TransportExit[] = [];
+    transport.onExit((exit) => {
+      exits.push(exit);
+    });
+    transport.endStdin();
+    expect(transport.isClosed).toBe(false); // 未收口：等退出事件
+    await vi.waitFor(() => expect(exits[0]?.code).toBe(4), { timeout: 10_000 });
   }, 15_000);
 
   it("kill：本进程退出（exit code 非零或信号）", async () => {

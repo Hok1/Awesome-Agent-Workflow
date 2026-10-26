@@ -10,6 +10,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 
+import { isTauriEnv } from "../core/host.ts";
+import { createBridgeProcessRunner } from "../dev/bridgeClient.ts";
 import {
   describeUnknownError,
   type CliRunResult,
@@ -84,5 +86,14 @@ export function createTauriProcessRunner(): ProcessRunner {
   };
 }
 
-/** 应用运行时的缺省 runner（webview 内即 Tauri IPC 实现）。 */
-export const defaultProcessRunner: ProcessRunner = createTauriProcessRunner();
+/**
+ * 应用运行时的缺省 runner：Tauri webview → 本文件的 IPC 实现；
+ * dev 浏览器（npm run dev:web）→ dev bridge 实现（src/dev/bridgeClient.ts，
+ * vite 内嵌插件代为执行）；其余环境（vitest）→ IPC 实现（调用即
+ * spawn 失败形状，测试经 vi.mock 替换整个模块）。生产构建把 DEV
+ * 折叠为 false，bridge 分支为死代码、bridgeClient 被摇出产物。
+ */
+export const defaultProcessRunner: ProcessRunner =
+  import.meta.env.DEV && !import.meta.env.VITEST && !isTauriEnv()
+    ? createBridgeProcessRunner()
+    : createTauriProcessRunner();

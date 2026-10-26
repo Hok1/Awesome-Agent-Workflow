@@ -3,11 +3,13 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import process from "node:process";
 
+import { aawDevBridgePlugin } from "./scripts/devBridgePlugin.ts";
+
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), aawDevBridgePlugin()],
 
   // Vitest：jsdom 环境，测试集中在 tests/ 目录，setup 统一挂 jest-dom 匹配器
   test: {

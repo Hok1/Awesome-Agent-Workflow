@@ -104,6 +104,17 @@ export class NodeStdioTransport implements AcpTransport {
     }
   }
 
+  /**
+   * 只关闭 stdin（发 EOF）、不等待退出——对端自退时 onExit 照常派发。
+   * 供「关闭与超时升级强杀由调用方编排」的场景（dev bridge 的
+   * /acp/close，对齐 Rust 侧 acp_stdin_close 的纯 EOF 语义）。
+   */
+  endStdin(): void {
+    if (!this.closed) {
+      this.child.stdin.end();
+    }
+  }
+
   onLine(handler: TransportLineHandler): void {
     this.lineSlot.set(handler);
   }

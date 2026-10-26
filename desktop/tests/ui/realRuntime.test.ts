@@ -141,6 +141,43 @@ describe("openRealWorkspace：会话恢复装配", () => {
     expect(old?.title).toBe("会话 · 09:00");
   });
 
+  it("指定 sessionId 时直接恢复那一条，不先恢复最近一个（单次回放）", async () => {
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-old",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-19T09:00:00",
+      },
+      {
+        sessionId: "sess-latest",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T11:30:00",
+      },
+    ];
+
+    // 冷连接下点开旧会话：只回放点名的那条，别的会话不涌进视图
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-old" });
+
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-old"]);
+    expect(useSessionStore.getState().activeSessionId).toBe("sess-old");
+    // 列表仍完整回填（左栏树需要），当前会话置顶
+    expect(useSessionStore.getState().sessions[0]?.id).toBe("sess-old");
+  });
+
+  it("指定的 sessionId 不在列表中（树索引过期）回落恢复最近一个", async () => {
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-latest",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T11:30:00",
+      },
+    ];
+
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-gone" });
+
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-latest"]);
+  });
+
   it("loadSession 失败（会话过期）回落 newSession，打开工作区不失败", async () => {
     fakeSessionControl.listed = [
       {

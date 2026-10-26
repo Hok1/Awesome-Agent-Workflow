@@ -14,7 +14,7 @@ flowchart TB
         Tree["ProjectTree 侧边栏（可收起）<br/>项目树（项目挂会话）· 项目/会话双视角<br/>【+】面板（新建会话 / 添加项目）"]
         Content["ContentArea 内容区<br/>上下文条 ContextBar + 会话视图（+ AAW 增强面板）<br/>/ 项目总览 + 悬浮输入框 ChatInput"]
         Pages["设置页 · 诊断页（全屏覆盖层）"]
-        Modals["模态层：审批弹窗 · 结构化问答 · 关闭守卫 · 待办下拉"]
+        Modals["模态层：审批弹窗（自动弹出） · 关闭守卫<br/>问答停靠面板 QuestionDock（会话内，非模态）"]
     end
 
     subgraph Stores["src/stores（状态层，zustand）"]
@@ -22,6 +22,7 @@ flowchart TB
         ApprovalStore["approvalStore"]
         AawStore["aawStatusStore"]
         WorkspaceStore["workspaceStore"]
+        ToastStore["toastStore（全局反馈）"]
         Others["settings / skills / log"]
     end
 
@@ -64,7 +65,9 @@ flowchart TB
    → `AcpSession`（通知翻译为类型化事件 `AcpSessionEvent`，chrys 私有
    通知经方言钩子 `AcpDialect` 翻译）→
    `sessionStore.handleEvent` 折叠为会话条目 / `aawStatusStore` 触发节流
-   自动刷新（经 `ui/sessionBridge.ts` 桥接）→ 组件按选择器重渲染。
+   自动刷新 / `runtimeStatusStore` 落 runtime/usage 快照与轮内相位
+   （三者经 `ui/sessionBridge.ts` 桥接；桥还订阅 sessionStore 的
+   `isAgentRunning` 驱动轮次状态机的起止）→ 组件按选择器重渲染。
    反向请求（`session/request_permission` 标准请求经回调；
    `_chrys/request_input` 经方言钩子）进入
    `approvalStore.offer*` 挂起，用户决策后沿同一 Promise 回传 wire 响应。
@@ -105,6 +108,14 @@ Rust 侧进程表的生命周期：`acp_spawn` 注册、退出后表项保留（
 CRLF / 空行）、`run_command` 超时杀进程与 spawn 失败、`copy_dir` 先删
 后拷覆盖语义、杀树真实终止子进程、`acp_release` 幂等清除表项。
 
+**孤儿防线（双层）**：agent 进程树若比桌面端活得久，会抱着 chrys 的
+配置/会话锁不撒手，下一次启动 agent 要与孤儿抢锁（实测 initialize 从
+2s 拖到 20s+）。第一层是关窗纪律——CloseRequested 一律转交前端，空闲
+也先 `closeRealRuntime` 再 `force_close`；第二层是 `acp_spawn` 把每棵
+agent 树挂进 Windows Job Object（KILL_ON_JOB_CLOSE）：桌面端无论正常
+退出、崩溃还是被强杀，OS 收走 job 句柄的瞬间整棵树终止，孤儿在机制上
+不可能存在（POSIX 无对应机制，靠第一层 + stdin EOF 自退）。
+
 ## 界面装配（生产通路）
 
 主界面为「图标窄栏 + 侧边栏树 + 内容区」单页结构（原「开发 / 项目」
@@ -128,8 +139,9 @@ CRLF / 空行）、`run_command` 超时杀进程与 spawn 失败、`copy_dir` �
   再 `switchRealSession`；恢复了历史会话时内容区自动切到会话视图；
 - **项目总览**（`ui/workbench/ProjectOverview`）：健康检查（agent 可
   执行 / uv / aaw CLI / .sdd/，前三项并行探测）+ 工具路径编辑 + aaw
-  状态面板 + 主行动按钮（未连接「新建会话」，已连接「进入会话」+
-  「新建会话」）；按钮不点名具体 agent——用户的心智是「开始一条会话」，
+  状态面板 + 唯一主动作「新建会话」（连接是它的内部步骤）；会话入口
+  不在总览——会话挂在树上（项目 → 会话），进哪条对话由树的会话行
+  承担；按钮不点名具体 agent——用户的心智是「开始一条会话」，
   agent 身份由连接徽标与设置页承载（`registry.ts` 的
   `defaultAgentLabel()`）；项目没有 .sdd/ 时工作流面板收成一行；连接
   失败有错误横幅（含「打开设置」深链）；
@@ -141,8 +153,11 @@ CRLF / 空行）、`run_command` 超时杀进程与 spawn 失败、`copy_dir` �
   向导（首条 prompt 走 `ui/workbench/wizardSubmit.ts`）；AAW 是增强，
   对话始终占主区；
 - **上下文条**（`ui/workbench/ContextBar`）：随内容区形态切换——会话
-  态（标题 · 项目 · 连接徽标 · AAW 开关 · 关闭项目带确认）、总览态
-  （返回 + 项目名 + 路径）、全屏页态（返回 + 页名）；
+  态（标题 · 项目 · 连接徽标 · AAW 开关 · 关闭会话带确认）、总览态
+  （返回 + 项目名 + 路径）、全屏页态（返回 + 页名）。窗口装饰已关
+  （decorations: false），它同时就是**自绘标题栏**：空白 spacer 带
+  data-tauri-drag-region 可拖窗，右端 `WindowControls`（最小化 / 最大化
+  / 关闭，关闭走 CloseRequested 与关闭守卫同路），非 Tauri 环境不渲染；
 - **关闭守卫**（`App.tsx CloseGuard` + Rust `on_window_event`）：
   CloseRequested 一律转交前端——无运行任务直接 `force_close`；agent
   运行中或有挂起审批时弹确认，「中断并关闭」先取消轮次与挂起审批、
@@ -151,7 +166,8 @@ CRLF / 空行）、`run_command` 超时杀进程与 spawn 失败、`copy_dir` �
   项目把 `src/aaw/statusLoader.ts` 的 CLI loader（含 `next --peek`）
   注入 `aawStatusStore`；会话事件自动刷新经 `ui/sessionBridge.ts`；
 - **可观测**：诊断页（全屏）只读 `core/logger` 的运行日志与 ACP wire
-  环形缓冲；顶栏「待办」下拉列出挂起的审批 / 提问。
+  环形缓冲。挂起审批经 ApprovalModal 自动弹出，问答经会话内
+  QuestionDock 停靠面板承接（顶栏不再设「待办」入口）。
 
 ## 扩展第二种 agent 的步骤
 
@@ -182,6 +198,43 @@ CRLF / 空行）、`run_command` 超时杀进程与 spawn 失败、`copy_dir` �
 | 样式             | Tailwind CSS v4（`@tailwindcss/vite`）                        | 无配置文件、与 Vite 原生集成、工具类直写符合快速迭代                       |
 | Markdown         | react-markdown + rehype-highlight（highlight.js github-dark） | 同步渲染、轻量；shiki 留作后续按需升级                                     |
 | 测试             | Vitest + RTL + jsdom，目录镜像 src 分层                       | 任务指定；`vitest run` 非 watch                                            |
+
+## 会话信息面与 AAW 时间线（2026-10 改造）
+
+- `runtimeStatusStore`（src/stores）：iCode 推送的 `chrys_runtime`
+  （三形状字段级合并；`runtimeDetails` 严格收窄出模型 / MCP / skill
+  来源）与 `chrys_usage`（主 agent 窗口占用 pct 与 token 明细）此前在
+  UI 层被整体丢弃——现在统一落到这一个 store，`InputStatusBar`
+  （输入区下行）消费为模型 · 上下文用量条 · skills/mcp 徽标 · 轮内
+  相位章（思考中 / 工具运行中 n / 生成中）。轮次起止由桥接层订阅
+  `sessionStore.isAgentRunning` 驱动，store 之间仍不互相 import。
+- AAW 时间线（ui/workbench/timeline/，紧凑条 + 抽屉两态）：常驻一行
+  紧凑进度条（SR · 每站一格的分段进度 · n/N · 当前站中文短名），点
+  「流程」从条下沿滑出抽屉浮层给完整地铁图（横轨 + 站灯 + 运行心跳，
+  中文短名 + 技术 ID 副行，Esc / 点外部关闭），默认收起、偏好持久化。
+  站名经 `stationNames.ts` 友好化（sr-design-gate → 详设门禁、
+  T{序号}-dev-task-dev → 任务开发；词表对着 flow.yaml 节点全集，未知段
+  原样回落）。`deriveStepPhases` 同步修复：failed / blocked / superseded
+  不再被抹成待办，失败步骤在所有视图可见。
+- 结构化问答从模态改为停靠面板（ui/session/QuestionDock.tsx）：挂在
+  会话流与输入区之间，无遮罩——回答所需上下文就在上方；全部问题一次
+  可见（已答 n/N），每问支持 note 备注随答案回传（协议 ChrysAnswer.note，
+  `approvalStore.submitAnswers` 第三参）。
+
+## dev:web 浏览器开发运行时（2026-10）
+
+`npm run dev:web` = vite dev server + 内嵌 dev bridge 插件
+（`scripts/devBridgePlugin.ts`，`AAW_DEV_BRIDGE=1` 门控、`apply:"serve"`，
+构建零参与）。插件在同源 `/dev-bridge/*` 上暴露与 Rust 命令面同构的
+HTTP 端点与 SSE 事件流（acp-stdout/stderr/exit），进程语义复用
+`nodeStdioTransport` / `nodeProcessRunner`，文件/chrys 目录语义按
+commands.rs 复刻。前端在三条既有缝后面换实现：
+`HostRuntime`（host.ts 环境探测）、`ProcessRunner`
+（tauriProcessRunner 的缺省导出）、`AcpTransport`（realRuntime 的
+transport 选择），分支以 `import.meta.env.DEV && !import.meta.env.VITEST`
+内联门控——生产构建折叠为死代码，bridgeClient（`src/dev/`）整棵摇出
+产物。生命周期纪律：SSE 断开 10s 无回连或 vite 退出 → 杀全部 agent
+进程树，与桌面端孤儿进程治理对齐。详见 HANDBOOK §2。
 
 ## 参考实现索引（协议细节的权威来源）
 

@@ -13,9 +13,12 @@
  *   用于浏览器 dev 与 vitest。
  *
  * 模块加载时按环境探测选择实现并导出单例 `hostRuntime`；上层（stores /
- * aaw / ui）只依赖本接口，不感知 invoke 细节。
+ * aaw / ui）只依赖本接口，不感知 invoke 细节。dev 浏览器运行时
+ * （npm run dev:web）另有第三实现（src/dev/bridgeClient.ts）。
  */
 import { invoke } from "@tauri-apps/api/core";
+
+import { createBridgeHost } from "../dev/bridgeClient.ts";
 
 /** 一次外部命令执行的结果（exit code 与标准输出/错误）。 */
 export interface CommandResult {
@@ -404,7 +407,14 @@ export function isDemoHost(host: HostRuntime): host is DemoHost {
  */
 export const demoHost: DemoHost = createDemoHost();
 
-/** 应用宿主单例：Tauri 环境走真实命令，否则回落到内存实现。 */
+/**
+ * 应用宿主单例：Tauri 环境 → 真实命令；dev 浏览器（npm run dev:web）
+ * → dev bridge（vite 内嵌插件代为执行，见 src/dev/bridgeClient.ts）；
+ * 其余（vitest）→ 内存实现。生产构建把 `import.meta.env.DEV` 折叠为
+ * false，bridgeClient 分支成为死代码并被摇出产物。
+ */
 export const hostRuntime: HostRuntime = isTauriEnv()
   ? createTauriHost()
-  : demoHost;
+  : import.meta.env.DEV && !import.meta.env.VITEST
+    ? createBridgeHost()
+    : demoHost;
