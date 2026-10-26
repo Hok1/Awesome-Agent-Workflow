@@ -173,6 +173,70 @@ pub fn list_dir_names(path: String) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// 文件列举跳过的目录名（依赖产物与缓存，@ 提及永远不该命中它们）。
+const FILE_LISTING_SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".cache",
+    ".idea",
+    ".vscode",
+];
+
+/// 文件列举的深度与条目上限：@ 提及是输入辅助，不是全量索引——超深或
+/// 超量的目录树截断即可（前端缓存 30s，代价可控）。
+const FILE_LISTING_MAX_DEPTH: u32 = 6;
+const FILE_LISTING_MAX_ENTRIES: usize = 2000;
+
+fn walk_files(root: &std::path::Path, dir: &std::path::Path, depth: u32, out: &mut Vec<String>) {
+    if depth > FILE_LISTING_MAX_DEPTH || out.len() >= FILE_LISTING_MAX_ENTRIES {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        if out.len() >= FILE_LISTING_MAX_ENTRIES {
+            return;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if file_type.is_dir() {
+            if FILE_LISTING_SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            walk_files(root, &entry.path(), depth + 1, out);
+        } else if file_type.is_file() {
+            // 相对路径统一 `/` 分隔（前端展示与匹配都不关心平台差异）
+            if let Ok(relative) = entry.path().strip_prefix(root) {
+                out.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+}
+
+/// 递归列举工作区文件（相对路径、`/` 分隔、按路径排序），跳过依赖与
+/// 缓存目录，深度 6 / 条目 2000 封顶。@ 文件提及的数据源。
+#[tauri::command]
+pub fn list_workspace_files(root: String) -> Result<Vec<String>, String> {
+    let root_path = std::path::PathBuf::from(&root);
+    if !root_path.is_dir() {
+        return Err(format!("不是有效目录：{root}"));
+    }
+    let mut files: Vec<String> = Vec::new();
+    walk_files(&root_path, &root_path, 0, &mut files);
+    files.sort();
+    Ok(files)
+}
+
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
@@ -399,6 +463,39 @@ mod tests {
         let names = list_dir_names(base.to_string_lossy().into_owned())
             .expect("list_dir_names 应成功");
         assert_eq!(names, vec!["aa".to_string(), "zz".to_string()]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn list_workspace_files_skips_deps_and_sorts() {
+        let base = temp_dir("list-files");
+        std::fs::create_dir_all(&base).expect("建测试根目录");
+        std::fs::write(base.join("readme.md"), "x").expect("写根文件");
+        std::fs::create_dir_all(base.join("src").join("ui")).expect("建子目录");
+        std::fs::write(base.join("src").join("ui").join("app.tsx"), "x")
+            .expect("写嵌套文件");
+        // 依赖与缓存目录整棵跳过（含其中的文件）
+        std::fs::create_dir_all(base.join("node_modules").join("pkg"))
+            .expect("建依赖目录");
+        std::fs::write(base.join("node_modules").join("pkg").join("index.js"), "x")
+            .expect("写依赖内文件");
+        std::fs::create_dir_all(base.join(".sdd")).expect("建 .sdd（应保留）");
+        std::fs::write(base.join(".sdd").join("state.json"), "{}").expect("写 .sdd 文件");
+
+        let files = list_workspace_files(base.to_string_lossy().into_owned())
+            .expect("列举应成功");
+        assert_eq!(
+            files,
+            vec![
+                ".sdd/state.json".to_string(),
+                "readme.md".to_string(),
+                "src/ui/app.tsx".to_string(),
+            ],
+            "相对路径 / 分隔、排序稳定、依赖目录不入列、.sdd 保留"
+        );
+
+        // 根不是目录 → Err（如实报错）
+        assert!(list_workspace_files(base.join("nope").to_string_lossy().into_owned()).is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 

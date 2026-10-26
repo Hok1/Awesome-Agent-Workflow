@@ -102,6 +102,103 @@ fn next_handle() -> u32 {
     *value
 }
 
+/// Windows：把 agent 进程挂进「句柄关闭即全树终止」的 Job Object。
+///
+/// 前端在空闲/忙碌两条关窗路径上都会先 closeRealRuntime 再 force_close，
+/// 但那只是第一道——应用崩溃、被任务管理器强杀、调试器 Stop-Process 时
+/// JS 侧没有任何机会跑，agent 进程树就会变成孤儿：它们抱着 chrys 的
+/// 配置/会话锁不撒手，下一次启动 agent 要跟它们抢（实测 initialize 从
+/// 2s 拖到 20s+，用户感知就是「启动要一分钟」）。挂进 Job Object 后，
+/// 桌面端进程无论怎么死，OS 关闭 job 句柄的瞬间整棵 agent 树终止——
+/// 孤儿从机制上不可能存在。POSIX 无此机制，靠前端收口 + stdin EOF 自退。
+///
+/// 手写 FFI：只差五个函数，不值得为此引入 windows-sys 依赖。
+#[cfg(target_os = "windows")]
+fn assign_kill_on_close_job(child_pid: u32) {
+    type Handle = *mut core::ffi::c_void;
+
+    #[repr(C)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    struct BasicLimitInformation {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    struct ExtendedLimitInformation {
+        basic_limit_information: BasicLimitInformation,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+    const PROCESS_SET_QUOTA: u32 = 0x0100;
+    const PROCESS_TERMINATE: u32 = 0x0001;
+
+    unsafe extern "system" {
+        fn CreateJobObjectW(
+            attributes: *const core::ffi::c_void,
+            name: *const u16,
+        ) -> Handle;
+        fn SetInformationJobObject(
+            job: Handle,
+            class: i32,
+            info: *const core::ffi::c_void,
+            len: u32,
+        ) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    unsafe {
+        let job = CreateJobObjectW(core::ptr::null(), core::ptr::null());
+        if job.is_null() {
+            eprintln!("创建 agent Job Object 失败（进程树兜底失效）");
+            return;
+        }
+        let mut info: ExtendedLimitInformation = core::mem::zeroed();
+        info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = SetInformationJobObject(
+            job,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+            &info as *const ExtendedLimitInformation as *const core::ffi::c_void,
+            core::mem::size_of::<ExtendedLimitInformation>() as u32,
+        );
+        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, child_pid);
+        let assigned =
+            ok != 0 && !process.is_null() && AssignProcessToJobObject(job, process) != 0;
+        if !assigned {
+            eprintln!("agent 进程挂入 Job Object 失败（pid {child_pid}，进程树兜底失效）");
+            if !process.is_null() {
+                CloseHandle(process);
+            }
+        }
+        // 成功路径：job 与进程句柄都故意不关——KILL_ON_JOB_CLOSE 依赖 job
+        // 句柄活到桌面端进程死亡那一刻，OS 收走它的同时终止整棵 agent 树
+    }
+}
+
 /// 拉起 ACP agent 子进程并注册进进程表。
 #[tauri::command]
 pub async fn acp_spawn(
@@ -159,6 +256,8 @@ pub async fn acp_spawn(
     // 退出协程先 join 两个读协程（保证 stdout 排空后再报退出，对齐
     // TS NodeStdioTransport 用 'close' 而非 'exit' 的语义），再 wait
     // 回收进程、登记终态并广播。
+    #[cfg(target_os = "windows")]
+    assign_kill_on_close_job(pid);
     let stdout_task = tokio::spawn(read_stdout(app.clone(), handle, stdout));
     let stderr_task = tokio::spawn(read_stderr(app.clone(), handle, stderr));
     tokio::spawn(async move {
