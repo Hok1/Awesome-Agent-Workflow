@@ -1,11 +1,15 @@
 /**
  * 工具调用卡片：
- * - 折叠态一行 = 状态徽标 + 工具名 + 输入一行摘要（摘要由 store 层按
- *   skill-eval wire.py 的优先级算好，组件只渲染）；
- * - 展开态 = 完整 JSON 输入 / 输出（rawOutput 为字符串时按原文呈现）。
+ * - 折叠态一行 = 状态徽标（运行中带脉动点）+ 工具类型小标 + 工具名 +
+ *   摘要（输入摘要与结果摘要由 store 层算好，组件只渲染；有结果后优先
+ *   展示结果一行）；
+ * - 展开态 = 完整 JSON 输入 / 输出（rawOutput 为字符串时按原文呈现）；
+ * - 运行中展开盯进度的卡，跑完**自动收起**（长轮次里盯过就还回去，
+ *   不让历史工具卡把会话撑爆）；失败的保持展开——原因需要被人看到。
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ToolCallItem } from "../../stores/sessionStore.ts";
+import { ChevronRightIcon } from "../icons.tsx";
 
 const statusBadges: Readonly<
   Record<
@@ -29,6 +33,16 @@ const statusBadges: Readonly<
 const unknownBadge = {
   label: "已发起",
   className: "text-ink-mute border-line-strong",
+};
+
+/** 工具类型小标（read/edit/execute/search/fetch/other）。 */
+const kindLabels: Readonly<Record<string, string>> = {
+  read: "读",
+  edit: "写",
+  execute: "执行",
+  search: "搜索",
+  fetch: "抓取",
+  other: "工具",
 };
 
 /** 完整载荷的呈现文本：字符串按原文，其余安全 JSON 美化。 */
@@ -69,8 +83,28 @@ function isSummaryRedundant(title: string, summary: string): boolean {
 
 export function ToolCallCard({ item }: { readonly item: ToolCallItem }) {
   const [isOpen, setIsOpen] = useState(false);
+  // 运行中→完成的瞬变自动收起（失败不收：输出是排障现场）
+  const prevStatusRef = useRef(item.status);
+  useEffect(() => {
+    const previous = prevStatusRef.current;
+    prevStatusRef.current = item.status;
+    if (previous === "in_progress" && item.status === "completed") {
+      setIsOpen(false);
+    }
+  }, [item.status]);
   const badge = item.status === null ? unknownBadge : statusBadges[item.status];
-  const showSummary = !isSummaryRedundant(item.title, item.inputSummary);
+  const isRunning = item.status === "in_progress" || item.status === null;
+  // 摘要优先级：有结果给结果行（完成/失败的结论比输入重要），无结果给输入行
+  const hasResult =
+    item.status === "completed" || item.status === "failed"
+      ? item.resultSummary.length > 0
+      : false;
+  const summaryText = hasResult ? item.resultSummary : item.inputSummary;
+  const summaryRedundant = hasResult
+    ? false
+    : isSummaryRedundant(item.title, item.inputSummary);
+  const kindLabel =
+    item.toolKind === null ? null : (kindLabels[item.toolKind] ?? "工具");
   return (
     <div
       className="w-full overflow-hidden rounded-lg border border-line bg-surface/40"
@@ -82,33 +116,39 @@ export function ToolCallCard({ item }: { readonly item: ToolCallItem }) {
         onClick={() => {
           setIsOpen((current) => !current);
         }}
-        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-surface"
+        className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface"
       >
         <span
-          className={`shrink-0 rounded border px-1 py-0 text-2xs leading-4 ${badge.className}`}
+          className={`flex shrink-0 items-center gap-1 rounded border px-1 py-0 text-2xs leading-4 ${badge.className}`}
         >
+          {isRunning ? (
+            <span className="inline-block size-1 animate-pulse rounded-full bg-current" />
+          ) : null}
           {badge.label}
         </span>
+        {kindLabel !== null ? (
+          <span className="shrink-0 rounded bg-base px-1 py-0 text-2xs leading-4 text-ink-faint">
+            {kindLabel}
+          </span>
+        ) : null}
         {/* 标题与摘要同行：各自截断省略，标题最多占一半宽度，
             长标题不把摘要挤出卡片 */}
         <span className="max-w-[50%] shrink-0 truncate font-mono text-2xs text-ink">
           {item.title}
         </span>
-        {showSummary ? (
+        {!summaryRedundant && summaryText.length > 0 ? (
           <span
-            className="min-w-0 flex-1 truncate font-mono text-2xs text-ink-faint"
-            title={item.inputSummary}
+            className={`min-w-0 flex-1 truncate font-mono text-2xs ${hasResult ? (item.status === "failed" ? "text-danger-ink/80" : "text-ink-faint") : "text-ink-faint"}`}
+            title={summaryText}
           >
-            {item.inputSummary}
+            {summaryText}
           </span>
         ) : (
           <span className="min-w-0 flex-1" />
         )}
-        <span
-          className={`shrink-0 text-2xs text-ink-ghost transition-transform ${isOpen ? "rotate-90" : ""}`}
-        >
-          ▸
-        </span>
+        <ChevronRightIcon
+          className={`h-3 w-3 shrink-0 text-ink-ghost transition-transform ${isOpen ? "rotate-90" : ""}`}
+        />
       </button>
       {isOpen ? (
         <div className="space-y-2.5 border-t border-line px-3 py-2.5">

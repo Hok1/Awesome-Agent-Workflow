@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "../../../src/ui/session/ChatInput.tsx";
 import { useSessionStore } from "../../../src/stores/sessionStore.ts";
+import { useRuntimeStatusStore } from "../../../src/stores/runtimeStatusStore.ts";
 
 function setup(options: { isAgentRunning?: boolean } = {}) {
   const onSend = vi.fn();
@@ -77,31 +78,44 @@ describe("ChatInput 悬浮形态", () => {
   afterEach(() => {
     // 模型 / 审批模式元信息是本组注入的，收口避免影响其他用例
     useSessionStore.setState({ modelLabel: null, approvalMode: null });
+    useRuntimeStatusStore.getState().reset();
   });
 
-  it("模型名短格式显示（裸 hash 截 12 位、悬停见全量；无模型时占位 —）", () => {
+  it("模型标识：runtime 模型名优先，回落 sessionStore 的 profile id；短格式与占位 —", () => {
     useSessionStore.setState({
       modelLabel: "0123456789abcdef0123456789abcdef",
     });
     const { rerender } = render(
       <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
     );
-    const chip = screen.getByTitle("0123456789abcdef0123456789abcdef");
-    expect(chip).toHaveTextContent("0123456789ab");
+    // runtime 无模型信息：回落 sessionStore 的 modelLabel（裸 hash 截 12 位）
+    expect(screen.getByTitle(/0123456789abcdef/)).toHaveTextContent(
+      "0123456789ab",
+    );
 
-    // 常规模型名原样显示；无模型时占位 —
-    useSessionStore.setState({ modelLabel: "glm-5.3-flash" });
+    // runtimeDetails 带模型名时优先于 profile id
+    useRuntimeStatusStore.getState().handleSessionEvent({
+      type: "chrys_runtime",
+      sessionId: "s-test",
+      runtime: {
+        modelProfileId: "glm-max",
+        runtimeDetails: {
+          model: { name: "glm-5.3-flash", provider: "zhipu" },
+        },
+      },
+    });
     rerender(
       <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
     );
-    expect(screen.getByTitle("glm-5.3-flash")).toHaveTextContent(
-      "glm-5.3-flash",
-    );
+    expect(screen.getByTitle(/glm-5/)).toHaveTextContent("glm-5.3-flash");
+
+    // 两处都无模型时占位 —
     useSessionStore.setState({ modelLabel: null });
+    useRuntimeStatusStore.getState().reset();
     rerender(
       <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
     );
-    expect(screen.getByTitle("当前模型")).toHaveTextContent("—");
+    expect(screen.getByText("—")).toBeInTheDocument();
   });
 
   it("审批模式徽标随 approvalMode 显示", () => {
@@ -143,5 +157,96 @@ describe("ChatInput 悬浮形态", () => {
     );
     expect(screen.queryByLabelText(/附件/)).not.toBeInTheDocument();
     expect(screen.queryByTitle(/附件/)).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------- 输入历史 / @ 提及
+import { useWorkspaceStore } from "../../../src/stores/workspaceStore.ts";
+import { listWorkspaceFiles } from "../../../src/aaw/fileListing.ts";
+import { resetPromptHistoryForTests } from "../../../src/ui/session/promptHistory.ts";
+
+vi.mock("../../../src/aaw/fileListing.ts", () => ({
+  listWorkspaceFiles: vi.fn(),
+}));
+
+describe("ChatInput 输入历史", () => {
+  it("空输入按 ↑ 回溯最近发送，↑↑ 再上一条，↓ 前进并回到空草稿", async () => {
+    resetPromptHistoryForTests();
+    const { onSend } = setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "第一条{Enter}");
+    await userEvent.type(textarea, "第二条{Enter}");
+    expect(onSend).toHaveBeenCalledTimes(2);
+
+    await userEvent.type(textarea, "{ArrowUp}");
+    expect(textarea).toHaveValue("第二条");
+    await userEvent.type(textarea, "{ArrowUp}");
+    expect(textarea).toHaveValue("第一条");
+    await userEvent.type(textarea, "{ArrowDown}");
+    expect(textarea).toHaveValue("第二条");
+    await userEvent.type(textarea, "{ArrowDown}");
+    // 退出浏览：回到起步时的草稿（空）
+    expect(textarea).toHaveValue("");
+  });
+
+  it("非空输入且不在浏览态时 ↑ 不劫持（多行编辑自由移动光标）", async () => {
+    const { onSend } = setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "多行内容不劫持");
+    await userEvent.type(textarea, "{ArrowUp}");
+    expect(textarea).toHaveValue("多行内容不劫持");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatInput @ 文件提及", () => {
+  it("输入 @ 弹候选面板，Enter 插入 @路径 并关闭面板", async () => {
+    useWorkspaceStore.setState({ activePath: "D:/dev/demo" });
+    vi.mocked(listWorkspaceFiles).mockResolvedValue([
+      "README.md",
+      "src/app.ts",
+    ]);
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "看 @rea");
+    const option = await screen.findByRole("option", { name: /README/ });
+    expect(option).toBeInTheDocument();
+
+    await userEvent.type(textarea, "{Enter}");
+    expect(textarea).toHaveValue("看 @README.md ");
+    expect(
+      screen.queryByRole("listbox", { name: "文件候选" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("无匹配显示空态提示，Esc 关闭面板", async () => {
+    useWorkspaceStore.setState({ activePath: "D:/dev/demo" });
+    vi.mocked(listWorkspaceFiles).mockResolvedValue(["README.md"]);
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "@zzz");
+    expect(await screen.findByText("没有匹配的文件")).toBeInTheDocument();
+    await userEvent.type(textarea, "{Escape}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("面板内 ↑↓ 移动选中项（aria-selected 跟随）", async () => {
+    useWorkspaceStore.setState({ activePath: "D:/dev/demo" });
+    vi.mocked(listWorkspaceFiles).mockResolvedValue([
+      "README.md",
+      "src/app.ts",
+      "docs/guide.md",
+    ]);
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "@");
+    const options = await screen.findAllByRole("option");
+    expect(options).toHaveLength(3);
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.type(textarea, "{ArrowDown}");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    await userEvent.type(textarea, "{ArrowUp}");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
   });
 });

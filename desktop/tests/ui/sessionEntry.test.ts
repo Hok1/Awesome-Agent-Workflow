@@ -97,7 +97,7 @@ describe("flattenRecentSessions", () => {
 });
 
 describe("openSessionFromEntry", () => {
-  it("项目未连接：先自动连接再切换，成功后聚焦并切到会话视图", async () => {
+  it("项目未连接：冷连接点名载入目标会话，成功后聚焦并切到会话视图", async () => {
     const sessions = [
       { id: "a-1", title: "A 会话", updatedAt: "2026-10-21T08:00:00Z" },
     ];
@@ -124,7 +124,10 @@ describe("openSessionFromEntry", () => {
     await openSessionFromEntry(PATH_A, "a-1");
 
     expect(useWorkspaceStore.getState().selectedPath).toBe(PATH_A);
-    expect(openRealWorkspace).toHaveBeenCalledWith(PATH_A);
+    // 点名载入：连接编排直接恢复目标会话，不先回放「最近一个」
+    expect(openRealWorkspace).toHaveBeenCalledWith(PATH_A, {
+      sessionId: "a-1",
+    });
     expect(useWorkspaceStore.getState().activePath).toBe(PATH_A);
     expect(switchRealSession).toHaveBeenCalledWith("a-1");
     expect(useSessionStore.getState().activeSessionId).toBe("a-1");

@@ -59,6 +59,21 @@ beforeEach(() => {
 });
 
 describe("事件折叠：消息与思考", () => {
+  it("sealStreamingItems：结构化提问打断时流式消息落定（生成中…不再空挂）", () => {
+    feed([chunk("请核对："), chunk("上面回显的原文是否一致？")]);
+    const before = useSessionStore.getState().items;
+    expect(before[0]).toMatchObject({ kind: "assistant", isStreaming: true });
+
+    // agent 抛出 request_input：轮次 Promise 悬着，但生成已停——封口
+    useSessionStore.getState().sealStreamingItems();
+    const after = useSessionStore.getState().items;
+    expect(after[0]).toMatchObject({
+      kind: "assistant",
+      text: "请核对：上面回显的原文是否一致？",
+      isStreaming: false,
+    });
+  });
+
   it("多个 agent_message_chunk 拼接为一条流式消息", () => {
     feed([chunk("第一段，"), chunk("第二段"), chunk("第三段")]);
     const items = useSessionStore.getState().items;

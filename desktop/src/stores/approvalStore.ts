@@ -65,7 +65,7 @@ export interface PendingPermission {
   /** rawInput 的 key=value 摘要（对齐 Python 参考实现的 tool_input_summary）。 */
   readonly inputSummary: string;
   readonly options: readonly PermissionOption[];
-  /** 待办中心显示标题（定型于此，组件直接渲染）。 */
+  /** 挂起项列表标题（定型于此，组件直接渲染）。 */
   readonly inboxTitle: string;
   /** ISO 8601 创建时间。 */
   readonly createdAt: string;
@@ -145,10 +145,11 @@ interface ApprovalStoreState {
   submitAnswers: (
     id: string,
     selections: readonly (readonly string[])[],
+    notes?: readonly (string | undefined)[],
   ) => void;
   /** 取消整批提问（回传 cancelled）。 */
   cancelQuestions: (id: string) => void;
-  /** 切换待办焦点（多个挂起项时在待办中心切换）。 */
+  /** 切换焦点项（多个挂起项时在审批模态 / 问答面板间切换）。 */
   select: (id: string) => void;
   /**
    * 清空全部挂起项：未决 Promise 一律按「取消」回传（会话断开等场景的
@@ -288,7 +289,7 @@ export const useApprovalStore = create<ApprovalStoreState>((set, get) => {
       });
     },
 
-    submitAnswers: (id, selections) => {
+    submitAnswers: (id, selections, notes) => {
       const resolve = questionResolvers.get(id);
       if (resolve === undefined) {
         return;
@@ -297,7 +298,7 @@ export const useApprovalStore = create<ApprovalStoreState>((set, get) => {
       const item = get().pending.find((entry) => entry.id === id);
       const questions =
         item !== undefined && item.kind === "questions" ? item.questions : [];
-      const answers = buildAnswers(questions, selections);
+      const answers = buildAnswers(questions, selections, notes);
       if (answers === null) {
         logger.warn("作答未通过校验（数量/空选/单选多值），按取消回传", {
           id,
@@ -372,6 +373,7 @@ export const useApprovalStore = create<ApprovalStoreState>((set, get) => {
 export function buildAnswers(
   questions: readonly ChrysQuestion[],
   selections: readonly (readonly string[])[],
+  notes?: readonly (string | undefined)[],
 ): readonly ChrysAnswer[] | null {
   if (selections.length !== questions.length) {
     return null;
@@ -399,7 +401,11 @@ export function buildAnswers(
     if (!question.multiSelect && values.length > 1) {
       return null;
     }
-    answers.push({ values });
+    // note 随规范选项一起回传（协议 ChrysAnswer.note；空/缺省不带）
+    const note = notes?.[index]?.trim();
+    answers.push(
+      note !== undefined && note.length > 0 ? { values, note } : { values },
+    );
   }
   return answers;
 }

@@ -2,7 +2,7 @@
  * 会话视图组合：回放脚本渲染全类条目、工具条元信息、输入区驱动 store、
  * 运行中「停止」走绑定取消。
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -57,9 +57,8 @@ describe("SessionView", () => {
 
   it("空会话显示引导文案", () => {
     render(<SessionView />);
-    expect(
-      screen.getByText("会话为空。发送第一条消息即可开始。"),
-    ).toBeInTheDocument();
+    // hero 空态：时段问候 + 主旨问句 + 入口 chips
+    expect(screen.getByText(/，今天想推进什么？/)).toBeInTheDocument();
   });
 
   it("项目已关闭（无 activePath）时空态改为「项目已关闭」并提供重新打开入口", async () => {
@@ -115,5 +114,42 @@ describe("SessionView", () => {
     );
     expect(await screen.findByText(/尚未连接 agent/)).toBeInTheDocument();
     expect(screen.queryByText("没有 agent")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------- 窗口化与空态入口
+import type { SessionItem } from "../../../src/stores/sessionStore.ts";
+
+describe("SessionView 长会话窗口化与空态入口", () => {
+  it("300 条长会话只渲染最近 150 条；滚动到顶补载更早一块", async () => {
+    const items: SessionItem[] = Array.from({ length: 300 }, (_, index) => ({
+      kind: "user" as const,
+      id: `u${index}`,
+      text: `消息${index}`,
+      createdAt: "2026-10-24T10:00:00Z",
+    }));
+    useSessionStore.setState({ items });
+    render(<SessionView />);
+
+    // 旧块未挂载，最近块在
+    expect(screen.queryByText("消息0")).not.toBeInTheDocument();
+    expect(screen.getByText("消息299")).toBeInTheDocument();
+
+    // 贴顶滚动触发补载（jsdom 中 scrollTop=0 恒贴顶）
+    fireEvent.scroll(screen.getByRole("log", { name: "消息流" }));
+    expect(await screen.findByText("消息0")).toBeInTheDocument();
+    expect(screen.getByText("消息299")).toBeInTheDocument();
+  });
+
+  it("空会话给推荐入口 chips；点击预填输入框（不自动发送）", async () => {
+    render(<SessionView />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "启动一条工作流" }),
+    );
+    expect(screen.getByLabelText("消息输入框")).toHaveValue(
+      "请从 sr 入口新建一条 AAW 工作流，先与我确认需求。",
+    );
+    // 预填不是发送：消息流仍呈空态 hero
+    expect(screen.getByText(/，今天想推进什么？/)).toBeInTheDocument();
   });
 });

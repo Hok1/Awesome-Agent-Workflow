@@ -1,11 +1,12 @@
 /**
- * src/ui/QuestionForm 测试：卡片渲染、单选/多选交互、
- * 提交门禁与取消，全部经真实 approvalStore 生效。
+ * src/ui/session/QuestionDock 测试：停靠面板渲染（header/题干/选项/
+ * 调用方/已答进度）、单选/多选交互、note 备注随答案回传、提交门禁与取消，
+ * 全部经真实 approvalStore 生效；面板自取焦点项（不再由外部传 item）。
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import { QuestionForm } from "../../src/ui/QuestionForm";
+import { QuestionDock } from "../../src/ui/session/QuestionDock";
 import { useApprovalStore } from "../../src/stores/approvalStore";
 import type { PendingQuestions } from "../../src/stores/approvalStore";
 import type { ChrysRequestInputResult } from "../../src/acp/types";
@@ -62,30 +63,38 @@ beforeEach(() => {
   useApprovalStore.getState().clear();
 });
 
-describe("QuestionForm", () => {
-  it("按卡片渲染 header、题干、选项与调用方", () => {
-    const { item } = seedQuestions();
-    render(<QuestionForm item={item} />);
+describe("QuestionDock", () => {
+  it("无挂起提问时不渲染", () => {
+    const { container } = render(<QuestionDock />);
+    expect(container.firstElementChild).toBeNull();
+  });
+
+  it("渲染 header、题干、选项、调用方与已答进度", () => {
+    seedQuestions();
+    render(<QuestionDock />);
     expect(screen.getByText("评审严格度")).toBeInTheDocument();
     expect(screen.getByText("报告附录")).toBeInTheDocument();
     expect(screen.getByText("评审结论采用哪种严格度？")).toBeInTheDocument();
     expect(screen.getByText("阻塞级与建议级问题都列出")).toBeInTheDocument();
     expect(screen.getByText(/来自 skill-eval/)).toBeInTheDocument();
-    // 单选题是 radio 语义，多选题是 checkbox 语义
+    expect(screen.getByText(/已答 0\/2/)).toBeInTheDocument();
+    // 单选题是 radio 语义，多选题是 checkbox 语义；每问一个 note 输入
     expect(screen.getAllByRole("radio")).toHaveLength(2);
     expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+    expect(screen.getAllByRole("textbox")).toHaveLength(2);
   });
 
-  it("未全部作答时提交禁用；作答后可提交并按位回传", async () => {
+  it("未全部作答时提交禁用；进度随作答更新；作答后按位回传", async () => {
     const user = userEvent.setup();
-    const { item, result } = seedQuestions();
-    render(<QuestionForm item={item} />);
+    const { result } = seedQuestions();
+    render(<QuestionDock />);
 
     const submit = screen.getByRole("button", { name: "提交回答" });
     expect(submit).toBeDisabled();
 
-    // 只答第一问，第二问未答 → 仍禁用
+    // 只答第一问：进度 1/2，仍禁用
     await user.click(screen.getByRole("radio", { name: /标准/ }));
+    expect(screen.getByText(/已答 1\/2/)).toBeInTheDocument();
     expect(submit).toBeDisabled();
 
     // 补答第二问（多选两项）→ 可提交
@@ -101,10 +110,27 @@ describe("QuestionForm", () => {
     expect(useApprovalStore.getState().pending).toHaveLength(0);
   });
 
+  it("note 备注随对应问题的答案回传（空备注不带 note 键）", async () => {
+    const user = userEvent.setup();
+    const { result } = seedQuestions();
+    render(<QuestionDock />);
+    await user.click(screen.getByRole("radio", { name: /标准/ }));
+    await user.click(screen.getByRole("checkbox", { name: /完整 diff/ }));
+    await user.type(screen.getByLabelText("问题 2 备注"), "diff 只要 src 部分");
+    await user.click(screen.getByRole("button", { name: "提交回答" }));
+    await Promise.resolve();
+    expect(result.value).toEqual({
+      answers: [
+        { values: ["标准"] },
+        { values: ["完整 diff"], note: "diff 只要 src 部分" },
+      ],
+    });
+  });
+
   it("单选可改选；再点同项取消选择", async () => {
     const user = userEvent.setup();
-    const { item } = seedQuestions();
-    render(<QuestionForm item={item} />);
+    seedQuestions();
+    render(<QuestionDock />);
 
     const standard = screen.getByRole("radio", { name: /标准/ });
     const loose = screen.getByRole("radio", { name: /宽松/ });
@@ -119,22 +145,11 @@ describe("QuestionForm", () => {
     expect(screen.getByRole("button", { name: "提交回答" })).toBeDisabled();
   });
 
-  it("多选可勾选/取消勾选", async () => {
+  it("取消整批按 cancelled 回传", async () => {
     const user = userEvent.setup();
-    const { item } = seedQuestions();
-    render(<QuestionForm item={item} />);
-    const diff = screen.getByRole("checkbox", { name: /完整 diff/ });
-    await user.click(diff);
-    expect(diff).toHaveAttribute("aria-checked", "true");
-    await user.click(diff);
-    expect(diff).toHaveAttribute("aria-checked", "false");
-  });
-
-  it("取消按钮按 cancelled 回传", async () => {
-    const user = userEvent.setup();
-    const { item, result } = seedQuestions();
-    render(<QuestionForm item={item} />);
-    await user.click(screen.getByRole("button", { name: "取消" }));
+    const { result } = seedQuestions();
+    render(<QuestionDock />);
+    await user.click(screen.getByRole("button", { name: "取消整批" }));
     await Promise.resolve();
     expect(result.value).toEqual({ cancelled: true });
     expect(useApprovalStore.getState().pending).toHaveLength(0);

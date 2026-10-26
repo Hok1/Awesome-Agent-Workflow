@@ -53,6 +53,9 @@ export interface ThoughtItem {
   readonly id: string;
   readonly text: string;
   readonly isStreaming: boolean;
+  /** 流式起止时刻（折叠行的耗时展示；快照恢复的历史条目为 null）。 */
+  readonly startedAt: number | null;
+  readonly endedAt: number | null;
 }
 
 /** 工具调用卡片：tool_call 与后续 tool_call_update 的合并结果。 */
@@ -266,6 +269,12 @@ interface SessionStoreState {
   readonly bindSession: (binding: SessionBinding | null) => void;
   /** 事件流入口：消费协议层类型化事件。 */
   readonly handleEvent: (event: AcpSessionEvent) => void;
+  /**
+   * 封口流式条目（不动轮次状态）：agent 抛出结构化提问 / 审批请求时，
+   * 生成已停、在等用户——消息的「生成中…」必须落定，否则等回答期间
+   * 指示器永远挂着（轮次 Promise 要等回答后才 resolve，没人封口）。
+   */
+  readonly sealStreamingItems: () => void;
   /** 轮次开始：落笔用户消息并置运行态（sendPrompt 的归约入口）。 */
   readonly beginTurn: (text: string) => void;
   /** 轮次收尾：封口流式条目并记录结局（prompt 响应 / 取消 / 失败共用）。 */
@@ -313,6 +322,15 @@ interface SessionStoreState {
   readonly setAgentCrashed: (reason: string | null) => void;
   /** 打开（聚焦）一个会话：切换中间区为会话视图。 */
   readonly openSession: (id: string) => void;
+  /**
+   * 乐观打开中的会话 id：点击瞬间就高亮目标行（树上的即时回响），
+   * 连接 / 加载完成后才落 activeSessionId；失败由 endOpenSession 清除。
+   */
+  readonly openingSessionId: string | null;
+  /** 标记一个会话进入「打开中」（重复调用以最后一次为准）。 */
+  readonly beginOpenSession: (id: string) => void;
+  /** 打开流程收口：成功 / 失败都清标记（仅当仍指向该 id）。 */
+  readonly endOpenSession: (id: string) => void;
   /** 关闭当前会话聚焦：清空 activeSessionId（不销毁条目流）。 */
   readonly dismissSession: () => void;
   /** 发送一轮用户消息（无绑定时如实提示，不伪造轮次）。 */
@@ -467,7 +485,14 @@ function sanitizeRestoredItem(raw: unknown): SessionItem | null {
     case "assistant":
       return { kind: "assistant", id, text, isStreaming: false };
     case "thought":
-      return { kind: "thought", id, text, isStreaming: false };
+      return {
+        kind: "thought",
+        id,
+        text,
+        isStreaming: false,
+        startedAt: null,
+        endedAt: null,
+      };
     case "tool":
       return {
         kind: "tool",
@@ -590,10 +615,13 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   ): SessionItem[] => {
     openAssistantId = null;
     openThoughtId = null;
+    const endedAt = Date.now();
     return items.map((item) =>
-      item.kind === "assistant" || item.kind === "thought"
-        ? { ...item, isStreaming: false }
-        : item,
+      item.kind === "thought"
+        ? { ...item, isStreaming: false, endedAt: item.endedAt ?? endedAt }
+        : item.kind === "assistant"
+          ? { ...item, isStreaming: false }
+          : item,
     );
   };
 
@@ -741,7 +769,14 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       openAssistantId = id;
     }
     const item: ThoughtItem | AssistantMessageItem = isThought
-      ? { kind: "thought", id, text, isStreaming: true }
+      ? {
+          kind: "thought",
+          id,
+          text,
+          isStreaming: true,
+          startedAt: Date.now(),
+          endedAt: null,
+        }
       : { kind: "assistant", id, text, isStreaming: true };
     set({ items: [...closed, item] });
   };
@@ -822,6 +857,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     sessions: [],
     sessionsByPath: {},
     activeSessionId: null,
+    openingSessionId: null,
     isConnecting: false,
     turnError: null,
     agentCrashed: null,
@@ -830,6 +866,10 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     bindSession: (binding) => {
       activeBinding = binding;
       set({ isBound: binding !== null });
+    },
+
+    sealStreamingItems: () => {
+      set({ items: closeStreamingItems(get().items) });
     },
 
     handleEvent: (event) => {
@@ -991,6 +1031,16 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       logger.debug("会话已聚焦", { id });
     },
 
+    beginOpenSession: (id) => {
+      set({ openingSessionId: id });
+    },
+
+    endOpenSession: (id) => {
+      if (get().openingSessionId === id) {
+        set({ openingSessionId: null });
+      }
+    },
+
     dismissSession: () => {
       set({ activeSessionId: null });
     },
@@ -1052,6 +1102,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
         isAgentRunning: false,
         lastStopReason: null,
         lastError: null,
+        openingSessionId: null,
       });
     },
 

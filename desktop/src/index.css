@@ -110,7 +110,8 @@ html.theme-warm {
  * | text-2xs   | 11px | 最次要小字：时间戳 / 徽标 / 角标        |
  * | text-xs    | 12px | 默认 UI 字：控件 / 列表项 / 正文小字    |
  * | text-md    | 13px | 强调小字：行标题 / 区块标题 / 输入框    |
- * | text-sm    | 14px | 主操作字：主按钮 / 面板标题             |
+ * | text-sm    | 14px | 主操作字：主按钮                        |
+ * | text-title | 15px | 面板标题 / 顶栏标题（密度放宽档）        |
  *
  * 之前是 nine 档碎片（9 / 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 14），
  * 因为缺刻度，每次「看着差一点」就手写一个 `text-[11.5px]`——感觉每次
@@ -118,18 +119,41 @@ html.theme-warm {
  * 这四档里并，不再引入任意值。
  */
 @theme {
+  /* 字体栈：西文系统栈在前保度量衡，CJK 显式回退在后——Windows 上
+     微软雅黑 UI / macOS 苹方，等宽栈同样给 CJK 位（中文注释与标识符
+     不再退到宋体）。 */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "Cascadia Mono", "JetBrains Mono", Consolas,
+    "Courier New", "Microsoft YaHei UI", "PingFang SC", monospace;
+
   /* 字号刻度（见上方说明；text-xs / text-sm 用 Tailwind 原生值） */
   --text-2xs: 0.6875rem; /* 11px · 最次要小字 */
   --text-md: 0.8125rem; /* 13px · 强调小字 */
+  --text-title: 0.9375rem; /* 15px · 面板标题 / 顶栏标题（密度放宽档） */
 
-  /* 层级底色 */
-  --color-base: #0a0a0a; /* 页面底（对应原 neutral 系 950 底色） */
-  --color-surface: #171717; /* 面板植面（对应原 neutral 系 900 底色） */
-  --color-raised: #262626; /* 浮起元素（对应原 neutral 系 800 底色） */
+  /* 海拔三级阴影（暗色界面的层级主语言，比边框贵气；elev-1 休息面 /
+     elev-2 悬浮面 / elev-3 瞬态面），附带一圈极淡描边光模拟受光边缘 */
+  --shadow-elev-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-elev-2:
+    0 8px 24px rgb(0 0 0 / 0.45), 0 2px 6px rgb(0 0 0 / 0.3),
+    0 0 0 1px rgb(148 163 184 / 0.06);
+  --shadow-elev-3:
+    0 16px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.4),
+    0 0 0 1px rgb(148 163 184 / 0.08);
+
+  /* 层级底色：带冷蓝色温的深空系（纯中性灰是「终端工具」观感的根源，
+     高级暗色的「黑」都是调过色温的——这里偏冷蓝 2~3 度） */
+  --color-base: #0b0d12; /* 页面底：冷蓝黑 */
+  --color-surface: #12151c; /* 面板植面：比底色浅一档、同色温 */
+  --color-raised: #1b202a; /* 浮起元素：再浅一档，透出层级 */
 
   /* 描边 */
-  --color-line: #262626; /* 常规描边（对应原 neutral 系 800 描边） */
-  --color-line-strong: #404040; /* 强描边 / hover（对应原 neutral 系 700 / 600 描边） */
+  --color-line: #1d222c; /* 常规描边（同色温深灰蓝） */
+  --color-line-strong: #2e3542; /* 强描边 / hover */
 
   /* 文字五级 */
   --color-ink: #f5f5f5; /* 主文字（对应原 neutral 系 100 / 200 文字） */
@@ -161,6 +185,12 @@ html.theme-warm {
   /* accent 文字级（accent 实底保持 bg-sky-600 原样） */
   --color-accent-ink: #7dd3fc;
   --color-accent-ink-strong: #bae6fd;
+
+  /* 状态基底色：时间线灯 / 状态点等 SVG 直用（比 -ink 更亮的灯级） */
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #7dd3fc;
 }
 
 /** 暖白主题：米白基底 + 暖灰墨色（根元素挂 `theme-warm` 类即生效）。 */
@@ -196,6 +226,20 @@ html.theme-warm {
 
   --color-accent-ink: #0369a1;
   --color-accent-ink-strong: #0284c7;
+
+  /* 状态基底色（暖白 = 深色值，保证浅底可读） */
+  --color-ok: #059669;
+  --color-warn: #b45309;
+  --color-danger: #b91c1c;
+  --color-info: #0369a1;
+
+  /* 海拔阴影换暖边光（冷蓝边缘在米白底上会显脏） */
+  --shadow-elev-2:
+    0 8px 24px rgb(87 74 55 / 0.16), 0 2px 6px rgb(87 74 55 / 0.1),
+    0 0 0 1px rgb(87 74 55 / 0.06);
+  --shadow-elev-3:
+    0 16px 48px rgb(87 74 55 / 0.2), 0 4px 12px rgb(87 74 55 / 0.12),
+    0 0 0 1px rgb(87 74 55 / 0.07);
 }
 
 /* 代码块外层容器由 UI 控制，主题只负责 token 颜色 */
@@ -287,4 +331,169 @@ html.theme-warm .hljs-addition {
 html.theme-warm .hljs-deletion {
   color: #d73a49;
   background-color: #ffeef0;
+}
+
+/**
+ * 中文排版细节（借 ZCode 的打磨项）：
+ * - text-wrap: pretty 让段落避开孤行断尾（CJK 短语感知），标题用
+ *   balance 均衡两行；浏览器不支持时自动回落，无副作用；
+ * - AAW 面板滑入：240ms 位移 + 渐显，尊重 prefers-reduced-motion
+ *   （减动效偏好下直接就位，不播动画）。
+ */
+:where(p, li, dd) {
+  text-wrap: pretty;
+}
+:where(h1, h2, h3, h4) {
+  text-wrap: balance;
+}
+
+@keyframes aaw-panel-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.aaw-panel-in {
+  animation: aaw-panel-in 240ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aaw-panel-in {
+    animation: none;
+  }
+}
+
+/**
+ * 氛围光（借 ZCode 的「黑不是纯黑」）：body 顶部一抹极淡的 accent 辐射光，
+ * 给深空底色一个光照方向；暖白主题换暖光。纯装饰，不参与交互。
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    720px 320px at 50% -80px,
+    rgb(56 130 246 / 0.06),
+    transparent 70%
+  );
+}
+html.theme-warm body::before {
+  background: radial-gradient(
+    720px 320px at 50% -80px,
+    rgb(180 140 80 / 0.07),
+    transparent 70%
+  );
+}
+
+/**
+ * 微动效词汇（动效只动 transform / opacity / 颜色，全部尊重
+ * prefers-reduced-motion）：
+ * - .press：主操作钮的按压反馈（缩小 3% 即回弹）；
+ * - .lift：chips / 卡片的悬停浮起（上移 1px + 海拔阴影）；
+ * - .chip-in / .toast-in / .modal-in：入场节奏（空态 chips 逐个错峰、
+ *   toast 右滑入、模态缩放落定）。
+ */
+.press {
+  transition: transform 80ms ease;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.lift {
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+.lift:hover {
+  transform: translateY(-1px);
+}
+
+@keyframes chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.chip-in {
+  animation: chip-in 220ms ease-out backwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.toast-in {
+  animation: toast-in 180ms ease-out;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.modal-in {
+  animation: modal-in 160ms ease-out;
+}
+
+/** 运行中站灯的光晕（时间线「在动」的能量感）。 */
+.lamp-glow-running {
+  filter: drop-shadow(0 0 6px rgb(245 158 11 / 0.45));
+}
+
+/** 输入卡聚焦描边微光（视觉焦点跟随输入）。 */
+.composer-card {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.composer-card:focus-within {
+  border-color: rgb(56 130 246 / 0.4);
+  box-shadow:
+    0 0 0 1px rgb(56 130 246 / 0.18),
+    0 8px 24px rgb(0 0 0 / 0.45);
+}
+html.theme-warm .composer-card:focus-within {
+  border-color: rgb(2 132 199 / 0.45);
+  box-shadow:
+    0 0 0 1px rgb(2 132 199 / 0.15),
+    0 8px 24px rgb(87 74 55 / 0.16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .press,
+  .lift {
+    transition: none;
+  }
+  .press:active:not(:disabled) {
+    transform: none;
+  }
+  .lift:hover {
+    transform: none;
+  }
+  .chip-in,
+  .toast-in,
+  .modal-in {
+    animation: none;
+  }
 }

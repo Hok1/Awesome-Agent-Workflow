@@ -1,10 +1,16 @@
 /**
  * 「点会话自动重连」的共享入口（workbench 组装层）：
- * 项目树与会话视角（跨项目最近会话列表）共用同一条打开路径——
- * 目标项目未连接时先 selectWorkspace + openRealWorkspace 建立连接
- * （等待完成），连接落地 activePath 后再 switchRealSession 切入目标
- * 会话；切换成功才聚焦该会话并把内容区切到会话视图，失败保留当前
- * 视图不聚焦。
+ * 项目树与会话视角（跨项目最近会话列表）共用同一条打开路径。
+ *
+ * **乐观 UI**：点击的瞬间内容区就切到会话视图（SessionView 的「正在
+ * 连接 agent…」加载态就是即时回响）、目标行就高亮（openingSessionId）
+ * ——连接与历史加载（可达数秒）在后台进行；加载成功才落
+ * activeSessionId，失败回滚到点击前的视图（连接失败的详情走错误横幅
+ * 通道）。绝不让人对着没反应的界面等。
+ *
+ * **串行队列**：agent 进程与 ACP 连接是独占资源，连点两个会话时后一次
+ * 编排排队等前一次落地，避免两个 openRealWorkspace 交叉杀进程 / 抢连接。
+ * 乐观反馈不排队（点击立即有响应），排队的只是连接编排。
  *
  * 另含会话视角的数据派生：把各项目的会话列表缓存（sessionsByPath）
  * 拍平为跨项目的「最近活跃会话」条目，按 updatedAt 降序（缺失时间
@@ -13,8 +19,35 @@
 import { useSessionStore } from "../../stores/sessionStore.ts";
 import type { SessionSummary } from "../../stores/sessionStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
-import { useWorkbenchUiStore } from "../../stores/workbenchUiStore.ts";
+import {
+  useWorkbenchUiStore,
+  type ContentView,
+} from "../../stores/workbenchUiStore.ts";
 import { openRealWorkspace, switchRealSession } from "../realRuntime.ts";
+import { createLogger } from "../../core/logger.ts";
+
+const logger = createLogger("app");
+
+/** 打开 / 新建会话共用的串行队列（sessionStart 也从这里过）。 */
+let openQueue: Promise<void> = Promise.resolve();
+
+/** 把一次连接编排追加到队列尾部；前一次失败不阻塞后一次。 */
+export function enqueueSessionOpen<T>(task: () => Promise<T>): Promise<T> {
+  const run = openQueue.then(task, task);
+  openQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * 测试专用：清空串行队列。队列是模块级状态，前一个用例遗留的挂起编排
+ * （如永不完成的连接替身）不该拖死后续用例的打开流程。
+ */
+export function resetSessionOpenQueueForTests(): void {
+  openQueue = Promise.resolve();
+}
 
 /** 拍平后的一条最近会话：所属项目路径 + 会话摘要。 */
 export interface SessionListEntry {
@@ -56,23 +89,55 @@ export function flattenRecentSessions(
 }
 
 /**
- * 打开一个历史会话（项目树 / 会话视角共用的唯一入口）：
- * 项目未连接先自动建立连接（等待完成），再切换到目标会话；
- * 切换成功才聚焦并切到会话视图（失败保留当前视图）。
+ * 打开一个历史会话（项目树 / 会话视角共用的唯一入口）：点击瞬间切视图
+ * + 高亮目标行（乐观），连接与加载在后台串行队列里走完；成功落聚焦，
+ * 失败回滚视图（错误横幅 / 日志承接原因）。
  */
-export async function openSessionFromEntry(
+export function openSessionFromEntry(
   path: string,
   sessionId: string,
 ): Promise<void> {
-  const workspace = useWorkspaceStore.getState();
-  if (workspace.activePath !== path) {
-    workspace.selectWorkspace(path);
-    await openRealWorkspace(path);
-    // 连接建立后再落 activePath（RealSessionRuntime 对同路径幂等）
-    useWorkspaceStore.getState().openWorkspace(path);
-  }
-  if (await switchRealSession(sessionId)) {
-    useSessionStore.getState().openSession(sessionId);
-    useWorkbenchUiStore.getState().openSessionView(path);
-  }
+  const ui = useWorkbenchUiStore.getState();
+  // 回滚锚点：点击前的视图（失败时回到「没点过」的样子）
+  const previousView: {
+    readonly treeView: ContentView;
+    readonly contextPath: string | null;
+  } = { treeView: ui.treeView, contextPath: ui.contextPath };
+  useSessionStore.getState().beginOpenSession(sessionId);
+  ui.openSessionView(path);
+
+  return enqueueSessionOpen(async () => {
+    try {
+      const workspace = useWorkspaceStore.getState();
+      if (workspace.activePath !== path) {
+        workspace.selectWorkspace(path);
+        // 冷连接直接载入目标会话：不先恢复「最近一个」再切换——那会
+        // 把别的会话整段回放一遍再清掉（两次全量回放，纯浪费）
+        const opened = await openRealWorkspace(path, { sessionId });
+        if (opened === null) {
+          // 连接失败：详情已进错误横幅通道，视图回到点击前
+          useWorkbenchUiStore.getState().restoreContextView(previousView);
+          return;
+        }
+        // 连接建立后再落 activePath（RealSessionRuntime 对同路径幂等）
+        useWorkspaceStore.getState().openWorkspace(path);
+      }
+      if (await switchRealSession(sessionId)) {
+        useSessionStore.getState().openSession(sessionId);
+      } else {
+        // 会话加载失败（会话过期等）：回滚视图，聚焦保持原样
+        useWorkbenchUiStore.getState().restoreContextView(previousView);
+      }
+    } catch (error) {
+      // 编排本身的意外错误：同样回滚，不让用户停在假会话视图里
+      logger.warn("打开会话编排意外失败，已回滚视图", {
+        path,
+        sessionId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      useWorkbenchUiStore.getState().restoreContextView(previousView);
+    } finally {
+      useSessionStore.getState().endOpenSession(sessionId);
+    }
+  });
 }

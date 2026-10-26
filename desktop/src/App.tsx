@@ -11,8 +11,8 @@
  *   「收起」直接隐藏整列并持久化，没有第二条窄条；展开时右缘拖宽
  *   热区一并渲染，内容区自动占满）｜内容区（项目总览 / 会话 / 入口
  *   向导 / 设置 / 诊断，随左栏选中项与功能页切换，见 ContentArea）；
- * - 模态层：权限审批（ApprovalModal）与结构化问答（ModalShell +
- *   QuestionForm）挂在应用根节点，焦点项由 approvalStore 的 activeId
+ * - 模态层：权限审批（ApprovalModal）挂在应用根节点；结构化问答改为
+ *   会话内停靠面板（QuestionDock），焦点项由 approvalStore 的 activeId
  *   决定；
  * - 装配组件：RealSessionRuntime（activePath → 真实 chrys 会话）、
  *   SessionHistoryBinding（已知项目 → 历史会话补充，连接前也可见）、
@@ -49,7 +49,8 @@ import { hydrateSessionHistory } from "./ui/workbench/sessionHistory.ts";
 import ContentArea from "./ui/workbench/ContentArea.tsx";
 import { ModalShell } from "./ui/workbench/ModalShell.tsx";
 import { ApprovalModal } from "./ui/ApprovalModal.tsx";
-import { QuestionForm } from "./ui/QuestionForm.tsx";
+import { AppErrorBoundary } from "./ui/ErrorBoundary.tsx";
+import { ToastHost } from "./ui/ToastHost.tsx";
 
 // 首帧前恢复持久化栏宽：grid 模板引用 CSS 变量，晚了会先按默认宽再跳变
 applyPersistedColumnWidths();
@@ -112,7 +113,6 @@ function WorkbenchShell() {
 function ModalLayer() {
   const pending = useApprovalStore((state) => state.pending);
   const activeId = useApprovalStore((state) => state.activeId);
-  const cancelQuestions = useApprovalStore((state) => state.cancelQuestions);
   const active = pending.find((item) => item.id === activeId) ?? null;
 
   if (active === null) {
@@ -121,19 +121,9 @@ function ModalLayer() {
   if (active.kind === "permission") {
     return <ApprovalModal key={active.id} item={active} />;
   }
-  // 来源说明（结构化提问 chip / 来自 skill-eval）只保留 QuestionForm
-  // 头部一处，弹窗外壳不再重复；label 仍由 ModalShell 提供 dialog 名称。
-  return (
-    <ModalShell
-      key={active.id}
-      label="结构化提问"
-      onDismiss={() => {
-        cancelQuestions(active.id);
-      }}
-    >
-      <QuestionForm item={active} />
-    </ModalShell>
-  );
+  // 结构化问答不再是模态：会话视图的 QuestionDock 停靠面板渲染焦点项
+  // （无遮罩，回答时看得见会话上下文）；这里只剩审批一种模态。
+  return null;
 }
 
 /**
@@ -162,7 +152,12 @@ function CloseGuard() {
             useSessionStore.getState().isAgentRunning ||
             useApprovalStore.getState().pending.length > 0;
           if (!busy) {
-            void invoke("force_close");
+            // 空闲也要先收口 agent 子进程再关窗：直接 force_close 会把
+            // icode 进程树变成孤儿——它们抱着 chrys 的配置/会话锁不撒手，
+            // 下一次启动 agent 就要跟它们抢（实测能拖到几十秒）
+            void closeRealRuntime().then(() => {
+              void invoke("force_close");
+            });
             return;
           }
           setCloseGuardOpen(true);
@@ -325,20 +320,25 @@ function ThemeRootBinding() {
 
 function App() {
   return (
-    // 高度用 h-full 而非 h-screen：根元素已由 index.css 锁成视口高，
-    // 100vh 与 WebView 实际可视高之间的零头会让外壳溢出成可滚动的文档
-    // （触摸板 / 滚轮即把整页带走），这一层不能再按 vh 计量。
-    <div className="flex h-full flex-col overflow-hidden bg-base text-ink">
-      <RealSessionRuntime />
-      <AawStatusLoaderBinding />
-      <SessionHistoryBinding />
-      <ThemeRootBinding />
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <WorkbenchShell />
+    // 根级错误边界：任何未捕获的渲染异常落到可用的错误界面（重试/刷新），
+    // 而不是 WebView 白屏；局部边界（时间线/消息流/面板）已在各自挂点
+    <AppErrorBoundary>
+      {/* 高度用 h-full 而非 h-screen：根元素已由 index.css 锁成视口高，
+          100vh 与 WebView 实际可视高之间的零头会让外壳溢出成可滚动的文档
+          （触摸板 / 滚轮即把整页带走），这一层不能再按 vh 计量。 */}
+      <div className="flex h-full flex-col overflow-hidden bg-base text-ink">
+        <RealSessionRuntime />
+        <AawStatusLoaderBinding />
+        <SessionHistoryBinding />
+        <ThemeRootBinding />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <WorkbenchShell />
+        </div>
+        <ModalLayer />
+        <CloseGuard />
+        <ToastHost />
       </div>
-      <ModalLayer />
-      <CloseGuard />
-    </div>
+    </AppErrorBoundary>
   );
 }
 

@@ -1,0 +1,151 @@
+/**
+ * 输入区状态行（InputStatusBar）测试：上下文用量条（百分比与用量条、
+ * 70/90 阈值换色）、skills/mcp 计数徽标与悬停明细、运行状态章（相位文案
+ * 随轮次状态机变化，轮次外不显示）。
+ */
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  InputStatusLeft,
+  InputStatusRight,
+  TurnStatusRow,
+} from "../../../src/ui/session/InputStatusBar.tsx";
+import { useRuntimeStatusStore } from "../../../src/stores/runtimeStatusStore.ts";
+import { useSessionStore } from "../../../src/stores/sessionStore.ts";
+import { useApprovalStore } from "../../../src/stores/approvalStore.ts";
+
+beforeEach(() => {
+  useRuntimeStatusStore.getState().reset();
+  useSessionStore.setState({ isAgentRunning: false });
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+function seedRuntime(): void {
+  useRuntimeStatusStore.getState().handleSessionEvent({
+    type: "chrys_runtime",
+    sessionId: "s-1",
+    runtime: {
+      modelProfileId: "glm-max",
+      skillNames: ["aaw-workflow", "code-check"],
+      runtimeDetails: {
+        model: { name: "GLM-4.6", provider: "zhipu" },
+        mcp_tools: { "server-a": ["t1"], "server-b": ["t1", "t2"] },
+        mcp_failures: { "server-c": "connection refused" },
+        skill_sources: { user: ["aaw-workflow"], project: ["code-check"] },
+      },
+    },
+  });
+  useRuntimeStatusStore.getState().handleSessionEvent({
+    type: "chrys_usage",
+    sessionId: "s-1",
+    usage: {
+      sessionId: "s-1",
+      pct: 42.5,
+      totalTokens: 51000,
+      maxContextTokens: 120000,
+      totalSessionTokens: 90000,
+      cacheHitTokens: 8000,
+      usageSourceId: "s-1",
+    },
+  } as never);
+}
+
+describe("InputStatusBar", () => {
+  it("上下文用量圆环：百分比 + 悬停明细（窗口/累计/缓存）", () => {
+    seedRuntime();
+    render(<InputStatusRight />);
+    const meter = screen.getByText("42%").closest("[data-status=context]");
+    expect(meter).not.toBeNull();
+    expect(meter).toHaveAttribute(
+      "title",
+      expect.stringContaining("51k / 120k"),
+    );
+    expect(meter).toHaveAttribute("title", expect.stringContaining("90k"));
+    expect(meter).toHaveAttribute("title", expect.stringContaining("8k"));
+  });
+
+  it("skills / mcp 计数徽标与悬停明细，失败服务器单独 danger 徽标", () => {
+    seedRuntime();
+    render(<InputStatusLeft />);
+    expect(screen.getByText("skills 2")).toHaveAttribute(
+      "title",
+      expect.stringContaining("aaw-workflow"),
+    );
+    expect(screen.getByText("mcp 2")).toHaveAttribute(
+      "title",
+      expect.stringContaining("server-a · 1 工具"),
+    );
+    expect(screen.getByText("1 失败")).toHaveAttribute(
+      "title",
+      expect.stringContaining("server-c：connection refused"),
+    );
+  });
+
+  it("无 usage 时不渲染圆环；无 skills/mcp 时不渲染对应徽标（模型占位仍在）", () => {
+    render(<InputStatusLeft />);
+    render(<InputStatusRight />);
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/skills /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/mcp /)).not.toBeInTheDocument();
+  });
+
+  it("轮次相位行：轮次内相位可见，轮次外不渲染", () => {
+    seedRuntime();
+    useSessionStore.setState({ isAgentRunning: true });
+    const { rerender } = render(<TurnStatusRow />);
+    // 轮次未开始（isTurnActive=false）：不显示
+    expect(screen.queryByText(/思考中/)).not.toBeInTheDocument();
+
+    useRuntimeStatusStore.getState().beginTurn();
+    rerender(<TurnStatusRow />);
+    expect(screen.getByText("思考中…")).toBeInTheDocument();
+
+    useRuntimeStatusStore.getState().handleSessionEvent({
+      type: "tool_call",
+      sessionId: "s-1",
+      toolCallId: "t1",
+      status: "in_progress",
+    } as never);
+    rerender(<TurnStatusRow />);
+    expect(screen.getByText("工具运行中 1…")).toBeInTheDocument();
+
+    // 轮次结束（isAgentRunning=false）：不显示
+    useSessionStore.setState({ isAgentRunning: false });
+    rerender(<TurnStatusRow />);
+    expect(screen.queryByText(/工具运行中/)).not.toBeInTheDocument();
+  });
+
+  it("轮次相位行：有挂起的提问/审批时退场（此刻是在等用户，不是生成中）", () => {
+    seedRuntime();
+    useSessionStore.setState({ isAgentRunning: true });
+    useRuntimeStatusStore.getState().beginTurn();
+    render(<TurnStatusRow />);
+    expect(screen.getByText("思考中…")).toBeInTheDocument();
+
+    // 挂起一条提问（Promise 悬置、轮次仍 active）：相位行让位给问答面板
+    act(() => {
+      void useApprovalStore.getState().offerQuestions({
+        sessionId: "s-1",
+        requestId: "q1",
+        callerName: "sr-init",
+        questions: [
+          {
+            question: "原文是否一致？",
+            header: "核对",
+            multiSelect: false,
+            options: [
+              { label: "一致", description: "" },
+              { label: "不一致", description: "" },
+            ],
+          },
+        ],
+      });
+    });
+    expect(screen.queryByText("思考中…")).not.toBeInTheDocument();
+    useApprovalStore.getState().clear();
+  });
+});

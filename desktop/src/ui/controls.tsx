@@ -35,11 +35,13 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { ChevronDownIcon } from "./icons.tsx";
+
 export const focusVisibleRing =
   "focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:outline-none";
 
 /** 各级按钮的公共底样式（尺寸由调用处叠加）。 */
-const btnBase = `rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${focusVisibleRing}`;
+const btnBase = `press rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${focusVisibleRing}`;
 
 /** 主操作：accent 实底（两主题下均可读，不随语义 token 切换）。 */
 export const btnPrimary = `${btnBase} bg-sky-600 text-white hover:bg-sky-500`;
@@ -408,18 +410,13 @@ export function Listbox({
         }`}
       >
         <span className="truncate">{selectedLabel ?? placeholder}</span>
-        <span
-          aria-hidden={true}
-          className="text-2xs leading-none text-ink-faint"
-        >
-          ▾
-        </span>
+        <ChevronDownIcon className="h-3 w-3 text-ink-faint" />
       </button>
       {isOpen ? (
         <ul
           role="listbox"
           aria-label={label}
-          className="absolute top-full left-0 z-40 mt-1 max-h-64 min-w-full overflow-y-auto rounded-md border border-line-strong bg-surface py-1 shadow-xl"
+          className="absolute top-full left-0 z-40 mt-1 max-h-64 min-w-full overflow-y-auto rounded-md border border-line-strong bg-surface py-1 shadow-elev-2"
         >
           {options.map((option, index) => (
             <li key={option.value}>

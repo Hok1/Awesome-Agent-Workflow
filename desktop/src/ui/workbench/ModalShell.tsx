@@ -36,7 +36,7 @@ export function ModalShell({ label, onDismiss, children }: ModalShellProps) {
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg border border-line-strong bg-surface shadow-xl"
+        className="modal-in max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-elev-3"
         onClick={(event) => {
           // 卡片内交互不冒泡成关闭
           event.stopPropagation();

@@ -2,17 +2,23 @@
  * 会话视图：上下文条 + 中央聊天流 + 悬浮输入区（+ 可选的 AAW 侧栏）。
  *
  * - 顶部：上下文条（ContextBar：会话标题 / 项目名 / 连接徽标 / SR 快捷
- *   / 关闭项目，模型与审批模式元信息移至输入区下行）；
- * - 中部：消息流（用户 / 助手 / 思考 / 工具卡 / 系统提示），接近底部时
- *   随内容自动滚动，用户上翻回看则不强制拉底；
+ *   / 关闭会话，模型与审批模式元信息移至输入区下行）；
+ * - 中部：消息流（用户 / 助手 / 思考 / 工具卡 / 系统提示）——**窗口化
+ *   渲染**：只挂最近 WINDOW_CHUNK 条，滚动到顶按块向前补载（锚定补载：
+ *   前插不把视口顶飞）；**跟随状态机**：贴底时新内容自动滚入，用户上翻
+ *   即解除跟随并浮出「回到底部」按钮（带未读新消息计数），回底即恢复
+ *   跟随——长会话回看与追新互不打架；
  * - 右侧：AAW 增强面板（workbenchUiStore.isAawOpen）——默认收起，由上下文
  *   条的 SR 按钮或会话头「AAW」入口拉起；AAW 是增强，不是会话的前置条件，
  *   所以它按需出现、看完收起，对话始终占满主区；
- * - 底部：ChatInput（Enter 发送，运行中变圆形「停止」钮）。
+ * - 底部：ChatInput（Enter 发送，运行中变圆形「停止」钮；↑/↓ 历史、
+ *   @ 文件提及、预填通道见其文件头）；
+ * - 空会话：给出常用入口 chips（点击预填输入框，过目后自己发送）；
+ * - 时间线 / 消息流 / AAW 面板各自挂局部错误边界：单块崩不白屏全局。
  *
  * 组件只订阅 sessionStore 的选择器；数据折叠全部在 store 层完成。
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useSessionStore,
   type SessionItem,
@@ -20,16 +26,29 @@ import {
 import { useApprovalStore } from "../../stores/approvalStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { useWorkbenchUiStore } from "../../stores/workbenchUiStore.ts";
+import { useAawStatusStore } from "../../stores/aawStatusStore.ts";
 import { btnPrimary } from "../controls.tsx";
+import { ScopedErrorBoundary } from "../ErrorBoundary.tsx";
+import { ArrowDownToLineIcon, SparkleIcon, XIcon } from "../icons.tsx";
 import { AssistantMessage } from "./AssistantMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
+import { QuestionDock } from "./QuestionDock.tsx";
+import { TurnStatusRow } from "./InputStatusBar.tsx";
 import { Spinner } from "../controls.tsx";
 import { openRealWorkspace } from "../realRuntime.ts";
 import { SessionAawPanel } from "../workbench/SessionAawPanel.tsx";
+import { AawTimeline } from "../workbench/timeline/AawTimeline.tsx";
 import type { WizardSubmitResult } from "../workbench/wizardSubmit.ts";
+import { prefillComposer } from "./composerPrefill.ts";
 import { SystemNotice } from "./SystemNotice.tsx";
 import { ThoughtBlock } from "./ThoughtBlock.tsx";
 import { ToolCallCard } from "./ToolCallCard.tsx";
+import {
+  isNearBottom,
+  shouldLoadOlder,
+  sliceVisible,
+  WINDOW_CHUNK,
+} from "./sessionWindow.ts";
 import { UserMessage } from "./UserMessage.tsx";
 
 export interface SessionViewProps {
@@ -38,9 +57,6 @@ export interface SessionViewProps {
     prompt: string,
   ) => Promise<WizardSubmitResult> | WizardSubmitResult;
 }
-
-/** 距底阈值（px）：滚动位置在此范围内才自动跟随新内容。 */
-const autoScrollThresholdPx = 80;
 
 /** 无发送通路时向导提交的兜底提示（孤立渲染场景，如实失败不静默）。 */
 const NO_SUBMIT_PATH = "当前会话没有可用的发送通道，请重新打开项目后重试";
@@ -60,13 +76,92 @@ function SessionItemView({ item }: { readonly item: SessionItem }) {
   }
 }
 
+/** 时段问候（hero 主标题的一部分；测试以系统时间驱动）。 */
+function greetingOfHour(hour: number): string {
+  if (hour < 5) {
+    return "夜深了";
+  }
+  if (hour < 9) {
+    return "早上好";
+  }
+  if (hour < 12) {
+    return "上午好";
+  }
+  if (hour < 14) {
+    return "中午好";
+  }
+  if (hour < 18) {
+    return "下午好";
+  }
+  return "晚上好";
+}
+
+/** 空会话的 hero（借 ZCode 的空态设计语言）：时段问候 + 一句主旨 +
+ * 常用入口 chips（点击预填输入框，过目可改，再自己发送）。 */
+function EmptyPrompts({ currentSr }: { readonly currentSr: string | null }) {
+  const prompts =
+    currentSr !== null
+      ? [
+          {
+            label: `汇报 ${currentSr} 进度`,
+            text: `请汇报 ${currentSr} 工作流的当前进度与下一步安排。`,
+          },
+          { label: "介绍这个项目", text: "请介绍当前项目的结构与主要功能。" },
+          {
+            label: "梳理可继续的事项",
+            text: "请根据当前项目状态，梳理可以继续推进的事项。",
+          },
+        ]
+      : [
+          {
+            label: "启动一条工作流",
+            text: "请从 sr 入口新建一条 AAW 工作流，先与我确认需求。",
+          },
+          { label: "介绍这个项目", text: "请介绍当前项目的结构与主要功能。" },
+          {
+            label: "梳理可继续的事项",
+            text: "请根据当前项目状态，梳理可以继续推进的事项。",
+          },
+        ];
+  return (
+    <div className="flex flex-col items-center gap-4 py-16 text-center">
+      <p
+        aria-hidden={true}
+        className="flex items-center gap-1.5 text-2xs tracking-widest text-ink-faint"
+      >
+        <SparkleIcon className="h-3.5 w-3.5" />
+        AAW
+      </p>
+      <h2 className="text-lg font-medium text-ink">
+        {greetingOfHour(new Date().getHours())}，今天想推进什么？
+      </h2>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        {prompts.map((prompt, index) => (
+          <button
+            key={prompt.label}
+            type="button"
+            style={{ animationDelay: `${index * 60}ms` }}
+            onClick={() => {
+              prefillComposer(prompt.text);
+            }}
+            className="chip-in lift press rounded-full border border-line-strong bg-surface px-3.5 py-1.5 text-xs text-ink-mute shadow-elev-1 hover:border-ink-faint hover:text-ink"
+          >
+            {prompt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   const items = useSessionStore((state) => state.items);
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
   const sendPrompt = useSessionStore((state) => state.sendPrompt);
   const requestCancel = useSessionStore((state) => state.requestCancel);
-  // 待办计数：有挂起的审批/提问时不再展示「会话为空」空态，
-  // 否则与「会话中」标签及顶栏待办中心自相矛盾（04-approval 评审项）。
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  // 挂起计数：有挂起的审批/提问时不再展示「会话为空」空态，
+  // 否则与「会话中」标签及弹出的审批模态自相矛盾（04-approval 评审项）。
   const pendingCount = useApprovalStore((state) => state.pending.length);
   const isConnecting = useSessionStore((state) => state.isConnecting);
   const agentCrashed = useSessionStore((state) => state.agentCrashed);
@@ -79,25 +174,90 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   const contextPath = useWorkbenchUiStore((state) => state.contextPath);
   const isAawOpen = useWorkbenchUiStore((state) => state.isAawOpen);
   const toggleAaw = useWorkbenchUiStore((state) => state.toggleAaw);
+  const currentSr = useAawStatusStore((state) => state.currentSr);
 
+  // ---- 消息流窗口化 + 跟随状态机 ----
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const isNearBottomRef = useRef(true);
+  const [visibleCount, setVisibleCount] = useState(WINDOW_CHUNK);
+  const [isFollowing, setIsFollowing] = useState(true);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const lastLengthRef = useRef(0);
+  // 补载锚：loadOlder 前的「距底距离」，补载渲染后恢复（前插不顶飞视口）
+  const prependAnchorRef = useRef<number | null>(null);
+
+  const visibleItems = sliceVisible(items, visibleCount);
 
   useEffect(() => {
-    const element = scrollRef.current;
-    if (element !== null && isNearBottomRef.current) {
-      element.scrollTop = element.scrollHeight;
+    const previous = lastLengthRef.current;
+    lastLengthRef.current = items.length;
+    if (items.length < previous) {
+      // 会话清空 / 切换：窗口与跟随态复位
+      setVisibleCount(WINDOW_CHUNK);
+      setIsFollowing(true);
+      setUnseenCount(0);
+      return;
     }
-  }, [items]);
+    if (items.length > previous && !isFollowing) {
+      setUnseenCount((count) => count + (items.length - previous));
+    }
+    if (isFollowing) {
+      const element = scrollRef.current;
+      if (element !== null) {
+        element.scrollTop = element.scrollHeight;
+      }
+    }
+  }, [items, isFollowing]);
+
+  // 锚定补载：前插渲染完成后按「距底距离不变」恢复滚动位置
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current;
+    const element = scrollRef.current;
+    if (anchor === null || element === null) {
+      return;
+    }
+    prependAnchorRef.current = null;
+    element.scrollTop = element.scrollHeight - anchor;
+  }, [visibleCount]);
 
   const handleScroll = (): void => {
     const element = scrollRef.current;
     if (element === null) {
       return;
     }
-    isNearBottomRef.current =
-      element.scrollHeight - element.scrollTop - element.clientHeight <=
-      autoScrollThresholdPx;
+    const nearBottom = isNearBottom(
+      element.scrollTop,
+      element.scrollHeight,
+      element.clientHeight,
+    );
+    if (nearBottom) {
+      if (!isFollowing) {
+        setIsFollowing(true);
+        setUnseenCount(0);
+      }
+    } else if (isFollowing) {
+      setIsFollowing(false);
+    }
+    if (
+      prependAnchorRef.current === null &&
+      shouldLoadOlder(element.scrollTop, items.length - visibleCount)
+    ) {
+      prependAnchorRef.current = element.scrollHeight - element.scrollTop;
+      setVisibleCount((count) => Math.min(items.length, count + WINDOW_CHUNK));
+    }
+  };
+
+  const backToBottom = (): void => {
+    const element = scrollRef.current;
+    if (element !== null) {
+      if (typeof element.scrollTo === "function") {
+        // 平滑回底（跟随滚入保持直跳，流式内容不拖影）
+        element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+      } else {
+        element.scrollTop = element.scrollHeight;
+      }
+    }
+    setIsFollowing(true);
+    setUnseenCount(0);
   };
 
   return (
@@ -106,6 +266,12 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
         aria-label="会话视图"
         className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-base"
       >
+        <ScopedErrorBoundary
+          scope="流程时间线"
+          resetKey={contextPath ?? "none"}
+        >
+          <AawTimeline />
+        </ScopedErrorBoundary>
         {agentCrashed !== null ? (
           <div
             role="alert"
@@ -138,62 +304,84 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
             </button>
           </div>
         ) : null}
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          role="log"
-          aria-live="polite"
-          aria-label="消息流"
-          className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-4"
-        >
-          {items.length === 0 && isConnecting ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-mute">
-              <Spinner className="h-6 w-6 text-sky-400" />
-              <span>正在连接 agent 并恢复会话上下文…</span>
-              <span className="text-xs text-ink-ghost">
-                首次启动与恢复通常需要数秒，请稍候
-              </span>
-            </div>
-          ) : items.length === 0 &&
-            activePath === null &&
-            contextPath !== null ? (
-            /* 项目已关闭（无 activePath）：给「重新打开项目」的可行出口，
-             替代指路不通的「连接 agent」文案 */
-            <div className="flex flex-col items-center gap-3 py-16 text-center">
-              <p className="text-sm text-ink-mute">项目已关闭</p>
-              <button
-                type="button"
-                onClick={() => {
-                  openWorkspace(contextPath);
-                }}
-                className={`${btnPrimary} px-3 py-1.5 text-sm`}
-              >
-                重新打开项目
-              </button>
-              <p className="text-xs text-ink-ghost">
-                将重新连接 agent 并恢复该项目的会话。
-              </p>
-            </div>
-          ) : items.length === 0 ? (
-            pendingCount > 0 ? (
-              <p className="py-16 text-center text-sm leading-relaxed text-ink-faint">
-                会话暂无消息，当前有 {pendingCount}{" "}
-                项审批/提问待处理——请回应弹窗，或在顶栏「待办」列表中处理。
-              </p>
-            ) : (
-              <p className="py-16 text-center text-sm text-ink-ghost">
-                会话为空。发送第一条消息即可开始。
-              </p>
-            )
-          ) : (
-            <ol className="mx-auto flex max-w-4xl list-none flex-col gap-4 p-0">
-              {items.map((item) => (
-                <li key={item.id}>
-                  <SessionItemView item={item} />
-                </li>
-              ))}
-            </ol>
-          )}
+        {/* 消息流：窗口化渲染（最近 WINDOW_CHUNK 条，贴顶补载）+ 跟随
+            状态机（贴底自动滚入；上翻解除并给回底按钮）；relative 承载
+            回底按钮 */}
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            role="log"
+            aria-live="polite"
+            aria-label="消息流"
+            className="h-full overflow-x-hidden overflow-y-auto px-6 py-5"
+          >
+            <ScopedErrorBoundary
+              scope="消息流"
+              resetKey={activeSessionId ?? "none"}
+            >
+              {items.length === 0 && isConnecting ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-mute">
+                  <Spinner className="h-6 w-6 text-sky-400" />
+                  <span>正在连接 agent 并恢复会话上下文…</span>
+                  <span className="text-xs text-ink-ghost">
+                    首次启动与恢复通常需要数秒，请稍候
+                  </span>
+                </div>
+              ) : items.length === 0 &&
+                activePath === null &&
+                contextPath !== null ? (
+                /* 项目已关闭（无 activePath）：给「重新打开项目」的可行出口，
+                   替代指路不通的「连接 agent」文案 */
+                <div className="flex flex-col items-center gap-3 py-16 text-center">
+                  <p className="text-sm text-ink-mute">项目已关闭</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openWorkspace(contextPath);
+                    }}
+                    className={`${btnPrimary} px-3 py-1.5 text-sm`}
+                  >
+                    重新打开项目
+                  </button>
+                  <p className="text-xs text-ink-ghost">
+                    将重新连接 agent 并恢复该项目的会话。
+                  </p>
+                </div>
+              ) : items.length === 0 ? (
+                pendingCount > 0 ? (
+                  <p className="py-16 text-center text-sm leading-relaxed text-ink-faint">
+                    会话暂无消息，当前有 {pendingCount}{" "}
+                    项审批/提问待处理——请回应弹窗或停靠面板中的提问。
+                  </p>
+                ) : (
+                  <EmptyPrompts currentSr={currentSr} />
+                )
+              ) : (
+                <ol className="mx-auto flex max-w-4xl list-none flex-col gap-5 p-0">
+                  {visibleItems.map((item) => (
+                    <li key={item.id}>
+                      <SessionItemView item={item} />
+                    </li>
+                  ))}
+                  {/* 轮次相位行长在消息流末尾：思考中 / 工具运行中 n / 生成中 */}
+                  <TurnStatusRow />
+                </ol>
+              )}
+            </ScopedErrorBoundary>
+          </div>
+          {!isFollowing && items.length > 0 ? (
+            <button
+              type="button"
+              onClick={backToBottom}
+              aria-label="回到底部"
+              className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-line-strong bg-surface px-3 py-1 text-xs text-ink-mute shadow-lg transition-colors hover:text-ink"
+            >
+              <ArrowDownToLineIcon className="h-3 w-3" />
+              回到底部
+              {unseenCount > 0 ? `（${unseenCount} 条新消息）` : ""}
+            </button>
+          ) : null}
         </div>
         {turnError !== null && !isAgentRunning ? (
           <div
@@ -237,12 +425,14 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
               type="button"
               aria-label="关闭错误提示"
               onClick={clearTurnError}
-              className="rounded px-1.5 text-ink-faint hover:text-ink"
+              className="rounded p-1.5 text-ink-faint hover:text-ink"
             >
-              ✕
+              <XIcon className="h-3 w-3" />
             </button>
           </div>
         ) : null}
+        {/* 结构化问答停靠面板：不弹窗、不遮会话——回答所需上下文就在上方 */}
+        <QuestionDock />
         <ChatInput
           isAgentRunning={isAgentRunning}
           disabled={isConnecting}
@@ -254,12 +444,15 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
           未注入发送通路时（孤立渲染 / 测试）给一个如实失败的兜底，
           不让开关变成没反应的死按钮 */}
       {isAawOpen ? (
-        <SessionAawPanel
-          onSubmitAawPrompt={
-            onSubmitAawPrompt ?? (() => ({ ok: false, reason: NO_SUBMIT_PATH }))
-          }
-          onClose={toggleAaw}
-        />
+        <ScopedErrorBoundary scope="AAW 面板" resetKey={contextPath ?? "none"}>
+          <SessionAawPanel
+            onSubmitAawPrompt={
+              onSubmitAawPrompt ??
+              (() => ({ ok: false, reason: NO_SUBMIT_PATH }))
+            }
+            onClose={toggleAaw}
+          />
+        </ScopedErrorBoundary>
       ) : null}
     </div>
   );

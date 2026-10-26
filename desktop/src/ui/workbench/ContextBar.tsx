@@ -1,29 +1,31 @@
 /**
  * 上下文条（内容区顶部固定 44px 行 + 可选错误横幅）：全应用唯一的横向
  * 顶栏，把原先「顶栏 + 上下文条」两层 46px + 44px 的重复收成一层——
- * 项目名 / 视图名只出现在这里一次。随内容区视图切换的形态：
+ * 项目名 / 视图名只出现在这里一次。窗口装饰已关（decorations: false），
+ * 这一行同时就是**标题栏**：空白处（弹性 spacer 与标题文字）带
+ * data-tauri-drag-region 可拖动窗口，右端挂自绘窗口控制（WindowControls）。
+ * 随内容区视图切换的形态：
  *
- * - 会话视图：返回总览按钮 + 会话标题 + 所属项目名（小字）+ 连接徽标
+ * - 会话视图：会话标题 + 所属项目名（小字）+ 连接徽标
  *   （绿点已连接 / 蓝点连接中 / 红点失败 / 灰点未连接）+ 右侧 AAW 面板
  *   开关（有 AAW 工作流数据时标签为「SR-xxx · 步骤 n」，否则为「AAW」；
- *   只开合右侧增强面板，不离开对话）+ 关闭项目图标按钮（带确认，防误触
- *   断开会话）；
+ *   只开合右侧增强面板，不离开对话）+ 关闭会话图标按钮（带确认，防误触
+ *   断开）；不设返回按钮——项目树即导航，不重复；
  * - 项目总览：返回按钮（回当前会话；无会话时回落空态）+ 项目名 +
- *   路径（mono 小字）+ 右侧「进入会话」+「关闭项目」次级按钮；
+ *   路径（mono 小字）+ 右侧「关闭项目」次级按钮（新建会话在总览体内）；
  * - 设置 / 诊断全屏页：返回按钮 + 页名；
- * - 空态（未选项目的总览）：只有右侧全局区（agent 标识 + 待办），
- *   空态引导占满下方内容区。
+ * - 空态（未选项目的总览）：上下文部分留空，空态引导占满下方内容区。
  *
- * 行尾全局区（GlobalActions）对所有形态共用：agent 标识（低显重的
- * 事实陈述）+ 待办下拉（挂起的审批 / 提问，0 项时灰显）。
+ * 顶栏曾有的全局区（agent 标识 + 待办下拉）已退役：模型等会话能力信息
+ * 在输入区状态行，挂起审批由 ApprovalModal 自动弹出、问答由 QuestionDock
+ * 停靠面板承接——顶栏不再堆与当前上下文无关的挂件。
  *
  * 连接失败横幅（P0-1）：会话态与项目总览在 lastConnectError 匹配当前
  * 项目时，于上下文行下方显示一条可关闭的错误横幅（destructive 语义
  * token），带「打开设置」快捷入口。
  */
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useAawStatusStore } from "../../stores/aawStatusStore.ts";
-import { useApprovalStore } from "../../stores/approvalStore.ts";
 import { useSessionStore } from "../../stores/sessionStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import {
@@ -32,16 +34,11 @@ import {
   type OverlayView,
 } from "../../stores/workbenchUiStore.ts";
 import { deriveStepPhases } from "../../aaw/workflowModel.ts";
-import { defaultAgentLabel } from "../../agents/registry.ts";
-import {
-  btnPrimary,
-  btnSecondary,
-  tabActiveClass,
-  tabInactiveClass,
-} from "../controls.tsx";
+import { btnPrimary, btnSecondary } from "../controls.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
-import { PendingInbox } from "../PendingInbox.tsx";
+import { XIcon } from "../icons.tsx";
 import { ConnectionBadge } from "./ConnectionBadge.tsx";
+import { WindowControls } from "./WindowControls.tsx";
 
 /** 上下文条固定高度（px），对齐仿真的 44px 内容区顶栏。 */
 const CONTEXT_BAR_HEIGHT_PX = 44;
@@ -81,84 +78,6 @@ function BackButton({
   );
 }
 
-/**
- * 行尾全局区（所有视图共用）：agent 标识 + 待办下拉。
- * 待办 0 项时灰显无数字；>0 显示计数并可展开面板。功能页全屏时按钮组
- * 收起（只留 agent 标识这一句事实）。
- */
-function GlobalActions() {
-  // 注册表的默认 agent 展示名（iCode 改名只动 registry 一处）
-  const agentLabel = defaultAgentLabel();
-  const pendingCount = useApprovalStore((state) => state.pending.length);
-  const overlay = useWorkbenchUiStore((state) => state.overlay);
-  const [isInboxOpen, setInboxOpen] = useState(false);
-  const inboxRef = useRef<HTMLDivElement | null>(null);
-
-  // 下拉开合的收口：点击面板外部或按 Esc 即关闭
-  useEffect(() => {
-    if (!isInboxOpen) {
-      return;
-    }
-    function handlePointerDown(event: PointerEvent): void {
-      const container = inboxRef.current;
-      if (container !== null && !container.contains(event.target as Node)) {
-        setInboxOpen(false);
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setInboxOpen(false);
-      }
-    }
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isInboxOpen]);
-
-  return (
-    <div className="flex shrink-0 items-center gap-2.5">
-      <span
-        className="hidden shrink-0 rounded-md border border-line-strong px-2 py-0.5 text-2xs text-ink-faint sm:inline"
-        title={`当前 agent：${agentLabel}`}
-      >
-        agent · {agentLabel}
-      </span>
-      {overlay === null && (
-        <div ref={inboxRef} className="relative">
-          <button
-            type="button"
-            aria-haspopup="true"
-            aria-expanded={isInboxOpen}
-            onClick={() => {
-              setInboxOpen((open) => !open);
-            }}
-            disabled={pendingCount === 0}
-            className={`rounded-md border px-3 py-1 text-xs transition-colors ${
-              isInboxOpen
-                ? tabActiveClass
-                : `${tabInactiveClass} border border-line bg-surface`
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            {pendingCount === 0 ? "待办" : `待办 (${pendingCount})`}
-          </button>
-          {isInboxOpen && pendingCount > 0 ? (
-            <div className="absolute top-full right-0 z-40 mt-1 w-80">
-              <PendingInbox
-                onSelect={() => {
-                  setInboxOpen(false);
-                }}
-              />
-            </div>
-          ) : null}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** AAW 快捷按钮的文案：当前 SR + 当前步骤序号（1 起）。 */
 function useSrStepLabel(): string | null {
   const currentSr = useAawStatusStore((state) => state.currentSr);
@@ -173,8 +92,8 @@ function useSrStepLabel(): string | null {
   return `${currentSr} · 步骤 ${stepNo}`;
 }
 
-/** 关闭项目的行内确认（Popconfirm 级别）：取消不动作，确认才断开。 */
-function CloseProjectConfirm({
+/** 关闭会话的行内确认（Popconfirm 级别）：取消不动作，确认才断开。 */
+function CloseSessionConfirm({
   onConfirm,
   onCancel,
 }: {
@@ -184,8 +103,8 @@ function CloseProjectConfirm({
   return (
     <span
       role="alertdialog"
-      aria-label="关闭项目确认"
-      className="flex shrink-0 items-center gap-2 rounded-md border border-line-strong bg-raised px-2 py-1 shadow-lg"
+      aria-label="关闭会话确认"
+      className="flex shrink-0 items-center gap-2 rounded-md border border-line-strong bg-raised px-2 py-1 shadow-elev-2"
     >
       <span className="text-xs text-ink">断开连接将中断当前会话，确认？</span>
       <button
@@ -206,18 +125,16 @@ function CloseProjectConfirm({
   );
 }
 
-/** 会话视图的上下文行：返回总览 + 标题 + 项目名 + 连接徽标 + 关闭项目。 */
+/** 会话视图的上下文行：标题 + 项目名 + 连接徽标 + AAW 开关 + 关闭会话。
+ * （不设「返回总览」——项目树点项目节点即进总览，顶栏不再重复树导航。） */
 function SessionBar({ path }: { readonly path: string }) {
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
   const closeWorkspace = useWorkspaceStore((state) => state.closeWorkspace);
-  const openProjectOverview = useWorkbenchUiStore(
-    (state) => state.openProjectOverview,
-  );
   const srStepLabel = useSrStepLabel();
   const isAawOpen = useWorkbenchUiStore((state) => state.isAawOpen);
   const toggleAaw = useWorkbenchUiStore((state) => state.toggleAaw);
-  // 关闭项目的行内确认（✕ 误触即断开会话的防呆）
+  // 关闭会话的行内确认（✕ 误触即断开的防呆）
   const [confirmingClose, setConfirmingClose] = useState(false);
   const title =
     sessionsByPath[path]?.find((session) => session.id === activeSessionId)
@@ -225,32 +142,8 @@ function SessionBar({ path }: { readonly path: string }) {
 
   return (
     <>
-      {/* 返回总览：会话视图的固定出口（SR 快捷之外的常规返回） */}
-      <button
-        type="button"
-        onClick={() => {
-          openProjectOverview(path);
-        }}
-        aria-label="返回总览"
-        title="返回总览"
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-raised hover:text-ink"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden={true}
-          className="h-3.5 w-3.5"
-        >
-          <path d="m12 19-7-7 7-7" />
-          <path d="M19 12H5" />
-        </svg>
-      </button>
       <span
-        className="min-w-0 truncate text-md font-medium text-ink"
+        className="min-w-0 truncate text-title font-medium text-ink"
         title={title}
       >
         {title}
@@ -295,7 +188,7 @@ function SessionBar({ path }: { readonly path: string }) {
         {srStepLabel ?? "AAW"}
       </button>
       {confirmingClose ? (
-        <CloseProjectConfirm
+        <CloseSessionConfirm
           onConfirm={() => {
             setConfirmingClose(false);
             closeWorkspace();
@@ -310,8 +203,8 @@ function SessionBar({ path }: { readonly path: string }) {
           onClick={() => {
             setConfirmingClose(true);
           }}
-          aria-label="关闭项目"
-          title="关闭项目"
+          aria-label="关闭会话"
+          title="关闭会话"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-raised hover:text-ink"
         >
           <svg
@@ -358,7 +251,7 @@ function OverviewBar({ path }: { readonly path: string }) {
         onClick={back}
         title="返回（该项目有会话则回会话，否则回空态）"
       />
-      <h2 className="min-w-0 truncate text-md font-medium text-ink">
+      <h2 className="min-w-0 truncate text-title font-medium text-ink">
         {basenameOf(path)}
       </h2>
       <span
@@ -450,7 +343,7 @@ function ConnectErrorBanner({ path }: { readonly path: string }) {
         }}
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-danger-ink transition-colors hover:bg-danger-bg"
       >
-        ✕
+        <XIcon className="h-3 w-3" />
       </button>
     </div>
   );
@@ -458,8 +351,7 @@ function ConnectErrorBanner({ path }: { readonly path: string }) {
 
 /**
  * 上下文条本体：全应用唯一顶栏。左侧是随视图切换的上下文（返回 / 标题 /
- * 连接徽标 / 动作），右侧是共用的全局区（agent 标识 + 待办）。
- * 空态（未选中项目的总览）只渲染全局区，上下文部分留空。
+ * 连接徽标 / 动作）。空态（未选中项目的总览）上下文部分留空。
  */
 export function ContextBar() {
   const treeView: ContentView = useWorkbenchUiStore((state) => state.treeView);
@@ -478,8 +370,9 @@ export function ContextBar() {
       className="shrink-0 border-b border-line bg-base"
     >
       <div
-        className="flex items-center gap-2.5 px-3.5"
+        className="flex items-center gap-2.5 px-4"
         style={{ height: `${CONTEXT_BAR_HEIGHT_PX}px` }}
+        data-tauri-drag-region="deep"
       >
         {overlay !== null ? (
           <OverlayBar view={overlay} />
@@ -490,7 +383,7 @@ export function ContextBar() {
         ) : (
           <span aria-hidden={true} className="flex-1" />
         )}
-        <GlobalActions />
+        <WindowControls />
       </div>
       {showErrorBanner && contextPath !== null ? (
         <ConnectErrorBanner path={contextPath} />

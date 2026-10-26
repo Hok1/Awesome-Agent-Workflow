@@ -85,10 +85,47 @@ describe("ToolCallCard", () => {
       />,
     );
     expect(screen.getByText("失败")).toBeInTheDocument();
+    // 折叠行给出结果摘要（resultSummary）
+    expect(screen.getByTitle("exit 1")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: /run_command npm test/ }),
     );
-    expect(screen.getByText("exit 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("工具输出")).toHaveTextContent("exit 1");
+  });
+
+  it("运行中展开盯进度的卡，完成时自动收起（长轮次不留展开的历史卡）", async () => {
+    const { rerender } = render(<ToolCallCard item={makeItem()} />);
+    // 展开盯运行
+    await userEvent.click(screen.getByRole("button", { name: /run_command/ }));
+    expect(screen.getByLabelText("工具输入")).toBeInTheDocument();
+
+    // 完成：自动收起
+    rerender(
+      <ToolCallCard
+        item={makeItem({
+          status: "completed",
+          rawOutput: "ok",
+          resultSummary: "exit 0",
+        })}
+      />,
+    );
+    expect(screen.queryByLabelText("工具输入")).not.toBeInTheDocument();
+  });
+
+  it("失败不自动收起：输出是排障现场，需要被人看到", async () => {
+    const { rerender } = render(<ToolCallCard item={makeItem()} />);
+    await userEvent.click(screen.getByRole("button", { name: /run_command/ }));
+
+    rerender(
+      <ToolCallCard
+        item={makeItem({
+          status: "failed",
+          rawOutput: "boom",
+          resultSummary: "exit 1",
+        })}
+      />,
+    );
+    expect(screen.getByLabelText("工具输出")).toBeInTheDocument();
   });
 
   it("status 缺省（null）时显示「已发起」", () => {

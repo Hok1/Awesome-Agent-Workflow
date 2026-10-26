@@ -38,6 +38,9 @@ const SIDEBAR_COLLAPSED_KEY = "aaw-desktop/layout/sidebar-collapsed";
 /** 侧边栏视角的持久化键。 */
 const TREE_VIEW_MODE_KEY = "aaw-desktop/sidebar/view";
 
+/** 流程时间线收起态的持久化键。 */
+const TIMELINE_COLLAPSED_KEY = "aaw-desktop/layout/timeline-collapsed";
+
 /** 读持久化字符串（缺失 / 环境不支持返回 null）。 */
 function readPref(key: string): string | null {
   try {
@@ -66,6 +69,13 @@ function restoreTreeViewMode(): TreeViewMode {
   return readPref(TREE_VIEW_MODE_KEY) === "sessions" ? "sessions" : "projects";
 }
 
+/** 从持久化恢复时间线收起态（"1" 为收起；缺失按展开处理）。 */
+function restoreTimelineCollapsed(): boolean {
+  // 默认收起（紧凑进度条是常态，全图抽屉按需展开）；显式展开过（"0"）
+  // 的老偏好保持展开
+  return readPref(TIMELINE_COLLAPSED_KEY) !== "0";
+}
+
 interface WorkbenchUiState {
   /** 基底视图（功能页覆盖层之外的当前视图）。 */
   readonly treeView: ContentView;
@@ -86,6 +96,8 @@ interface WorkbenchUiState {
    * 默认收起：会话以对话为主，AAW 信息按需拉出来看（不持久化）。
    */
   readonly isAawOpen: boolean;
+  /** 会话顶部 AAW 流程时间线的收起态（布局偏好，持久化）。 */
+  readonly isTimelineCollapsed: boolean;
   /** 关闭守卫确认弹窗（Rust CloseRequested 转交，agent 运行中时弹出）。 */
   readonly isCloseGuardOpen: boolean;
 
@@ -95,8 +107,17 @@ interface WorkbenchUiState {
   readonly openProjectOverview: (path: string) => void;
   /** 选中会话子节点：内容区切到会话视图（项目上下文切到所属项目）。 */
   readonly openSessionView: (path: string) => void;
+  /**
+   * 打开失败回滚：把内容区恢复到点击前的视图（乐观打开落在死会话上时，
+   * 树选中态随视图一并还原，不留「点过但没去成」的假高亮）。
+   */
+  readonly restoreContextView: (view: {
+    readonly treeView: ContentView;
+    readonly contextPath: string | null;
+  }) => void;
   /** 开 / 关会话内的 AAW 增强面板。 */
   readonly toggleAaw: () => void;
+  readonly toggleTimeline: () => void;
   /** 功能页开关：再点同一页取消覆盖（回到树选中视图）。 */
   readonly toggleOverlay: (view: OverlayView) => void;
   /** 关闭功能页覆盖层（全屏页的「← 返回」入口）。 */
@@ -132,6 +153,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   expandedOverrides: {},
   sidebarCollapsed: restoreSidebarCollapsed(),
   treeViewMode: restoreTreeViewMode(),
+  isTimelineCollapsed: restoreTimelineCollapsed(),
   isAddPanelOpen: false,
   isAawOpen: false,
   isCloseGuardOpen: false,
@@ -162,10 +184,21 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
     logger.debug("内容区切换到会话视图", { path });
   },
 
+  restoreContextView: (view) => {
+    set({ treeView: view.treeView, contextPath: view.contextPath });
+    logger.debug("内容区回滚到点击前的视图", view);
+  },
+
   toggleAaw: () => {
     const next = !get().isAawOpen;
     set({ isAawOpen: next });
     logger.debug("AAW 增强面板切换", { open: next });
+  },
+
+  toggleTimeline: () => {
+    const next = !get().isTimelineCollapsed;
+    set({ isTimelineCollapsed: next });
+    writePref(TIMELINE_COLLAPSED_KEY, next ? "1" : "0");
   },
 
   toggleOverlay: (view) => {

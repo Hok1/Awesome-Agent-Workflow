@@ -229,7 +229,9 @@ export class EchoAgent {
           cancelled: false,
           cancelWaiter: null,
         });
-        // 对齐 chrys：session/new 后立刻推 runtime_update + plan 通知
+        // 对齐 chrys：session/new 后立刻推 runtime_update + usage_update +
+        // plan 通知（usage 喂输入区状态行的上下文用量条；runtimeDetails 带
+        // MCP/skill 来源，喂 skills/mcp 徽标）
         this.send({
           jsonrpc: "2.0",
           method: "_chrys/runtime_update",
@@ -243,7 +245,26 @@ export class EchoAgent {
               maxContextTokens: 128_000,
               toolNames: ["read_file", "run_command"],
               skillNames: [],
+              runtimeDetails: {
+                model: { name: "echo-model", provider: "mock" },
+                mcp_tools: { "echo-mcp": ["echo_tool"] },
+                mcp_failures: {},
+                skill_sources: {},
+              },
             },
+          },
+        });
+        this.send({
+          jsonrpc: "2.0",
+          method: "_chrys/usage_update",
+          params: {
+            sessionId,
+            usageSourceId: sessionId,
+            inputTokens: 12_000,
+            outputTokens: 3_000,
+            totalTokens: 15_000,
+            pct: 11.7,
+            maxContextTokens: 128_000,
           },
         });
         this.sendSessionUpdate(sessionId, {

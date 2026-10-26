@@ -76,12 +76,10 @@ function WorkspaceHealthPanel() {
     );
   }
 
+  // 无报告时不再渲染解释文案：「未检查」不是需要陈述的结论，总览状态行
+  // 的「重新检查」按钮就是全部入口（空态安静原则）。
   if (health === null) {
-    return (
-      <p className="text-sm text-ink-faint">
-        尚未执行检查；点「重新检查」开始探测。
-      </p>
-    );
+    return null;
   }
 
   return (

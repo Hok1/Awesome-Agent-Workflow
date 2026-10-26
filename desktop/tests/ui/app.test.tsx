@@ -1,12 +1,13 @@
 /**
- * App 主布局冒烟测试：顶栏功能入口（待办）、图标窄栏（设置 / 诊断
- * 底部入口 + 全屏功能页）、内容区空态与模态层挂载点。
+ * App 主布局冒烟测试：图标窄栏（设置 / 诊断底部入口 + 全屏功能页）、
+ * 内容区空态与模态层挂载点。
  *
  * 布局约定（图标窄栏 + 树状视图 + 内容区）：
  * - 顶栏无「视图路由」tab，也没有设置 / 诊断按钮（入口在图标窄栏底部）；
+ * - 顶栏无全局挂件（agent 标识 / 待办下拉已退役）：审批走 ApprovalModal
+ *   自动弹出，问答走会话内 QuestionDock；
  * - 设置 / 诊断激活时呈全屏语义：侧边栏树列与顶栏按钮组隐藏，只剩该页 +
  *   上下文条「← 返回」（图标窄栏常驻，入口仍可点）；
- * - 待办 0 项时按钮灰显无数字；
  * - 未选中项目时内容区呈引导空态；
  * - 主题绑定：设置的主题切换根元素 theme-warm 类。
  */
@@ -57,12 +58,14 @@ beforeEach(() => {
 });
 
 describe("App 主布局", () => {
-  it("顶栏只留 agent 徽标与待办入口；设置 / 诊断入口在图标窄栏底部", () => {
+  it("顶栏不再有全局挂件（agent 徽标 / 待办）；设置 / 诊断入口在图标窄栏底部", () => {
     render(<App />);
     // 顶栏去重：应用名只在窗口标题栏，页面内不再渲染
     expect(screen.queryByText("AAW 桌面客户端")).not.toBeInTheDocument();
-    expect(screen.getByText("agent · iCode")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "待办" })).toBeInTheDocument();
+    expect(screen.queryByText("agent · iCode")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /待办/ }),
+    ).not.toBeInTheDocument();
     // 视图路由退役：没有「开发」「项目」路由按钮，也没有路由 tablist
     expect(
       screen.queryByRole("button", { name: "开发" }),
@@ -88,15 +91,7 @@ describe("App 主布局", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("待办 0 项时按钮灰显且不带数字，无下拉面板", () => {
-    render(<App />);
-    const todoButton = screen.getByRole("button", { name: "待办" });
-    expect(todoButton).toBeDisabled();
-    expect(todoButton).toHaveTextContent(/^待办$/);
-    expect(screen.queryByLabelText("待办中心")).not.toBeInTheDocument();
-  });
-
-  it("挂起审批到达后按钮出现计数（待办 (1)）", () => {
+  it("挂起审批到达时在应用根自动弹出审批模态（不依赖顶栏入口）", () => {
     // 经真实通路挂起一条审批（Promise 悬置由 clear 收口）
     void useApprovalStore
       .getState()
@@ -107,8 +102,9 @@ describe("App 主布局", () => {
       })
       .catch(() => undefined);
     render(<App />);
-    const todoButton = screen.getByRole("button", { name: "待办 (1)" });
-    expect(todoButton).toBeEnabled();
+    expect(
+      screen.getByRole("dialog", { name: "权限审批" }),
+    ).toBeInTheDocument();
     useApprovalStore.getState().clear();
   });
 
@@ -127,21 +123,22 @@ describe("App 主布局", () => {
     const rail = screen.getByLabelText("主导航");
     await userEvent.click(within(rail).getByRole("button", { name: "设置" }));
 
-    // 全屏语义：只渲染设置页（页面自带 header），树列与顶栏按钮组隐藏；
+    // 全屏语义：只渲染设置页（侧边 Tab 结构），树列隐藏；
     // 图标窄栏常驻（入口仍可点）
-    expect(await screen.findByText("iCode 可执行路径")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: "工具路径" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "设置" })).toBeInTheDocument();
     expect(screen.queryByLabelText("项目树")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "待办" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("主导航")).toBeInTheDocument();
     const backButton = screen.getByRole("button", { name: "返回" });
     expect(backButton).toBeInTheDocument();
 
     // 「← 返回」退出全屏，回到树选中视图（此前的基底视图为空态）
     await userEvent.click(backButton);
-    expect(screen.queryByText("iCode 可执行路径")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "工具路径" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("项目树")).toBeInTheDocument();
     expect(
       screen.getByText(/从左侧选择或新建一个项目目录/),
@@ -183,7 +180,7 @@ describe("App 主布局", () => {
 
     const rail = screen.getByLabelText("主导航");
     await userEvent.click(within(rail).getByRole("button", { name: "设置" }));
-    expect(screen.getByText("iCode 可执行路径")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "会话与审批" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(
       screen.getByRole("heading", { name: "demo-project" }),

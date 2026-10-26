@@ -14,15 +14,17 @@
  * 在项目有历史时实际打开的是旧对话——标签在说谎。现在按语义拆开：想继续
  * 上次的对话就点树上那条会话行，点「＋ 新会话」就得到一条新的。
  *
- * 流程：选中项目 → 未连接则先建立连接（等待完成）→ 内容区切到会话视图。
+ * 流程：内容区**先**切到会话视图（乐观，「正在连接 agent…」加载态就是
+ * 即时回响）→ 连接在后台串行队列里建立（forceNew 跳过历史恢复）。
  *
- * 连接失败时不硬切会话（空会话比不上去修路径），改成落在项目总览：
+ * 连接失败时不硬留会话视图（空会话比不上去修路径），回滚落在项目总览：
  * 那里有失败横幅与「去设置工具路径」，用户能直接看到原因并动手改。
  */
 import { useSessionStore } from "../../stores/sessionStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { useWorkbenchUiStore } from "../../stores/workbenchUiStore.ts";
 import { openRealWorkspace } from "../realRuntime.ts";
+import { enqueueSessionOpen } from "./sessionEntry.ts";
 
 /** 结构化结果：失败时 reason 直接面向用户展示。 */
 export type StartSessionResult = { ok: true } | { ok: false; reason: string };
@@ -31,30 +33,31 @@ export type StartSessionResult = { ok: true } | { ok: false; reason: string };
  * 在指定项目里新建一条会话（空对话，可直接发送第一条消息）。
  * 失败（连接建立不起来）返回 ok=false 与用户可读原因，调用方负责展示。
  */
-export async function startNewSession(
-  path: string,
-): Promise<StartSessionResult> {
-  const workspace = useWorkspaceStore.getState();
-  workspace.selectWorkspace(path);
-  if (workspace.activePath !== path) {
-    // forceNew：本条入口的语义是「新建」，不能落进上次那个对话
-    await openRealWorkspace(path, { forceNew: true });
-    useWorkspaceStore.getState().openWorkspace(path);
-    if (!useSessionStore.getState().isBound) {
-      const error = useWorkspaceStore.getState().lastConnectError;
-      const detail =
-        error !== null && error.path === path ? `：${error.message}` : "";
-      // 落在总览：失败横幅与「去设置工具路径」都在那儿，原因看得见
-      useWorkbenchUiStore.getState().openProjectOverview(path);
-      return {
-        ok: false,
-        reason: `连接 agent 失败${detail || "，请在设置中检查 agent 可执行路径"}`,
-      };
-    }
-  } else {
-    // 项目已连接：当前运行时可能正停在某个历史会话上，新建要另开一条
-    await openRealWorkspace(path, { forceNew: true });
-  }
+export function startNewSession(path: string): Promise<StartSessionResult> {
+  // 乐观反馈：点击立即落到会话视图（连接加载态即时回响）
   useWorkbenchUiStore.getState().openSessionView(path);
-  return { ok: true };
+  return enqueueSessionOpen(async () => {
+    const workspace = useWorkspaceStore.getState();
+    if (workspace.activePath !== path) {
+      workspace.selectWorkspace(path);
+      // forceNew：本条入口的语义是「新建」，不能落进上次那个对话
+      await openRealWorkspace(path, { forceNew: true });
+      useWorkspaceStore.getState().openWorkspace(path);
+      if (!useSessionStore.getState().isBound) {
+        const error = useWorkspaceStore.getState().lastConnectError;
+        const detail =
+          error !== null && error.path === path ? `：${error.message}` : "";
+        // 回滚落在总览：失败横幅与「去设置工具路径」都在那儿，原因看得见
+        useWorkbenchUiStore.getState().openProjectOverview(path);
+        return {
+          ok: false,
+          reason: `连接 agent 失败${detail || "，请在设置中检查 agent 可执行路径"}`,
+        };
+      }
+    } else {
+      // 项目已连接：当前运行时可能正停在某个历史会话上，新建要另开一条
+      await openRealWorkspace(path, { forceNew: true });
+    }
+    return { ok: true };
+  });
 }

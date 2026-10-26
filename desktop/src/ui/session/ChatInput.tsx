@@ -5,15 +5,33 @@
  * - 上行：多行文本（透明背景无边框），Enter 发送 / Shift+Enter 换行，
  *   中文输入法组词中的 Enter 不发送；固定初始高度、随内容自动增长
  *   （上限后内部滚动），不暴露原生 resize 手柄；
- * - 下行（border-t 分隔）：左侧模型名短格式（accent 圆点 + 短格式，
- *   悬停见全量）+ 审批模式徽标；右侧圆形发送 / 停止钮——agent 运行中
- *   变「停止」（发取消），空输入与连接建立中禁闭。附件按钮在功能接入
- *   前不占位（看得见却点不动的图标不是入口）。
+ * - ↑/↓ 输入历史：空输入或浏览态下按 ↑ 回溯已发送的 prompt（再按 ↓
+ *   前进 / 回到编辑中的草稿）——终端同款手感；
+ * - @ 文件提及：输入 `@` + 关键字在输入区上方弹候选面板（工作区文件，
+ *   跳过依赖目录，见 aaw/fileListing），↑/↓ 选择、Enter/Tab 插入、Esc
+ *   关闭；插入为 `@相对路径` 纯文本，agent 自行读取；
+ * - 预填通道：外部（再次发送 / 推荐入口）经 composerPrefill 把文本
+ *   送进草稿并聚焦，不自动发送；
+ * - 下行（border-t 分隔）：左侧 skills/mcp 徽标 + 审批模式；右侧模型标识
+ *   + 上下文用量圆环 + 圆形发送 / 停止钮。轮次相位（思考中 / 工具运行中 /
+ *   生成中）不在这里——它长在对话流末尾（SessionView 的 TurnStatusRow）。
  */
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import { useSessionStore } from "../../stores/sessionStore.ts";
+import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
+import { listWorkspaceFiles } from "../../aaw/fileListing.ts";
 import { focusVisibleRing } from "../controls.tsx";
+import { InputStatusLeft, InputStatusRight } from "./InputStatusBar.tsx";
+import { onComposerPrefill } from "./composerPrefill.ts";
+import { detectMentionTrigger, filterMentionFiles } from "./mention.ts";
+import { getPromptHistory, recordPrompt } from "./promptHistory.ts";
 
 /** 自动增长的高度上限（px）：超过后转入内部滚动。 */
 const MAX_HEIGHT_PX = 192;
@@ -24,11 +42,6 @@ const modeBadgeClasses: Readonly<Record<string, string>> = {
   auto: "border-info-line bg-info-bg/50 text-info-ink",
   bypass: "border-danger-line bg-danger-bg/50 text-danger-ink",
 };
-
-/** 模型标识的短格式：裸 hash 只留前 12 位（悬停见全量）。 */
-function shortModelLabel(label: string): string {
-  return /^[0-9a-f]{16,}$/i.test(label) ? label.slice(0, 12) : label;
-}
 
 /** arrow-up：发送（圆形主钮内的箭头）。 */
 function ArrowUpIcon() {
@@ -79,9 +92,40 @@ export function ChatInput({
 }: ChatInputProps) {
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // 模型与审批模式随会话事件更新，输入区自取（与 SessionView 同源）
-  const modelLabel = useSessionStore((state) => state.modelLabel);
+  // 审批模式随会话事件更新（模型/上下文/skills/mcp 在 InputStatusCluster 自取）
   const approvalMode = useSessionStore((state) => state.approvalMode);
+  const activePath = useWorkspaceStore((state) => state.activePath);
+
+  // @ 提及：触发态（query + 选中下标）+ 当前工作区的文件清单
+  const [mention, setMention] = useState<{
+    readonly query: string;
+    readonly index: number;
+  } | null>(null);
+  // 文件清单加载态：for = 已就绪的工作区路径（null = 还没加载过）
+  const [filesState, setFilesState] = useState<{
+    readonly for: string | null;
+    readonly paths: readonly string[];
+  }>({ for: null, paths: [] });
+  const filesPendingForRef = useRef<string | null>(null);
+
+  // 输入历史浏览（命令式索引，不进渲染态）
+  const historyIndexRef = useRef<number | null>(null);
+  const historyDraftRef = useRef("");
+
+  // 预填通道（事件总线）：外部送来的文本落进草稿并聚焦
+  useEffect(() => {
+    return onComposerPrefill((text) => {
+      setDraft(text);
+      requestAnimationFrame(() => {
+        const element = textareaRef.current;
+        if (element !== null) {
+          element.focus();
+          const end = element.value.length;
+          element.setSelectionRange(end, end);
+        }
+      });
+    });
+  }, []);
 
   // 自动增长：先瞬时归零再按 scrollHeight 撑开，钳制在 MAX_HEIGHT_PX 内
   useEffect(() => {
@@ -93,66 +137,234 @@ export function ChatInput({
     element.style.height = `${Math.min(element.scrollHeight, MAX_HEIGHT_PX)}px`;
   }, [draft]);
 
+  const mentionOptions = useMemo(() => {
+    if (mention === null || filesState.for !== activePath) {
+      return [];
+    }
+    return filterMentionFiles(filesState.paths, mention.query);
+  }, [mention, filesState, activePath]);
+
+  const ensureWorkspaceFiles = (): void => {
+    if (
+      activePath === null ||
+      filesState.for === activePath ||
+      filesPendingForRef.current === activePath
+    ) {
+      return;
+    }
+    filesPendingForRef.current = activePath;
+    void listWorkspaceFiles(activePath).then((paths) => {
+      filesPendingForRef.current = null;
+      setFilesState({ for: activePath, paths });
+    });
+  };
+
+  const insertMention = (path: string): void => {
+    const element = textareaRef.current;
+    const token = mention?.query ?? "";
+    const caret = element?.selectionStart ?? draft.length;
+    // @ 起点在 caret - token.length - 1；校验仍是 @（ IME/粘贴等边缘）
+    const atIndex = caret - token.length - 1;
+    if (atIndex < 0 || draft[atIndex] !== "@") {
+      setDraft(`${draft}${draft.length > 0 ? " " : ""}@${path} `);
+    } else {
+      setDraft(`${draft.slice(0, atIndex)}@${path} ${draft.slice(caret)}`);
+    }
+    setMention(null);
+    const caretAfter =
+      atIndex >= 0 ? atIndex + path.length + 2 : draft.length + path.length + 3;
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (node !== null) {
+        node.focus();
+        node.setSelectionRange(caretAfter, caretAfter);
+      }
+    });
+  };
+
   const submit = (): void => {
     const trimmed = draft.trim();
     if (trimmed.length === 0 || isAgentRunning || disabled) {
       return;
     }
+    recordPrompt(trimmed);
+    historyIndexRef.current = null;
     onSend(trimmed);
     setDraft("");
+    setMention(null);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key !== "Enter" || event.shiftKey) {
+    // 输入法组词中的按键一律放行给 IME（导航键也不抢）
+    if (event.nativeEvent.isComposing) {
       return;
     }
-    // 输入法组词确认的 Enter 不是发送
-    if (event.nativeEvent.isComposing) {
+    // 提及面板开着的导航优先
+    if (mention !== null) {
+      if (mentionOptions.length > 0) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setMention((current) =>
+            current === null
+              ? current
+              : {
+                  ...current,
+                  index: Math.min(mentionOptions.length - 1, current.index + 1),
+                },
+          );
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setMention((current) =>
+            current === null
+              ? current
+              : { ...current, index: Math.max(0, current.index - 1) },
+          );
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          insertMention(
+            mentionOptions[mention.index] ?? mentionOptions[0] ?? "",
+          );
+          return;
+        }
+      }
+      if (event.key === "Escape") {
+        setMention(null);
+        return;
+      }
+    }
+    // 输入历史：↑ 回溯（浏览态直接继续；起步要求空输入且光标在开头），
+    // ↓ 前进 / 回到编辑中的草稿
+    const caretAtStart = (event.currentTarget.selectionStart ?? 0) === 0;
+    const history = getPromptHistory();
+    if (
+      event.key === "ArrowUp" &&
+      history.length > 0 &&
+      (historyIndexRef.current !== null || (caretAtStart && draft.length === 0))
+    ) {
+      event.preventDefault();
+      if (historyIndexRef.current === null) {
+        historyDraftRef.current = draft;
+        historyIndexRef.current = history.length - 1;
+      } else if (historyIndexRef.current > 0) {
+        historyIndexRef.current -= 1;
+      } else {
+        return;
+      }
+      setDraft(history[historyIndexRef.current] ?? "");
+      return;
+    }
+    if (event.key === "ArrowDown" && historyIndexRef.current !== null) {
+      event.preventDefault();
+      if (historyIndexRef.current < history.length - 1) {
+        historyIndexRef.current += 1;
+        setDraft(history[historyIndexRef.current] ?? "");
+      } else {
+        historyIndexRef.current = null;
+        setDraft(historyDraftRef.current);
+      }
+      return;
+    }
+    if (event.key !== "Enter" || event.shiftKey) {
       return;
     }
     event.preventDefault();
     submit();
   };
 
+  const handleChange = (value: string, caret: number): void => {
+    setDraft(value);
+    const trigger = detectMentionTrigger(value.slice(0, caret));
+    if (trigger === null) {
+      if (mention !== null) {
+        setMention(null);
+      }
+      return;
+    }
+    setMention((current) =>
+      current !== null && current.query === trigger
+        ? current
+        : { query: trigger, index: 0 },
+    );
+    ensureWorkspaceFiles();
+  };
+
   return (
-    /* 悬浮留白：不贴边贴底（左右 20px、底部 16px） */
-    <div className="shrink-0" style={{ padding: "0 20px 16px" }}>
-      <div className="mx-auto w-full max-w-4xl overflow-hidden rounded-2xl border border-line bg-surface shadow-lg">
+    /* 悬浮留白：不贴边贴底（左右 20px、底部 16px）；
+       relative 承载提及面板（弹在整卡上方，盖住消息流底部而不被卡片的
+       overflow-hidden 裁掉） */
+    <div className="relative shrink-0" style={{ padding: "0 20px 16px" }}>
+      {mention !== null ? (
+        <div className="absolute inset-x-5 bottom-full mb-1 z-30">
+          <div
+            role="listbox"
+            aria-label="文件候选"
+            className="mx-auto max-h-60 max-w-4xl overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-elev-2"
+          >
+            {mentionOptions.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-ink-faint">
+                {filesState.for === activePath
+                  ? "没有匹配的文件"
+                  : "正在读取文件列表…"}
+              </p>
+            ) : (
+              mentionOptions.map((path, index) => (
+                <button
+                  key={path}
+                  type="button"
+                  role="option"
+                  aria-selected={index === mention.index}
+                  // mousedown 先于焦点跳转：面板点击不丢输入焦点
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    insertMention(path);
+                  }}
+                  className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left font-mono text-xs transition-colors ${
+                    index === mention.index
+                      ? "bg-raised text-ink"
+                      : "text-ink-soft hover:bg-raised/60"
+                  }`}
+                >
+                  <span className="shrink-0 text-ink-faint">@</span>
+                  <span className="min-w-0 flex-1 truncate">{path}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+      <div className="composer-card mx-auto w-full max-w-4xl overflow-hidden rounded-2xl border border-line bg-surface shadow-elev-2">
         {/* 上行：透明无边框的多行输入 */}
-        <div className="px-3.5 pb-1 pt-2.5">
+        <div className="px-4 pb-1 pt-3">
           <textarea
             ref={textareaRef}
             value={draft}
             onChange={(event) => {
-              setDraft(event.target.value);
+              handleChange(
+                event.target.value,
+                event.target.selectionStart ?? 0,
+              );
             }}
             onKeyDown={handleKeyDown}
             aria-label="消息输入框"
+            aria-autocomplete="list"
+            aria-expanded={mention !== null}
             disabled={disabled}
             placeholder={
               isAgentRunning
                 ? "agent 正在处理，可先编辑下一条消息…"
-                : "输入消息，Enter 发送，Shift+Enter 换行"
+                : "输入消息，Enter 发送，Shift+Enter 换行，@ 引用文件"
             }
             rows={1}
             className={`max-h-48 min-h-[2.5rem] w-full resize-none overflow-y-auto rounded bg-transparent text-sm leading-6 text-ink placeholder:text-ink-ghost disabled:cursor-not-allowed disabled:opacity-60 ${focusVisibleRing}`}
           />
         </div>
-        {/* 下行：左=模型 / 审批模式；右=圆形发送 / 停止钮 */}
+        {/* 下行：左=skills/mcp + 审批模式；右=模型 + 上下文圆环 + 发送/停止 */}
         <div className="mt-1 flex items-center gap-1.5 border-t border-line px-2 py-1.5">
-          <span
-            className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-ink-mute"
-            title={modelLabel ?? "当前模型"}
-          >
-            {/* accent 圆点：模型标识的前缀记号 */}
-            <span
-              aria-hidden={true}
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500"
-            />
-            <span className="truncate font-mono">
-              {modelLabel === null ? "—" : shortModelLabel(modelLabel)}
-            </span>
-          </span>
+          <InputStatusLeft />
           {approvalMode !== null ? (
             <span
               className={`shrink-0 rounded border px-1.5 py-0.5 text-2xs ${
@@ -165,6 +377,7 @@ export function ChatInput({
             </span>
           ) : null}
           <span aria-hidden={true} className="flex-1" />
+          <InputStatusRight />
           {isAgentRunning ? (
             /* 停止：圆形危险钮（同 btnDanger 植面，形状为圆形） */
             <button
@@ -172,7 +385,7 @@ export function ChatInput({
               onClick={onCancel}
               aria-label="停止"
               title="停止"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-danger-line bg-danger-bg/40 text-danger-ink transition-colors hover:bg-danger-bg/70"
+              className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-danger-line bg-danger-bg/40 text-danger-ink transition-colors hover:bg-danger-bg/70"
             >
               <StopIcon />
             </button>
@@ -184,7 +397,7 @@ export function ChatInput({
               disabled={disabled || draft.trim().length === 0}
               aria-label="发送"
               title="发送"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowUpIcon />
             </button>

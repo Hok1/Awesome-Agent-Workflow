@@ -1,13 +1,12 @@
 /**
  * 树状视图 + 内容区交互测试（App 级）：
  * - 点项目节点进总览（含自动健康检查）；
- * - 点会话子节点：项目未连接时先自动连接再切换（mock realRuntime），
- *   切换失败保留当前视图；
+ * - 点会话子节点：内容区**立即**切到会话视图（乐观，连接中即加载态），
+ *   连接与切换在后台完成（mock realRuntime），失败回滚点击前视图；
  * - 连接徽标三态（树行尾为纯点形态，语义在 aria-label）与健康徽标；
  * - 树展开 / 折叠（默认展开有会话的项目）；
  * - 「+ 新会话」直接开一条空会话（不强制走 AAW 入口向导）；
  * - 会话内 AAW 面板：SR 快捷 / AAW 按钮开合，启动分段可发首条 prompt；
- * - 待办下拉开合（外部点击 / Esc 关闭）与徽标计数，点条目开审批模态；
  * - 【+】面板两个 tab：新建会话开空会话、添加项目走目录对话框；
  * - 侧边栏收起 / 展开（树列整体隐藏、图标窄栏常驻、拖宽热区隐藏、
  *   持久化；窄栏交互细项见 workbench/IconRail.test.tsx）；
@@ -17,7 +16,13 @@
  * realRuntime 以 vi.fn 替身注入（真实通路由 realRuntime.test 覆盖）；
  * plugin-dialog 打桩；健康检查 runner 永不完成，保持现场稳定。
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,6 +37,7 @@ import {
   openRealWorkspace,
   switchRealSession,
 } from "../../src/ui/realRuntime.ts";
+import { resetSessionOpenQueueForTests } from "../../src/ui/workbench/sessionEntry.ts";
 import type {
   CliRunResult,
   ProcessRunner,
@@ -65,6 +71,8 @@ const NAME_B = "other-project";
 
 function resetAll(): void {
   window.localStorage.clear();
+  // 串行队列是模块级状态：上个用例遗留的挂起编排不拖累下一个
+  resetSessionOpenQueueForTests();
   vi.mocked(openRealWorkspace).mockReset();
   vi.mocked(switchRealSession).mockReset();
   vi.mocked(mockOpen).mockReset();
@@ -76,6 +84,7 @@ function resetAll(): void {
   session.setSessions([]);
   useSessionStore.setState({
     activeSessionId: null,
+    openingSessionId: null,
     modelLabel: null,
     approvalMode: null,
     sessionsByPath: {},
@@ -180,21 +189,21 @@ beforeEach(() => {
 });
 
 describe("项目树 → 项目总览", () => {
-  it("点项目节点：内容区切到该项目总览，自动检查已发起", async () => {
+  it("点项目节点：内容区切到该项目总览；检查不自动发起（手动「重新检查」）", async () => {
     seedProjectWithSessions();
     render(<App />);
     // 名字按钮带 title=路径，与收藏 / 移除按钮区分
     await userEvent.click(screen.getByTitle(PATH));
 
     expect(screen.getByRole("heading", { name: NAME })).toBeInTheDocument();
-    // 状态行：检查中摘要（明细自动展开）；工作流状态单点渲染
-    expect(screen.getByText("检查中…")).toBeInTheDocument();
+    // 检查通过过的不会自己坏掉：进总览不自动重查；未检查态不渲染 chip
+    // （行上只有可手动发起的「重新检查」）；工作流状态单点渲染
+    expect(screen.queryByText("未检查")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新检查" })).toBeEnabled();
     expect(
       screen.getByRole("region", { name: "工作流状态" }),
     ).toBeInTheDocument();
     expect(useWorkbenchUiStore.getState().contextPath).toBe(PATH);
-    // selectWorkspace 已触发自动健康检查（永不完成的 runner 使摘要保持检查中）
-    expect(screen.getByRole("button", { name: "重新检查" })).toBeDisabled();
   });
 
   it("【+】面板「添加项目」tab：目录对话框选择后进树并选中进总览", async () => {
@@ -254,7 +263,7 @@ describe("项目树 → 项目总览", () => {
 });
 
 describe("项目树 → 会话子节点", () => {
-  it("项目未连接：先自动连接再切换，内容区切到会话视图", async () => {
+  it("项目未连接：冷连接直接载入目标会话，内容区切到会话视图", async () => {
     seedProjectWithSessions();
     vi.mocked(openRealWorkspace).mockResolvedValue("sess-1");
     vi.mocked(switchRealSession).mockResolvedValue(true);
@@ -264,10 +273,13 @@ describe("项目树 → 会话子节点", () => {
       screen.getByRole("button", { name: /会话 · 旧任务/ }),
     );
 
-    // 未连接 → 先建立连接（等待完成）再切换；activePath 落地后
-    // RealSessionRuntime 的装配 effect 会对同路径补一次幂等调用
+    // 未连接 → 冷连接并点名载入目标会话（单次回放，别的会话不涌进
+    // 视图）；activePath 落地后 RealSessionRuntime 的装配 effect 会对
+    // 同路径补一次幂等调用
     expect(openRealWorkspace).toHaveBeenCalledTimes(2);
-    expect(openRealWorkspace).toHaveBeenNthCalledWith(1, PATH);
+    expect(openRealWorkspace).toHaveBeenNthCalledWith(1, PATH, {
+      sessionId: "sess-1",
+    });
     expect(switchRealSession).toHaveBeenCalledWith("sess-1");
     expect(useWorkspaceStore.getState().activePath).toBe(PATH);
     expect(useSessionStore.getState().activeSessionId).toBe("sess-1");
@@ -282,7 +294,7 @@ describe("项目树 → 会话子节点", () => {
     expect(useSessionStore.getState().activeSessionId).toBe("sess-2");
   });
 
-  it("切换失败（会话过期等）：保留当前视图且不聚焦目标", async () => {
+  it("切换失败（会话过期等）：乐观切到的会话视图回滚，聚焦保持原样", async () => {
     seedProjectWithSessions();
     vi.mocked(switchRealSession).mockResolvedValue(false);
     render(<App />);
@@ -292,14 +304,67 @@ describe("项目树 → 会话子节点", () => {
     );
 
     expect(switchRealSession).toHaveBeenCalledWith("sess-1");
-    // 当前视图是总览（未连接的连接调用仍已发起），失败后不切到会话视图
-    expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
+    // 失败即回滚：乐观切进来的会话视图退场，回到点击前的总览
+    await waitFor(() => {
+      expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
+    });
     expect(useSessionStore.getState().activeSessionId).toBeNull();
+  });
+
+  it("点击会话立即有反馈：连接还没完成，会话视图与目标行高亮已就位", async () => {
+    seedProjectWithSessions();
+    // 连接永不完成：最慢的真实场景——反馈也必须即时
+    //（置连接中是真实 openRealWorkspace 的第一件事，替身照做）
+    vi.mocked(openRealWorkspace).mockImplementation(() => {
+      useSessionStore.getState().setConnecting(true);
+      return new Promise(() => {});
+    });
+    render(<App />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /会话 · 旧任务/ }),
+    );
+
+    expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
+    expect(screen.getByText(/正在连接 agent/)).toBeInTheDocument();
+    // 乐观高亮：activeSessionId 还没落，目标行已呈选中态
+    expect(
+      screen.getByRole("button", { name: /会话 · 旧任务/ }),
+    ).toHaveAttribute("aria-current", "true");
+  });
+
+  it("先会话后项目：回总览后会话行退光，项目行是唯一选中（双焦点锁定）", async () => {
+    seedProjectWithSessions();
+    vi.mocked(openRealWorkspace).mockResolvedValue("sess-1");
+    vi.mocked(switchRealSession).mockResolvedValue(true);
+    render(<App />);
+    const SELECTED_CLASS = "shadow-[inset_2px_0_0_0_rgb(14_165_233)]";
+
+    // 先进会话视图（会话行亮）
+    await userEvent.click(
+      screen.getByRole("button", { name: /会话 · 旧任务/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: /会话 · 旧任务/ }).className,
+    ).toContain(SELECTED_CLASS);
+
+    // 再点项目回总览：会话行必须退光——activeSessionId 未清，
+    // 但高亮由「内容区正在显示谁」门控，全树只允许一个答案
+    await userEvent.click(screen.getAllByTitle(PATH)[0] as HTMLElement);
+    expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /会话 · 旧任务/ }),
+    ).not.toHaveAttribute("aria-current");
+    expect(
+      (screen.getAllByTitle(PATH)[0] as HTMLElement).closest("div")?.className,
+    ).toContain(SELECTED_CLASS);
   });
 
   it("当前打开的会话子节点高亮（aria-current）", () => {
     seedProjectWithSessions();
     useSessionStore.setState({ activeSessionId: "sess-1" });
+    // 高亮门控：内容区正在显示该会话（会话视图）才亮
+    useWorkbenchUiStore.setState({ treeView: "session", contextPath: PATH });
     render(<App />);
     const activeNode = screen.getByRole("button", {
       name: /会话 · 旧任务/,
@@ -448,7 +513,9 @@ describe("项目树 → 新会话（普通会话）", () => {
     );
 
     // forceNew 是「新建」与「打开历史」的分水岭：不做它就会落进上次对话
-    expect(openRealWorkspace).toHaveBeenCalledWith(PATH, { forceNew: true });
+    await waitFor(() => {
+      expect(openRealWorkspace).toHaveBeenCalledWith(PATH, { forceNew: true });
+    });
     expect(await screen.findByLabelText("会话视图")).toBeInTheDocument();
     // 未连接先连接：activePath 落地
     expect(useWorkspaceStore.getState().activePath).toBe(PATH);
@@ -473,7 +540,7 @@ describe("项目树 → 新会话（普通会话）", () => {
     ).toBeInTheDocument();
   });
 
-  it("连接失败：不进会话视图，失败原因交给上下文条横幅", async () => {
+  it("连接失败：会话视图回滚落总览，失败原因交给上下文条横幅", async () => {
     seedProjectWithSessions();
     vi.mocked(openRealWorkspace).mockImplementation((path) => {
       useWorkspaceStore
@@ -486,7 +553,10 @@ describe("项目树 → 新会话（普通会话）", () => {
       screen.getByRole("button", { name: `新会话（${NAME}）` }),
     );
 
-    expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
+    // 失败即回滚：乐观切进来的会话视图退场，落在总览（修复入口在那儿）
+    await waitFor(() => {
+      expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
+    });
     expect(await screen.findByRole("alert")).toHaveTextContent(/连接失败/);
   });
 });
@@ -551,75 +621,6 @@ describe("会话内 AAW 面板", () => {
     expect(promptCalls).toBe(1);
     // 已在会话视图：不跳页，只是把首条 prompt 送进对话
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
-  });
-});
-
-describe("顶栏待办下拉", () => {
-  /** 经真实通路挂起一条审批（Promise 悬置由 clear 收口）。 */
-  function seedPermission(): void {
-    void useApprovalStore
-      .getState()
-      .offerPermission({
-        sessionId: "s1",
-        toolCall: { toolCallId: "c1", title: "执行命令" },
-        options: [
-          { optionId: "allow", name: "Allow once", kind: "allow_once" },
-        ],
-      })
-      .catch(() => undefined);
-  }
-
-  it("点「待办 (1)」展开面板列出挂起项；点条目打开审批模态并收起下拉", async () => {
-    seedPermission();
-    render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: "待办 (1)" }));
-
-    const inbox = screen.getByLabelText("待办中心");
-    expect(within(inbox).getByText("执行命令")).toBeInTheDocument();
-
-    // 点条目：切换焦点（模态渲染该审批）并收起下拉
-    await userEvent.click(within(inbox).getByText("执行命令"));
-    expect(screen.queryByLabelText("待办中心")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("dialog", { name: "权限审批" }),
-    ).toBeInTheDocument();
-    useApprovalStore.getState().clear();
-  });
-
-  it("点击面板外部关闭下拉", async () => {
-    seedPermission();
-    render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: "待办 (1)" }));
-    expect(screen.getByLabelText("待办中心")).toBeInTheDocument();
-
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByLabelText("待办中心")).not.toBeInTheDocument();
-    useApprovalStore.getState().clear();
-  });
-
-  it("按 Esc 关闭下拉", async () => {
-    seedPermission();
-    render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: "待办 (1)" }));
-    expect(screen.getByLabelText("待办中心")).toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByLabelText("待办中心")).not.toBeInTheDocument();
-    useApprovalStore.getState().clear();
-  });
-
-  it("再点「待办」按钮收起下拉（toggle）", async () => {
-    seedPermission();
-    render(<App />);
-    const trigger = screen.getByRole("button", { name: "待办 (1)" });
-    await userEvent.click(trigger);
-    expect(screen.getByLabelText("待办中心")).toBeInTheDocument();
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
-
-    await userEvent.click(trigger);
-    expect(screen.queryByLabelText("待办中心")).not.toBeInTheDocument();
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    useApprovalStore.getState().clear();
   });
 });
 
@@ -779,7 +780,9 @@ describe("侧边栏会话视角", () => {
       screen.getByRole("button", { name: /会话 · 他项目任务/ }),
     );
 
-    expect(openRealWorkspace).toHaveBeenCalledWith(PATH_B);
+    await waitFor(() => {
+      expect(openRealWorkspace).toHaveBeenCalledWith(PATH_B);
+    });
     expect(switchRealSession).toHaveBeenCalledWith("sess-b1");
     expect(useWorkspaceStore.getState().activePath).toBe(PATH_B);
     expect(useSessionStore.getState().activeSessionId).toBe("sess-b1");
@@ -789,6 +792,8 @@ describe("侧边栏会话视角", () => {
   it("当前打开的会话在会话视角高亮（aria-current）", async () => {
     seedProjectWithSessions();
     useSessionStore.setState({ activeSessionId: "sess-2" });
+    // 高亮门控：内容区正在显示该会话（会话视图）才亮
+    useWorkbenchUiStore.setState({ treeView: "session", contextPath: PATH });
     render(<App />);
 
     await userEvent.click(screen.getByRole("tab", { name: "会话" }));

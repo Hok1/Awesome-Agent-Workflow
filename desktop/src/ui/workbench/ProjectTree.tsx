@@ -17,19 +17,22 @@
  * 因此**冷启动就能看到历史**，不必先连上 agent——「连上之后突然冒出一大
  * 堆会话」不再发生。
  *
- * 选中是「内容区正在显示谁」，全树**只有一个**：
+ * 选中是「内容区正在显示谁」，全树**只有一个**（双焦点修复后的硬约束）：
  * - 会话视图 → 高亮的是那个会话行；项目行只算展开的父节点，不跟着亮；
- * - 总览 → 高亮的是项目行。
- * 两者同时亮会让「我当前在哪」出现两个答案，且相邻两块底色叠在一起看起来
- * 互相压盖。行选中态统一走 `rowSelectedClass`（accent 淡底 + 左缘竖条），
+ * - 总览 → 高亮的是项目行；此前活跃的会话行一并退光（activeSessionId
+ *   不清，但高亮由 treeView 门控——「我在哪」只允许一个答案）；
+ * - 点会话的瞬间目标行先以「打开中」高亮（乐观，sessionStore 的
+ *   openingSessionId），连接落地后转正为聚焦高亮，失败随视图回滚熄灭。
+ * 行选中态统一走 `rowSelectedClass`（accent 淡底 + 左缘竖条），
  * 与中性色的悬停态分属两套颜色语言。
  *
  * 数据来自 workspaceStore（收藏 / 最近 / activePath / 健康报告）与
  * sessionStore（sessionsByPath 的各项目会话列表缓存）；本组件只做渲染
  * 与交互派发，连接编排经共享入口完成：
  * - 点项目名 → 选中该项目，内容区切到项目总览（在总览里决定是否开始会话）；
- * - 点会话子节点（两个视角同路）→ openSessionFromEntry：项目未连接
- *   时先自动建立连接（等待完成），再切换到该会话；
+ * - 点会话子节点（两个视角同路）→ openSessionFromEntry：内容区**立即**
+ *   切到会话视图（连接加载态即时回响），连接与历史加载在后台串行队列
+ *   完成，失败回滚视图；
  * - 点「＋ 新会话」/ 段头【+】面板的项目行 → startNewSession：**真开一条
  *   空对话**（forceNew 跳过历史恢复）。见 sessionStart 的说明；
  * - 「收起侧边栏」只在图标窄栏（IconRail）有一处入口，树头不再重复；
@@ -54,6 +57,15 @@ import {
   focusVisibleRing,
   rowSelectedClass,
 } from "../controls.tsx";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CornerDownRightIcon,
+  PlusIcon,
+  StarFilledIcon,
+  StarOutlineIcon,
+  XIcon,
+} from "../icons.tsx";
 import { basenameOf, formatLastOpened } from "../workspaces/workspaceText.ts";
 import type { SessionSummary } from "../../stores/sessionStore.ts";
 import AddProjectPanel from "./AddProjectPanel.tsx";
@@ -131,7 +143,7 @@ function ProjectNodeRow({
 
   return (
     <div
-      className={`flex items-center gap-1.5 rounded-md px-1.5 py-1.5 transition-colors ${
+      className={`flex items-center gap-1.5 rounded-md px-2 py-2 transition-colors ${
         isSelected ? rowSelectedClass : "hover:bg-raised/60"
       }`}
     >
@@ -147,7 +159,11 @@ function ProjectNodeRow({
         aria-label={isExpanded ? `折叠 ${name}` : `展开 ${name}`}
         className="shrink-0 rounded px-0.5 text-2xs leading-none text-ink-faint transition-colors hover:text-ink"
       >
-        {isExpanded ? "▾" : "▸"}
+        {isExpanded ? (
+          <ChevronDownIcon className="h-3 w-3" />
+        ) : (
+          <ChevronRightIcon className="h-3 w-3" />
+        )}
       </button>
       <FolderIcon />
       {/* 点项目名进总览（title=路径与【+】面板、测试的定位约定一致） */}
@@ -174,7 +190,11 @@ function ProjectNodeRow({
         title={isFavorite ? "取消收藏" : "收藏"}
         aria-label={isFavorite ? `取消收藏 ${name}` : `收藏 ${name}`}
       >
-        {isFavorite ? "★" : "☆"}
+        {isFavorite ? (
+          <StarFilledIcon className="h-3.5 w-3.5" />
+        ) : (
+          <StarOutlineIcon className="h-3.5 w-3.5" />
+        )}
       </button>
       <button
         type="button"
@@ -188,11 +208,30 @@ function ProjectNodeRow({
         title="从列表移除"
         aria-label={`从列表移除 ${name}`}
       >
-        ✕
+        <XIcon className="h-3 w-3" />
       </button>
       {/* 行尾连接状态点：已连接 / 连接中 / 失败（未连接不渲染） */}
       <ConnectionBadge path={path} variant="dot" />
     </div>
+  );
+}
+
+/**
+ * 会话行的「当前」判定（项目树叶子与会话视角行共用）：
+ * 高亮 = 内容区正在显示**这个项目的会话视图**，且该行是当前聚焦或
+ * 正在打开的目标。用 treeView 门控是双焦点修复的关键——离开会话视图
+ * （如切到项目总览）后 activeSessionId 仍在，但会话行必须退光，全树
+ * 只亮「内容区正在显示谁」：总览亮项目行，会话亮会话行，互斥。
+ */
+function useIsSessionActive(path: string, sessionId: string): boolean {
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const openingSessionId = useSessionStore((state) => state.openingSessionId);
+  const treeView = useWorkbenchUiStore((state) => state.treeView);
+  const contextPath = useWorkbenchUiStore((state) => state.contextPath);
+  return (
+    treeView === "session" &&
+    contextPath === path &&
+    (sessionId === activeSessionId || sessionId === openingSessionId)
   );
 }
 
@@ -204,8 +243,7 @@ function SessionNode({
   readonly path: string;
   readonly session: SessionSummary;
 }) {
-  const activeSessionId = useSessionStore((state) => state.activeSessionId);
-  const isActive = session.id === activeSessionId;
+  const isActive = useIsSessionActive(path, session.id);
 
   return (
     <li>
@@ -215,7 +253,7 @@ function SessionNode({
         onClick={() => {
           void openSessionFromEntry(path, session.id);
         }}
-        className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
           isActive ? rowSelectedClass : "hover:bg-raised/60"
         } ${focusVisibleRing}`}
       >
@@ -255,11 +293,9 @@ function ProjectChildren({
           onClick={() => {
             void startNewSession(path);
           }}
-          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-ink-faint transition-colors hover:bg-raised/60 hover:text-ink-soft"
+          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-ink-faint transition-colors hover:bg-raised/60 hover:text-ink-soft"
         >
-          <span aria-hidden={true} className="shrink-0 text-2xs">
-            ＋
-          </span>
+          <PlusIcon className="h-3 w-3 shrink-0" />
           新会话
         </button>
       </li>
@@ -345,12 +381,7 @@ function ProjectsView({ treeView }: { readonly treeView: ContentView }) {
       {/* 段头：▾ 项目 …… ＋（【+】面板锚定在本行下方）；
           无动作的「…」占位已移除——看得见却点不动的控件不算入口 */}
       <div className="relative flex items-center gap-1 px-1.5 pb-1 pt-1.5">
-        <span
-          aria-hidden={true}
-          className="shrink-0 text-2xs leading-none text-ink-faint"
-        >
-          ▾
-        </span>
+        <ChevronDownIcon className="h-3 w-3 shrink-0 text-ink-faint" />
         <span className="text-md font-medium text-ink-soft">项目</span>
         <span aria-hidden={true} className="flex-1" />
         <button
@@ -361,9 +392,9 @@ function ProjectsView({ treeView }: { readonly treeView: ContentView }) {
           aria-expanded={isAddPanelOpen}
           title="新建会话或添加项目"
           onClick={toggleAddPanel}
-          className="shrink-0 rounded px-0.5 text-sm leading-none text-ink-faint transition-colors hover:text-ink"
+          className="shrink-0 rounded p-0.5 text-ink-faint transition-colors hover:text-ink"
         >
-          ＋
+          <PlusIcon className="h-3.5 w-3.5" />
         </button>
         {isAddPanelOpen && (
           <AddProjectPanel onClose={closeAddPanel} triggerRef={addTriggerRef} />
@@ -402,8 +433,7 @@ function RecentSessionRow({
   readonly path: string;
   readonly session: SessionSummary;
 }) {
-  const activeSessionId = useSessionStore((state) => state.activeSessionId);
-  const isActive = session.id === activeSessionId;
+  const isActive = useIsSessionActive(path, session.id);
 
   return (
     <li>
@@ -414,7 +444,7 @@ function RecentSessionRow({
         onClick={() => {
           void openSessionFromEntry(path, session.id);
         }}
-        className={`flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors ${
+        className={`flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left transition-colors ${
           isActive ? rowSelectedClass : "hover:bg-raised/60"
         } ${focusVisibleRing}`}
       >
@@ -422,7 +452,7 @@ function RecentSessionRow({
           {session.title}
         </span>
         <span className="flex items-center gap-1.5 text-2xs text-ink-ghost">
-          <span aria-hidden={true}>└</span>
+          <CornerDownRightIcon className="h-3 w-3 shrink-0" />
           <span className="min-w-0 truncate">{basenameOf(path)}</span>
           {session.updatedAt !== null && (
             <span className="shrink-0 font-mono">

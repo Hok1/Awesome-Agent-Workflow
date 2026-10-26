@@ -5,10 +5,12 @@
  *   （按钮不点名具体 agent：用户的心智是「开始一条会话」，不是「建立
  *   ACP 长连接」）；
  * - 明细默认收起、检查有问题或检查中自动展开、点 chip 可手动开合；
+ * - 进总览不自动重查（首次检查只发生在添加项目那一刻，之后靠手动）；
  * - 健康报告渲染为 通过/失败/警告 与修复指引；
  * - AAW 工作流状态由 AawStatusPanel 单点渲染；项目没有 .sdd/（体检结论为
  *   警告）时收成一行，不占正文；
- * - 已连接时给「进入会话」出口（总览不是死胡同），旁边是「新建会话」。
+ * - 会话入口不在总览（会话挂在树上，总览只管管理 + 发起）：
+ *   唯一主动作是「新建会话」，已连接也一样。
  *
  * 项目名 / 路径 / 「关闭项目」按钮已收编至内容区上下文条（ContextBar），
  * 其行为在 workbench/ContextBar.test.tsx 覆盖。树侧的选中交互见
@@ -31,7 +33,7 @@ import type {
 } from "../../src/aaw/processRunner.ts";
 import type { HealthCheckItem } from "../../src/aaw/healthChecks.ts";
 
-/** 永不完成的 runner：让自动检查挂起，保持注入的现场稳定。
+/** 永不完成的 runner：让手动检查挂起，保持注入的现场稳定。
  * （定义在工厂内部：vi.mock 工厂被提升，不能引用外部顶层变量；
  * 该模块仅导出 createTauriProcessRunner / defaultProcessRunner，
  * 直接整体替换，不需要 importOriginal 保留原实现。） */
@@ -131,7 +133,7 @@ describe("ProjectOverview", () => {
     ).toBeInTheDocument();
   });
 
-  it("未连接时主行动按钮是「新建会话」；连接后换成「进入会话」+「新建会话」两个", () => {
+  it("连接前后唯一主动作都是「新建会话」；总览不放「进入会话」（会话入口在树上）", () => {
     useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
     const { rerender } = render(<ProjectOverview path={DEMO_PATH} />);
     // 未连接：唯一主动作就是新建会话（连接是它的内部步骤，不单独成按钮）
@@ -142,15 +144,16 @@ describe("ProjectOverview", () => {
       screen.queryByRole("button", { name: "进入会话" }),
     ).not.toBeInTheDocument();
 
-    // 已连接：主按钮回到正在跑的会话，旁边留新建
+    // 已连接：同样只有新建会话——会话是工作流那一层的概念，项目级的
+    // 「进入会话」说不清要进哪条，进哪条对话由树上的会话行承担
     useWorkspaceStore.getState().openWorkspace(DEMO_PATH);
     rerender(<ProjectOverview path={DEMO_PATH} />);
     expect(
-      screen.getByRole("button", { name: "进入会话" }),
-    ).toBeInTheDocument();
-    expect(
       screen.getByRole("button", { name: "新建会话" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "进入会话" }),
+    ).not.toBeInTheDocument();
   });
 
   it("界面文案不点名具体 agent（后续要接更多 agent）", () => {
@@ -159,14 +162,21 @@ describe("ProjectOverview", () => {
     expect(screen.queryByText(/连接 chrys/)).not.toBeInTheDocument();
   });
 
-  it("所示项目变化时自动触发健康检查（永不完成的 runner 使摘要保持检查中并展开明细）", () => {
+  it("未检查态安静：无 chip、无解释文案，检查由手动「重新检查」发起", async () => {
     useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
     render(<ProjectOverview path={DEMO_PATH} />);
-    // 状态行：检查中摘要 + 新建会话主行动；检查中自动展开明细
-    expect(screen.getByText("检查中…")).toBeInTheDocument();
+    // 未检查不是需要陈述的结论：不占 chip、不自动展开、不自我解释，
+    // 行上只有「重新检查」这一颗入口
+    expect(screen.queryByText("未检查")).not.toBeInTheDocument();
+    expect(screen.queryByText("检查中…")).not.toBeInTheDocument();
+    expect(screen.queryByText(/尚未执行检查/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "新建会话" }),
     ).toBeInTheDocument();
+
+    // 手动「重新检查」发起：检查中 chip 出现，进度明细展开
+    await userEvent.click(screen.getByRole("button", { name: "重新检查" }));
+    expect(screen.getByText("检查中…")).toBeInTheDocument();
     expect(
       screen.getByText(/正在逐项探测 iCode \/ uv \/ aaw CLI/),
     ).toBeInTheDocument();
@@ -229,13 +239,10 @@ describe("ProjectOverview", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("已连接：「进入会话」与「新建会话」并列；关闭入口仍在上下文条（总览体内无关闭）", () => {
+  it("已连接：唯一动作「新建会话」；关闭入口仍在上下文条（总览体内无关闭）", () => {
     useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
     useWorkspaceStore.getState().openWorkspace(DEMO_PATH);
     render(<ProjectOverview path={DEMO_PATH} />);
-    expect(
-      screen.getByRole("button", { name: "进入会话" }),
-    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "新建会话" }),
     ).toBeInTheDocument();
@@ -245,15 +252,13 @@ describe("ProjectOverview", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("「进入会话」：把内容区落到该项目的会话视图（已连接的项目一步进对话）", async () => {
+  it("总览体不再有任何「进入会话」按钮（进哪条对话由树上的会话行承担）", () => {
     useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
     useWorkspaceStore.getState().openWorkspace(DEMO_PATH);
     render(<ProjectOverview path={DEMO_PATH} />);
-
-    await userEvent.click(screen.getByRole("button", { name: "进入会话" }));
-    const ui = useWorkbenchUiStore.getState();
-    expect(ui.treeView).toBe("session");
-    expect(ui.contextPath).toBe(DEMO_PATH);
+    expect(
+      screen.queryByRole("button", { name: "进入会话" }),
+    ).not.toBeInTheDocument();
   });
 
   it("没有 .sdd/（体检为警告）：工作流面板收成一行，可「仍然查看」手动展开", async () => {

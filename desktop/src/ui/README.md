@@ -12,12 +12,14 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
   选中项与窄栏入口切换）；权限与提问对话框（对应 ACP 的
   `request_permission` 与 `chrys/request_input`）挂在模态层；
 - 项目总览（`workbench/ProjectOverview`）：项目状态行（健康摘要 chip +
-  主行动按钮——未连接「新建会话」，已连接「进入会话」+「新建会话」）
+  唯一主动作「新建会话」，已连接也一样——会话入口在树上，总览只管
+  管理 + 发起）
   - 可折叠的健康检查明细 + 工作流状态（`AawStatusPanel`）；
-- 设置页（`SettingsPage`）：工具路径（chrys / uv / aaw 脚本，全站唯一
-  配置点）与「测试连接」、审批默认模式、界面语言（`core/i18n` 词条，
-  英文预留）、skills 安装源，内嵌 `SkillsInstallerSection` 安装器
-  （清单 / 已安装检测 / 覆盖确认 / 进度）；
+- 设置页（`SettingsPage`，侧边 Tab 形态）：三个粗分片——通用（语言
+  （单选项呈静态值）/ 主题 / 关于）、工具路径（chrys / uv / aaw 脚本 +
+  「测试连接」行尾状态 chip + skills 源目录 + 内嵌 `SkillsInstallerSection`
+  安装器）、会话与审批（审批默认模式分段控件 + 说明行，自动拒绝琥珀
+  警示）；设置行（左标题+说明 / 右控件，发丝线分行）是全页的排版语法；
 - 诊断页（`DiagnosticsPage` = `LogView` + `AcpTrafficView`）：读取
   `stores/logStore`（镜像自 core 环形缓冲）展示日志与 ACP wire 流量；
 - Markdown 渲染：`react-markdown` + `rehype-highlight`
@@ -55,10 +57,12 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
     「进度」分段渲染 AawStatusPanel（注入 onRunCommand，放行给一个按
     人话说的动作），「启动」分段渲染 EntryWizard；由上下文条的 AAW 面板
     开关拉起；
-  - `ProjectOverview.tsx`：项目总览（所示项目变化时自动触发一次异步
-    健康检查；组件层从设置 store 组装工具路径成 pathsOverride，不阻塞
-    UI；健康摘要 chip 可开合明细，有警告 / 失败时自动展开；主行动按钮
-    不点名具体 agent——未连接时就是「新建会话」，已连接时「进入会话」+「新建会话」；项目没有 .sdd/ 时工作流面板收成一行说明）；
+  - `ProjectOverview.tsx`：项目总览（健康检查不随进页自动发起——首次
+    检查发生在添加项目那一刻，之后靠页内手动「重新检查」；组件层从设置
+    store 组装工具路径成 pathsOverride，不阻塞 UI；健康摘要 chip 可开合
+    明细，有警告 / 失败时自动展开；主行动按钮
+    不点名具体 agent——始终是「新建会话」（会话入口在树上，总览不放
+    「进入会话」）；项目没有 .sdd/ 时工作流面板收成一行说明）；
   - `wizardSubmit.ts`：AAW 入口向导首条 prompt 的发送（挂在会话的
     项目上下文上，未连接先连接再发送）；
   - `ColumnResizer.tsx` / `columnWidths.ts`：左栏拖宽与持久化；
@@ -80,16 +84,23 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
 - `PendingInbox.tsx`：待办面板（顶栏「待办」按钮的下拉形态，挂起的
   审批/提问列表与焦点切换）。
 - `session/`：会话视图（中央聊天流）。
-  - `SessionView.tsx`：组合容器（上下文条 + 消息流 + 悬浮输入区），接近
-    底部时自动跟随滚动；
+  - `SessionView.tsx`：组合容器（上下文条 + 消息流 + 悬浮输入区）——
+    消息流**窗口化**（只挂最近 150 条，贴顶按块补载且锚定不顶飞）+
+    **跟随状态机**（贴底自动滚入；上翻解除并浮出「回到底部」带未读
+    计数）；空会话给推荐入口 chips（预填不代发）；时间线 / 消息流 /
+    AAW 面板各挂局部错误边界（单块崩不殃及全局，根级边界兜底整树）；
   - `ChatInput.tsx`：悬浮输入卡（圆角植面 + 投影）：多行输入 Enter 发送 /
-    Shift+Enter 换行，IME 组词不误发；下行模型短格式 + 审批模式徽标，
-    右侧圆形发送 / 停止钮（session/cancel）；
+    Shift+Enter 换行，IME 组词不误发；↑/↓ 翻输入历史（promptHistory）；
+    `@` 弹文件候选面板（Rust `list_workspace_files` 跳过依赖目录、前端
+    30s 缓存），↑/↓ 选择 Enter 插入 `@相对路径`；预填事件总线
+    （composerPrefill）承接「再次发送」与空态推荐入口；下行模型短格式 +
+    审批模式徽标，右侧圆形发送 / 停止钮（session/cancel）；
   - `AssistantMessage.tsx` / `UserMessage.tsx` / `SystemNotice.tsx` /
-    `ThoughtBlock.tsx`：四类条目的视觉区分（Markdown + 复制 / 右侧气泡 /
-    居中弱化提示 / 折叠思考）；
+    `ThoughtBlock.tsx`：四类条目的视觉区分（Markdown + 复制 / 右侧气泡 +
+    hover 操作行「再次发送·复制」/ 居中弱化提示 / 折叠思考）；
   - `ToolCallCard.tsx`：工具调用卡片（折叠一行摘要，展开完整 JSON
-    输入输出，运行中 / 完成 / 失败状态）；
+    输入输出，运行中 / 完成 / 失败状态；运行中展开盯进度的卡完成时
+    自动收起，失败保持展开）；
 - `MarkdownView.tsx` / `CopyButton.tsx`：Markdown + 代码块高亮与复制
   的共用渲染件。
 - `workspaces/`：项目总览的组成件与项目侧组装工具。

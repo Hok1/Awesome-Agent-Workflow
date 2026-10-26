@@ -1,19 +1,18 @@
 /**
  * 上下文条（ContextBar）测试（经 ContentArea 集成渲染，覆盖条与视图
- * 主体的组合）。上下文条是全应用唯一顶栏，行尾固定带全局区
- * （agent 标识 + 待办）：
+ * 主体的组合）。上下文条是全应用唯一顶栏（无全局挂件区——agent 标识
+ * 与待办下拉已退役）：
  * - 会话态：会话标题 + 所属项目名 + 连接徽标（badge 形态，点 + 文字）+
- *   关闭项目图标按钮（真实调 closeWorkspace）；无 AAW 数据时无 SR 快捷；
+ *   关闭会话图标按钮（真实调 closeWorkspace）；无 AAW 数据时无 SR 快捷；
  * - AAW 开关：会话态常驻，有 AAW 状态数据时标签变成「SR-xxx · 步骤 n」；
  *   点开只开合会话内 AAW 面板，不离开对话；
  * - 总览态：返回按钮（有活跃会话回会话视图；无会话回落空态）+ 项目名 +
  *   路径 + 关闭项目（连接中禁闭，未连接不出现）；
  * - 设置 / 诊断全屏页：返回按钮 + 页名；
- * - 空态（未选中项目的总览）只渲染全局区，上下文部分留空（不再是整条
- *   不渲染——顶栏已合并为一层，空态下仍需要待办入口）。
+ * - 空态（未选中项目的总览）上下文部分留空，空态引导占满下方内容区。
  *
  * 异步探测的 defaultProcessRunner 以「永不完成」的 fake 替身注入
- * （点击 SR 快捷会切到总览并触发自动检查），保持现场稳定。
+ * （点击 SR 快捷会切到总览），保持现场稳定。
  */
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -184,13 +183,13 @@ describe("ContextBar 会话态", () => {
     expect(screen.queryByLabelText("AAW 面板")).not.toBeInTheDocument();
   });
 
-  it("关闭项目带确认：先确认再真实触发 closeWorkspace；取消不动作", async () => {
+  it("关闭会话带确认：先确认再真实触发 closeWorkspace；取消不动作", async () => {
     seedSessionView();
     render(<ContentArea />);
-    // 第一步点 ✕：只弹确认，项目不关闭
-    await userEvent.click(screen.getByRole("button", { name: "关闭项目" }));
+    // 第一步点 ✕：只弹确认，会话不断开
+    await userEvent.click(screen.getByRole("button", { name: "关闭会话" }));
     const confirmDialog = screen.getByRole("alertdialog", {
-      name: "关闭项目确认",
+      name: "关闭会话确认",
     });
     expect(useWorkspaceStore.getState().activePath).toBe(PATH);
 
@@ -199,27 +198,26 @@ describe("ContextBar 会话态", () => {
       within(confirmDialog).getByRole("button", { name: "取消" }),
     );
     expect(
-      screen.queryByRole("alertdialog", { name: "关闭项目确认" }),
+      screen.queryByRole("alertdialog", { name: "关闭会话确认" }),
     ).not.toBeInTheDocument();
     expect(useWorkspaceStore.getState().activePath).toBe(PATH);
 
     // 再点 ✕ → 确认关闭：activePath 落空
-    await userEvent.click(screen.getByRole("button", { name: "关闭项目" }));
+    await userEvent.click(screen.getByRole("button", { name: "关闭会话" }));
     await userEvent.click(
       within(
-        screen.getByRole("alertdialog", { name: "关闭项目确认" }),
+        screen.getByRole("alertdialog", { name: "关闭会话确认" }),
       ).getByRole("button", { name: "关闭" }),
     );
     expect(useWorkspaceStore.getState().activePath).toBeNull();
   });
 
-  it("会话态提供「返回总览」按钮：点击切到该项目总览", async () => {
+  it("会话态不设返回按钮：进总览走项目树（顶栏不重复树导航）", () => {
     seedSessionView();
     render(<ContentArea />);
-    await userEvent.click(screen.getByRole("button", { name: "返回总览" }));
-    const ui = useWorkbenchUiStore.getState();
-    expect(ui.treeView).toBe("project-overview");
-    expect(ui.contextPath).toBe(PATH);
+    expect(
+      screen.queryByRole("button", { name: "返回总览" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -283,13 +281,15 @@ describe("ContextBar 总览态", () => {
     const ui = useWorkbenchUiStore.getState();
     expect(ui.contextPath).toBeNull();
     expect(ui.treeView).toBe("project-overview");
-    // 空态：无上下文部分（无标题、无返回按钮），但顶栏本身仍在
-    // （唯一顶栏承载全局区：agent 标识 + 待办），空态引导占满下方内容区
+    // 空态：无上下文部分（无标题、无返回按钮），顶栏也不再有全局挂件
+    // （agent 标识 / 待办已退役），空态引导占满下方内容区
     expect(
       screen.queryByRole("button", { name: "返回" }),
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("上下文条")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "待办" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "待办" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/从左侧选择或新建一个项目目录/),
     ).toBeInTheDocument();
