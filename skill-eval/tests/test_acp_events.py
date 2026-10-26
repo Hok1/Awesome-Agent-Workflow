@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from aaw_skill_eval.services.providers.protocols.acp import AcpSession
+from aaw_skill_eval.adapters.agents.protocols.acp import AcpSession
 
 STATIC_APP_JS = Path(__file__).resolve().parents[1] / "src" / "aaw_skill_eval" / "static" / "app.js"
 
@@ -180,27 +180,3 @@ def _function_body(source: str, name: str) -> str:
     following = re.search(r"\n(?:async )?function \w+", source[start + 1 :])
     end = start + 1 + following.start() if following else len(source)
     return source[start:end]
-
-
-def test_live_bind_detail_actions_binds_artifact_buttons() -> None:
-    source = STATIC_APP_JS.read_text(encoding="utf-8")
-    body = _function_body(source, "bindDetailActions")
-    assert "data-artifact" in body, "bindDetailActions must bind the evidence artifact buttons"
-    assert "openArtifact" in body
-
-
-def test_detail_functions_are_not_shadowed() -> None:
-    """Shadowed duplicates made the dead copy look complete while the live
-    one silently lost bindings — the root cause of the dead evidence buttons."""
-    source = STATIC_APP_JS.read_text(encoding="utf-8")
-    detail_functions = (
-        "renderDetail",
-        "bindDetailActions",
-        "showDetail",
-        "loadRunEvents",
-        "refreshDetail",
-    )
-    for name in detail_functions:
-        pattern = rf"^(?:async )?function {name}\s*\("
-        definitions = re.findall(pattern, source, re.MULTILINE)
-        assert len(definitions) == 1, f"{name} is defined {len(definitions)} times"

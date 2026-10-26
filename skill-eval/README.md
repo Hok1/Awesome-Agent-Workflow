@@ -1,74 +1,54 @@
-# AAW Skill Eval
+# Skill Eval
 
-AAW Skill Eval 是本地 AI Agent Skill Benchmark 平台。新版以固定测试套为入口，
-通过 Chrys 生成可编辑用例草稿、隔离校验，保存后锁定用例与项目地址。
-每次只执行当前 Skill，以指定历史执行作为基准，展示多维度分数、运行趋势、日志和证据。
-生成、执行与评分模型分别配置；Agent 接口支持扩展其他提供方。
+本地 AI Agent Skill Benchmark 平台。测试套固定业务任务、项目提交和共同评分标准；每次执行独立选择 `no_skill` 或某个 Skill 内容版本。可以先运行 no_skill 并设为基线，再运行 AAW 的不同版本，选择历史记录比较。
 
-新版流程、前端构建和目录说明见 [Benchmark 平台说明](docs/benchmark-platform.md)。
-下文旧 A/B 接口说明保留供脚本参考，新界面不提供 Codex 配置。
+- 创建测试套时只输入名称，再进入用例配置。
+- Chrys 分阶段生成任务与评价方式；预览、隔离校验、人工确认后锁定。
+- 一次执行只测试一个候选；快速模式 1 Trial，正式模式 3 Trial。
+- 执行产物与评分记录独立保存；重新评分复用冻结证据，不重新运行 Agent。
+- 基线固定到具体评分记录；新评分不会悄悄改变旧基线。
+- AAW 流程合规独立展示，不进入共同质量分或共同门禁。
 
-创建测试时，“软件开发”和“文档与分析设计”两组固定维度同时可选。
-维度名称、代码／LLM／混合评价方式、核心检查点、检查权重和评分档位由系统统一规定，
-不能自定义。软件开发增加“架构约束符合性”，通过代码检查依赖方向、模块边界和循环依赖。
-每个维度分别导入目录／ZIP 用例包；用户可配置任务、项目约束、参考材料、验证脚本、
-用例与维度权重及硬门禁。相同场景可由多个维度共用一次 Agent 执行。
-页面提供每个固定维度的用例模板，保存时固化标准版本和全部文件快照。
-AAW 场景声明 `sr/ar/dev` 入口；流程结束后联合评价保留的文档、代码和验证记录。
-流程未完成、门禁不通过或任务验证记录缺失时不能显示正常完成；不保存阶段快照。
-详见 [用例包格式与评分规则](docs/test-packages.md)。已有自由维度和旧版套件标记为旧版，
-继续使用原定义运行；新建 API 只接受固定标准套件。
-
-## 启动
+## 运行
 
 ```powershell
 cd skill-eval
 python -m pip install -e ".[test]"
-aaw-skill-eval
+python -m aaw_skill_eval.cli
 ```
 
-浏览器访问 `http://127.0.0.1:18110`。服务默认只监听本机。
+访问 <http://127.0.0.1:18110/>。使用已构建的 React 页面；前端修改后运行：
 
-数据保存在 `skill-eval/.skill-eval-data/`。可通过环境变量
-`AAW_SKILL_EVAL_DATA_DIR` 指向其他目录。
+```powershell
+cd skill-eval/frontend
+npm ci
+npm run build
+```
 
-## Runner 与 Judge
+开发模式可使用 `npm run dev`，API 代理至 18110。默认数据目录为启动目录下 `.skill-eval-data/`，可用 `AAW_SKILL_EVAL_DATA_DIR` 指定。模型及凭证来自本机 Chrys；Designer、Runner 和 Judge 的模型分别配置。
 
-- Codex 与 Chrys 都可独立担任 Runner 或 Judge；仅安装其中一个也可以运行；
-- 声明 `workflow` 的 AAW 场景当前要求 Codex Runner，开启真实独立 Reviewer 能力。
-  Chrys Runner 未提供 subagent，启动前明确拒绝这类场景；普通场景与 Chrys Judge 不受影响。
-- Chrys 模型从 `chrys models --json` 自动加载，实验创建时会固化模型、Runtime 版本、
-  Agent 配置哈希、隔离和评分配置；排队后配置发生变化会让实验明确失败；
-- Chrys 会维护 `%APPDATA%\chrys\agents\AAW-Eval-Runner.yaml` 与
-  `AAW-Eval-Judge.yaml`，不会修改用户的 Code 或 QA Agent；
-- Chrys Runner 继承当前有效 Code Agent 的指令和脚本扩展，但关闭子 Agent、外部 MCP
-  与 `ask_user`；Judge 不配置工具、Skill 或工作区访问；
-- 仪表盘按 `Skill × 项目 × 完整 Profile` 展示最近得分，不混合不同 Runner、Judge、
-  模型、版本或隔离配置的结果；历史 Codex 实验按 legacy Profile 继续展示。
+## 数据与升级
 
-## 当前范围
+Runner 每轮 Agent 对话的硬超时默认 180 分钟，通过
+`AAW_SKILL_EVAL_RUNNER_TURN_TIMEOUT_SECONDS=10800` 配置（修改后重启服务）。
+此预算独立于执行配置中的无活动超时（默认 30 分钟），自动确认后的后续轮次同样适用；
+不改变 Judge 的评分预算，也不会自动恢复已超时的执行。
 
-- 正式实验每组 3 次，快速检查每组 1 次；
-- 项目必须是干净的 Git 工作区；
-- Skill 以完整目录快照和 SHA-256 内容哈希标识；
-- 执行 Agent 看不到预期效果、Rubric、隐藏验证器或其他组结果；
-- 自动分、hard gate 与人工复核彼此独立保存；
-- 可选执行时间计分：用例配置 `time_scoring`（`target_seconds` / `limit_seconds` / `weight`）后，
-  run 总耗时线性折算为「执行效率」分量计入质量分（≤target 满分、≥limit 零分，超时未完成 0 分）；
-  未配置不计分，历史实验不受影响；
-- 实验详情提供固定的实时日志控制台：可查看实验准备与每个 run/重试的阶段、Runner、验证器和 Judge 输出，并支持通道筛选、暂停、搜索、复制和原始日志下载；
-- 工作区现场默认保留在盘上，由用户在页面手动清理（run 卡与实验标题栏均有入口，显示占用大小）；
-  取消/中断的实验现场随收尾自动删除，服务启动时清理数据库无记录的孤儿目录；
-  清理只删除 workspaces/ 目录，实验记录、评分与证据包（artifacts/）永不因此删除；
-- 仅基础设施错误允许由调用方重新排队，Agent 失败不会被静默丢弃。
+新版使用 `skill-eval-v2.db` 和 `v2/artifacts`、`v2/workspaces`。首次启动只从旧 `skill-eval.db` 导入测试套/草稿定义，不导入执行历史。导入内容均为待确认草稿，需检查业务目标与 Skill 专属要求、重新校验并锁定。旧数据库与证据保留在原位置，不再作为新界面的运行数据。
 
-## 安全边界
+## 模块与验证
 
-Codex 默认使用 `workspace-write` 沙箱、`approval_policy=never`、禁用网络、Web Search、
-Apps、远程插件、自动安装 Skill 依赖和多 Agent。测试定义中的 setup、preflight 与
-command grader 是用户明确配置的本地可信命令，运行前会在页面展示。
-AAW 工作流场景仅对带 Skill 的 Runner 开启多 Agent，以满足 task-dev 的两名只读 Reviewer。
+- [产品流程、API 与迁移说明](docs/benchmark-platform.md)
+- [模块架构与扩展方式](docs/modular-architecture.md)
+- [用例包格式](docs/test-packages.md)
 
-Chrys 使用一次性 Git 工作区和受管 Agent Profile 做软隔离，但 Chrys Runtime 当前
-不提供与 Codex 等价的强制网络沙箱，因此页面会明确标记 `soft / uncontrolled`。
-不要把不可信项目或需要严格断网的任务交给 Chrys Runner。
+```powershell
+cd skill-eval
+.venv/Scripts/python.exe -m pytest tests -q
+.venv/Scripts/python.exe -m ruff check src
+cd frontend
+npm test
+npm run build
+```
+
+目前内置 Chrys 适配器，旧 Codex 实现和静态页面已下线。Chrys 使用临时 Git 工作区和独立配置目录，关闭自动加载用户/项目 Skill；仅在选择 Skill 时安装指定内容快照。这是软隔离，网络权限取决于运行时。项目准备与代码检查使用用户确认的本地可信命令。

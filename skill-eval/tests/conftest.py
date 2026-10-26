@@ -8,10 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aaw_skill_eval.config import Settings
-from aaw_skill_eval.main import create_app
-from aaw_skill_eval.schemas import SuiteCreateRequest
-from aaw_skill_eval.services.catalog.suites import create_suite
-from aaw_skill_eval.services.providers.base import JudgeOutcome, JudgeScore, RunOutcome
+from aaw_skill_eval.app.main import create_app
+from aaw_skill_eval.contracts.schemas import SuiteCreateRequest
+from aaw_skill_eval.modules.suites.service import create_suite
+from aaw_skill_eval.contracts.agents import JudgeOutcome, JudgeScore, RunOutcome
 
 
 def seed_legacy_suite(client: TestClient, payload: dict) -> dict:
@@ -139,14 +139,24 @@ class FakeJudge:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
+def client(tmp_path: Path, monkeypatch) -> Iterator[TestClient]:
     settings = Settings(
         data_dir=tmp_path / "data",
-        codex_command="codex",
         chrys_command="missing-chrys-for-tests",
         chrys_home=tmp_path / "chrys",
         max_skill_bytes=1024 * 1024,
     )
+    from aaw_skill_eval.adapters.agents.chrys.runtime import ChrysRuntime
+    from aaw_skill_eval.contracts.schemas import ProviderSnapshot
+
+    monkeypatch.setattr(
+        ChrysRuntime,
+        "snapshot",
+        lambda self, model, **kw: ProviderSnapshot(provider="chrys", model_profile_id=model),
+    )
+    monkeypatch.setattr(ChrysRuntime, "verify_snapshot", lambda *a, **kw: None)
+    monkeypatch.setattr(ChrysRuntime, "prepare_execution", lambda *a: None)
+    monkeypatch.setattr(ChrysRuntime, "prepare_trial", lambda *a: None)
     app = create_app(settings)
     app.state.orchestrator.runner = FakeRunner()
     app.state.orchestrator.judge = FakeJudge()

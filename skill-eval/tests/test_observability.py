@@ -4,8 +4,12 @@ import sys
 import threading
 from pathlib import Path
 
-from aaw_skill_eval.services.observability.logs import LogWriter, display_record, read_log_index
-from aaw_skill_eval.services.providers.protocols.jsonl import execute_streaming
+from aaw_skill_eval.infrastructure.observability.logs import (
+    LogWriter,
+    display_record,
+    read_log_index,
+)
+from aaw_skill_eval.adapters.agents.protocols.jsonl import execute_streaming
 
 
 def test_streaming_records_invocation_and_output_before_newline(tmp_path: Path) -> None:

@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 
 from aaw_skill_eval.errors import EvalError
-from aaw_skill_eval.services.catalog.skills import (
+from aaw_skill_eval.modules.executions.skills import (
     inspect_skill,
     install_snapshot,
     prepare_eval_workspace,
 )
-from aaw_skill_eval.services.workspace.repository import (
+from aaw_skill_eval.infrastructure.workspace.repository import (
     capture_changes,
     clone_at_commit,
     file_tree_manifest,
@@ -59,7 +59,7 @@ def test_injected_eval_skill_is_excluded_from_candidate_evidence(
     workspace = tmp_path / "workspace"
     clone_at_commit(inspect_clean_project(project), workspace)
     prepare_eval_workspace(workspace)
-    install_snapshot(skill, workspace, "example-skill", provider="codex")
+    install_snapshot(skill, workspace, "example-skill", provider="chrys")
     changes = capture_changes(workspace)
     paths = [item["path"] for item in file_tree_manifest(workspace)]
     assert changes["changed_files"] == []
