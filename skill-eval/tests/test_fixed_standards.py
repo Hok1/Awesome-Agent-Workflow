@@ -11,12 +11,12 @@ import pytest
 from conftest import seed_legacy_suite
 from test_test_packages import suite_request, wait_experiment
 
-from aaw_skill_eval.services.catalog.packages import (
+from aaw_skill_eval.modules.suites.packages import (
     PackageImportRequest,
     import_package,
     standard_example_package,
 )
-from aaw_skill_eval.services.evaluation.graders import parse_check_results
+from aaw_skill_eval.modules.evaluations.graders import parse_check_results
 from aaw_skill_eval.standards import CATALOG, catalog_payload
 
 
@@ -105,7 +105,7 @@ def test_creation_api_rejects_custom_standard_or_bypass(client, project, skill, 
             grader["dimension_id"] = None
     response = client.post("/api/v1/suites", json=request)
     assert response.status_code in {400, 422}, response.text
-    assert client.get("/api/v1/suites").json()["items"] == []
+    assert client.get("/api/v1/benchmark/suites").json()["items"] == []
 
 
 def test_import_requires_matching_type_dimension_and_version(client):
@@ -205,7 +205,7 @@ def test_old_free_dimensions_are_marked_legacy_and_unchanged(client, project, sk
     assert suite["standard_status"] == "legacy"
     assert suite["definition"]["schema_version"] == 2
     assert suite["definition"]["dimensions"][0]["name"] == "Historical custom name"
-    assert client.get("/api/v1/suites").json()["items"][0]["standard_status"] == "legacy"
+    assert client.get("/api/v1/benchmark/suites").json()["items"][0]["standard_status"] == "legacy"
 
 
 def test_catalog_payload_is_a_copy():
@@ -271,5 +271,7 @@ def test_llm_outside_fixed_score_levels_marks_result_invalid(client, project, sk
     assert all(run["status"] == "grader_invalid" for run in item["runs"])
     assert all("fixed rubric levels" in run["error_message"] for run in item["runs"])
     assert item["scores"]["current"] is None
-    score_file = client.get(f"/api/v1/runs/{item['runs'][0]['id']}/artifacts/scores.json")
+    score_file = client.get(
+        f"/api/v1/benchmark/assessments/{item['assessment_id']}/runs/{item['runs'][0]['id']}/artifacts/scores.json"
+    )
     assert json.loads(score_file.text)["invalid"]

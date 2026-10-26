@@ -92,11 +92,11 @@ cd skill-eval
 python scripts/build_workflow_adapter.py --repository .. --output eval-skills/aaw-workflow-eval-candidate
 ```
 
-在新建测试的 Skill 路径填写输出目录。构建器打包当前检出的节点与辅助 Skill、生成依赖文件哈希，不联网更新，不覆盖已有候选目录。项目运行环境须预先有 Python、typer、pyyaml；应用环境已声明这些依赖，项目依赖仍通过 Setup 准备。
+在执行时的 Skill 路径填写输出目录。构建器打包当前检出的节点与辅助 Skill、生成依赖文件哈希，不联网更新，不覆盖已有候选目录。项目运行环境须预先有 Python、typer、pyyaml；应用环境已声明这些依赖，项目依赖仍通过 Setup 准备。
 
-当前全流程执行要求 Codex Runner，独立 Reviewer 由真实 subagent 完成；Chrys Runner 缺少对应工具会在启动前报错。question-tracker MCP 的缺失必须遵守原 Skill 的失败降级协议并记录；不能伪造调用。
+当前全流程使用 Chrys Runner，两名 Reviewer 使用独立只读上下文，模型跟随 Runner；缺少评审工具时启动前报错。question-tracker MCP 的缺失必须遵守原 Skill 的失败降级协议并记录；不能伪造调用。
 
-带 Skill 的候选和基准组检查 `.sdd/<SR>/workflow.yaml` 的入口、`status=done`、非空且全部 finished 的步骤、没有待确认、所登记的必需交付件、设计门禁及 task-dev 的实现、Review、重验、CodeCheck、交接记录。未完成标为 Agent 失败，保留分数和缺项证据，不参与有效 Trial 均值。无 Skill 对照组评价相同任务产出，不要求其生成 AAW 专有状态。
+选用 AAW 候选时，独立合规检查读取 `.sdd/<SR>/workflow.yaml` 的入口、步骤、待确认状态、交付件、设计门禁及 task-dev 报告。合规缺项单独呈现，不改变共同质量分、共同门禁或 Agent 实际退出状态。no_skill 与其他 Skill 评价相同业务产出，不加载 AAW 专属提示和合规要求；用例的 input、expected 及共同验证脚本也不应要求 AAW 内部状态。
 
 收集 Git 变更、声明的 `output_paths`、最终 `.sdd` 文档及验证记录，即使文件被 Git 忽略也保留。`terminal-evidence.json` 保存文本视图和清单；`terminal-outputs.zip` 保存文件。Judge 的文本视图最多 240000 字符、单文件读取最多 30000 字节；归档单文件上限 5 MB、总量 50 MB，超限在清单中标为未归档。原始工作区仍保留。只采集执行结束时的内容，不增加阶段版本快照。
 

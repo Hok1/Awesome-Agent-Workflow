@@ -11,23 +11,21 @@ from pathlib import Path
 import pytest
 import yaml
 from pydantic import ValidationError
-from test_detail_page_structure import _run_scenario
 from test_test_packages import wait_experiment
 
 from aaw_skill_eval.config import Settings
-from aaw_skill_eval.schemas import CaseSpec, EvalProfile, WorkflowSpec
-from aaw_skill_eval.services.catalog.packages import (
+from aaw_skill_eval.contracts.schemas import CaseSpec, EvalProfile, WorkflowSpec
+from aaw_skill_eval.modules.suites.packages import (
     PackageImportRequest,
     import_package,
     standard_example_package,
 )
-from aaw_skill_eval.services.catalog.workflow_adapter import build_workflow_adapter
-from aaw_skill_eval.services.evaluation.workflow import (
+from aaw_skill_eval.adapters.workflows.aaw.packages import build_workflow_adapter
+from aaw_skill_eval.adapters.workflows.aaw.evidence import (
     collect_terminal_outputs,
     inspect_workflow,
     runner_case,
 )
-from aaw_skill_eval.services.providers.codex.runner import CodexRunner, _isolated_environment
 from aaw_skill_eval.standards import get_dimension
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,35 +63,6 @@ def joint_request(project, skill):
         "dimensions": [get_dimension("workflow", dim) for dim in ("correctness", "completeness")],
         "cases": [code],
     }
-
-
-def test_joint_suite_saves_both_groups_and_shared_workflow(client, project, skill):
-    response = client.post("/api/v1/suites", json=joint_request(project, skill))
-    assert response.status_code == 201, response.text
-    definition = client.get(f"/api/v1/suites/{response.json()['id']}").json()["definition"]
-    assert response.json()["has_workflow"] is True
-    assert {d["group"] for d in definition["dimensions"]} == {"development", "documents_analysis"}
-    assert len(definition["cases"]) == 1
-    assert definition["cases"][0]["workflow"]["entry"] == "dev"
-
-
-def test_frontend_merges_document_and_code_checks_in_one_execution(tmp_path):
-    dimensions = [get_dimension("workflow", d) for d in ("correctness", "completeness")]
-    result = _run_scenario(
-        tmp_path,
-        f"""
-state.skillType = 'workflow'; state.catalogVersion = 1;
-state.dimensions = {json.dumps(dimensions)};
-const packages = {json.dumps([package("correctness"), package("completeness")])};
-state.dimensions.forEach((d,i) => {{
-  d.cases=packages[i]; d.editor=JSON.stringify(editableCases(d.cases));
-}});
-const suite = buildDimensionSuite();
-console.log(JSON.stringify({{count:suite.cases.length, checks:suite.cases[0].graders.length,
-    entry:suite.cases[0].workflow.entry, scope:suite.skill_type}}));
-""",
-    )
-    assert result == {"count": 1, "checks": 3, "entry": "dev", "scope": "workflow"}
 
 
 @pytest.mark.parametrize("entry", ["sr", "ar", "dev"])
@@ -195,60 +164,6 @@ def test_ignored_terminal_documents_are_archived_and_visible_to_judge(tmp_path):
         assert ".sdd/SR-TEST/workflow.yaml" in archive.namelist()
 
 
-def test_repeated_workflow_confirmations_resume_codex_and_enable_reviewers(tmp_path, monkeypatch):
-    case = runner_case(CaseSpec.model_validate(package("correctness")[0]), with_skill=True)
-    runner = CodexRunner(Settings(data_dir=tmp_path / "data"))
-    calls = []
-
-    def execute(arguments, **kwargs):
-        calls.append(arguments)
-        message = Path(arguments[arguments.index("--output-last-message") + 1])
-        message.write_text("AWAITING_EVAL_CONFIRM" if len(calls) < 3 else "Done", encoding="utf-8")
-        return 0, '{"type":"thread.started","thread_id":"test"}', "", 1, False, False, {}
-
-    monkeypatch.setattr(runner, "_execute", execute)
-    outcome = runner.run(
-        workspace=tmp_path,
-        artifact_dir=tmp_path / "artifacts",
-        case=case,
-        profile=EvalProfile(runner_model="fake", judge_model="fake"),
-        skill_name="aaw-workflow-eval",
-    )
-    assert outcome.turns == 3
-    assert all("features.multi_agent=true" in command for command in calls)
-    assert "--ephemeral" not in calls[0]
-    env = _isolated_environment(tmp_path / "state")
-    assert env["AAW_UPDATE_CHECK"] == "off"
-    assert env["AAW_TELEMETRY_ENABLED"] == "false"
-    assert not runner_case(
-        CaseSpec.model_validate(package("correctness")[0]), with_skill=False
-    ).followups
-
-
-def test_runner_exit_zero_does_not_mark_unfinished_workflow_completed(client, project, skill):
-    request = joint_request(project, skill)
-    request["dimensions"] = request["dimensions"][:1]
-    request["cases"][0]["graders"] = request["cases"][0]["graders"][:1]
-    saved = client.post("/api/v1/suites", json=request).json()
-    launched = client.post(
-        "/api/v1/experiments",
-        json={
-            "suite_id": saved["id"],
-            "mode": "quick",
-            "profile": {"runner_model": "fake", "judge_model": "fake"},
-        },
-    )
-    assert launched.status_code == 202, launched.text
-    detail = wait_experiment(client, launched.json()["id"])
-    current = next(run for run in detail["runs"] if run["group"] == "current")
-    control = next(run for run in detail["runs"] if run["group"] == "no_skill")
-    assert current["status"] == "agent_error"
-    assert current["error_kind"] == "workflow_incomplete"
-    assert current["scores"]["workflow_completion"]["passed"] is False
-    assert current["scores"]["hard_gates_total"] == 1
-    assert control["status"] == "completed"
-
-
 def test_workflow_rejects_seeded_completed_state():
     case = package("correctness")[0]
     case["files"].append(
@@ -259,22 +174,3 @@ def test_workflow_rejects_seeded_completed_state():
     )
     with pytest.raises(ValidationError, match="预置"):
         CaseSpec.model_validate(case)
-
-
-def test_chrys_workflow_allowed_before_execution(client, project, skill, monkeypatch):
-    """用户决策（2026-10-10）：workflow 套件允许 Chrys Runner（Reviewer 检查降级为备注）。"""
-    from aaw_skill_eval.services.orchestration import prepare as prepare_module
-
-    monkeypatch.setattr(prepare_module, "enrich_profile", lambda settings, profile, **kw: profile)
-    monkeypatch.setattr(prepare_module, "verify_profile", lambda settings, profile, **kw: None)
-    saved = client.post("/api/v1/suites", json=joint_request(project, skill)).json()
-    response = client.post(
-        "/api/v1/experiments",
-        json={
-            "suite_id": saved["id"],
-            "mode": "quick",
-            "profile": {"runner_provider": "chrys", "runner_model": "fake", "judge_model": "fake"},
-        },
-    )
-    assert response.status_code == 202
-    assert "WORKFLOW_RUNNER_UNSUPPORTED" not in response.text

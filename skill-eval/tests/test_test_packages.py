@@ -11,20 +11,25 @@ import pytest
 from pydantic import ValidationError
 
 from aaw_skill_eval.errors import EvalError
-from aaw_skill_eval.schemas import CaseSpec, DimensionSpec, PackageFile, SuiteCreateRequest
-from aaw_skill_eval.services.catalog.packages import (
+from aaw_skill_eval.contracts.schemas import (
+    CaseSpec,
+    DimensionSpec,
+    PackageFile,
+    SuiteCreateRequest,
+)
+from aaw_skill_eval.modules.suites.packages import (
     PackageImportRequest,
     example_package,
     import_package,
     standard_example_package,
 )
-from aaw_skill_eval.services.evaluation.dimensions import dimension_summary, dimension_total
-from aaw_skill_eval.services.evaluation.graders import (
+from aaw_skill_eval.modules.results.dimensions import dimension_summary, dimension_total
+from aaw_skill_eval.modules.evaluations.graders import (
     ScoreComponent,
     merge_scores,
     parse_check_results,
 )
-from aaw_skill_eval.services.providers.base import JudgeOutcome
+from aaw_skill_eval.contracts.agents import JudgeOutcome
 from aaw_skill_eval.standards import get_dimension
 
 
@@ -345,9 +350,9 @@ def test_imported_hybrid_suite_executes_once_per_shared_scene_and_hides_judge_ma
     assert response.status_code == 202, response.text
     item = wait_experiment(client, response.json()["id"])
     assert item["status"] == "completed", item
-    assert len(seen) == 2
-    assert item["scores"]["current"] == 100
-    assert item["scores"]["no_skill"] == 80
+    assert len(seen) == 1
+    assert item["scores"]["current"] == 80
+    assert item["scores"]["no_skill"] is None
     assert item["dimension_scores"]["current"][0]["incomplete"] is False
     for run in item["runs"]:
         assert len(run["scores"]["components"][0]["checks"]) == 1

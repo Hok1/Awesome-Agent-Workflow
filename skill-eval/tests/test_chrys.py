@@ -5,18 +5,20 @@ from pathlib import Path
 import yaml
 
 from aaw_skill_eval.config import Settings
-from aaw_skill_eval.schemas import EvalProfile, GraderSpec
-from aaw_skill_eval.services.providers.base import judge_scores
-from aaw_skill_eval.services.providers.chrys.runner import chrys_error_text
-from aaw_skill_eval.services.providers.chrys.runtime import (
+from aaw_skill_eval.contracts.schemas import EvalProfile, GraderSpec
+from aaw_skill_eval.contracts.agents import judge_scores
+from aaw_skill_eval.adapters.agents.chrys.runner import chrys_error_text
+from aaw_skill_eval.adapters.agents.chrys.runtime import (
     JUDGE_PROFILE_NAME,
+    REVIEWER_NAMES,
+    REVIEWER_TOOLS,
     RUNNER_PROFILE_NAME,
     ChrysRuntime,
     prepare_isolated_home,
 )
 
 
-def test_legacy_eval_profile_defaults_to_codex():
+def test_eval_profile_defaults_to_chrys():
     profile = EvalProfile.model_validate(
         {
             "name": "legacy",
@@ -24,8 +26,8 @@ def test_legacy_eval_profile_defaults_to_codex():
             "judge_model": "legacy-model",
         }
     )
-    assert profile.runner_provider == "codex"
-    assert profile.judge_provider == "codex"
+    assert profile.runner_provider == "chrys"
+    assert profile.judge_provider == "chrys"
 
 
 def test_managed_chrys_profiles_keep_code_instructions_but_isolate_tools(tmp_path: Path):
@@ -55,15 +57,25 @@ def test_managed_chrys_profiles_keep_code_instructions_but_isolate_tools(tmp_pat
     hashes = runtime.ensure_profiles()
     runner = yaml.safe_load((agents / "AAW-Eval-Runner.yaml").read_text(encoding="utf-8"))
     judge = yaml.safe_load((agents / "AAW-Eval-Judge.yaml").read_text(encoding="utf-8"))
-    assert set(hashes) == {RUNNER_PROFILE_NAME, JUDGE_PROFILE_NAME}
-    assert runner["instructions"] == "Effective Code instructions"
+    assert set(hashes) == {RUNNER_PROFILE_NAME, JUDGE_PROFILE_NAME, *REVIEWER_NAMES}
+    assert runner["instructions"].startswith("Effective Code instructions")
     assert runner["skills"]["paths"] == [".aaw-eval/skills"]
     assert runner["skills"]["auto_load_user_agents_skills"] is False
+    assert runner["skills"]["auto_load_cwd_agents_skills"] is False
     assert "ask_user" not in runner["tools"]["builtins"]
-    assert "sub_agents" not in runner
+    assert [item["tool_name"] for item in runner["sub_agents"]["agents"]] == list(REVIEWER_TOOLS)
+    assert [item["profile"] for item in runner["sub_agents"]["agents"]] == list(REVIEWER_NAMES)
+    assert "General" not in str(runner["sub_agents"])
+    for filename in ("AAW-Eval-Reviewer-A.yaml", "AAW-Eval-Reviewer-B.yaml"):
+        reviewer = yaml.safe_load((agents / filename).read_text(encoding="utf-8"))
+        assert set(reviewer["tools"]["builtins"]) == {"filesystem.read", "search"}
+        assert not reviewer.get("model")  # Chrys inherits the parent's pinned model.
+        assert not reviewer.get("sub_agents")
+        assert reviewer["skills"]["auto_load_cwd_agents_skills"] is False
     assert judge["tools"]["builtins"] == []
     assert judge["skills"]["paths"] == []
     assert judge["skills"]["auto_load_user_agents_skills"] is False
+    assert judge["skills"]["auto_load_cwd_agents_skills"] is False
 
 
 def test_prepare_isolated_home_excludes_user_global_skills(tmp_path: Path):
@@ -85,7 +97,9 @@ def test_prepare_isolated_home_excludes_user_global_skills(tmp_path: Path):
     root = prepare_isolated_home(settings)
     isolated = root / "chrys"
     agents = sorted(path.name for path in (isolated / "agents").glob("*.yaml"))
-    assert agents == [f"{JUDGE_PROFILE_NAME}.yaml", f"{RUNNER_PROFILE_NAME}.yaml"]
+    assert agents == sorted(
+        f"{name}.yaml" for name in (JUDGE_PROFILE_NAME, RUNNER_PROFILE_NAME, *REVIEWER_NAMES)
+    )
     assert (isolated / "models" / "4c3f3678ed0e.yaml").is_file()
     assert (isolated / "settings.yaml").is_file()
     assert not (isolated / "skills").exists()
@@ -124,3 +138,19 @@ def test_chrys_judge_accepts_json_code_fence_and_validates_ids():
 def test_chrys_error_message_is_unwrapped_from_cli_json():
     raw = '{"error":"Response hit the output token limit while reasoning","code":"executor_error"}'
     assert chrys_error_text(raw) == "Response hit the output token limit while reasoning"
+
+
+def test_runner_snapshot_includes_reviewer_profiles(tmp_path, monkeypatch):
+    runtime = ChrysRuntime(Settings(data_dir=tmp_path / "data", chrys_home=tmp_path / "chrys"))
+    monkeypatch.setattr(runtime, "models", lambda: [{"id": "fixture", "name": "fixture"}])
+    hashes = runtime.ensure_profiles()
+    first = runtime._model_snapshot(
+        "fixture", role="runner", version="fixture", profile_hashes=hashes
+    )
+    hashes[REVIEWER_NAMES[0]] = "changed-reviewer"
+    changed = runtime._model_snapshot(
+        "fixture", role="runner", version="fixture", profile_hashes=hashes
+    )
+    assert first.agent_profile_hash != changed.agent_profile_hash
+    assert first.config_hash == changed.config_hash
+    assert first.metadata["reviewer_model_policy"] == "inherit_runner"
