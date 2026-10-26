@@ -50,6 +50,18 @@ const PHASE_VIEWS: Readonly<
     label: "待办",
     chip: "border-line-strong bg-surface text-ink-faint",
   },
+  failed: {
+    label: "失败",
+    chip: "border-danger-line bg-danger-bg/40 text-danger-ink",
+  },
+  blocked: {
+    label: "受阻",
+    chip: "border-warn-line bg-warn-bg/40 text-warn-ink",
+  },
+  superseded: {
+    label: "已作废",
+    chip: "border-line-strong bg-base text-ink-ghost",
+  },
 };
 
 /** 可展开的「执行详情」：agent 侧命令的原文，默认收起。 */
@@ -172,7 +184,7 @@ function AawStatusPanel({ onRunCommand }: AawStatusPanelProps = {}) {
     >
       <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-medium text-ink">工作流状态</h3>
+          <h3 className="text-title font-medium text-ink">工作流状态</h3>
           <p className="mt-0.5 text-xs text-ink-faint">
             只读进度；推进与放行回到会话里执行。
           </p>

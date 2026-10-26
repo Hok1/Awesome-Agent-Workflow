@@ -16,9 +16,11 @@ import type { AawStatusLoader } from "../aaw/statusLoader.ts";
 import {
   parseCliError,
   parseNextPayload,
+  parsePlanPayload,
   parseSrList,
   parseWorkflowStatus,
   type AawNextPayload,
+  type AawPlanPayload,
   type AawSrList,
   type AawWorkflowStatus,
 } from "../aaw/workflowModel.ts";
@@ -40,6 +42,8 @@ interface AawStatusStoreState {
   status: AawWorkflowStatus | null;
   /** 当前 SR 的 next（--peek）解析结果。 */
   next: AawNextPayload | null;
+  /** `aaw plan`：工作流模板完整链路（时间线画全图的数据源）。 */
+  plan: AawPlanPayload | null;
   isLoading: boolean;
   /** 最近一次刷新的错误（loader 异常或输出无法解析）；成功时清空。 */
   lastError: string | null;
@@ -88,12 +92,22 @@ function describeUnparsable(source: string, raw: unknown): string {
 export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
   /** 解析结果 → store（refresh 的唯一写入口）。 */
   function applySrList(parsed: AawSrList): void {
-    const { currentSr } = get();
-    // 当前 SR 不在列表中（或尚未选择）时回落到首个 SR
-    const next =
-      currentSr !== null && parsed.srs.includes(currentSr)
-        ? currentSr
-        : (parsed.srs[0] ?? null);
+    const { currentSr, srs: previous } = get();
+    // 新出现的 SR 优先：会话中刚创建的 SR 就是「正在运行的需求」——陈旧
+    // 的首个 SR（如早期演示数据）不应一直占着时间线。初次加载（旧列表为
+    // 空）不算「新出现」，仍取首个，否则全部 SR 都会被当成新 SR
+    const created =
+      previous.length > 0
+        ? parsed.srs.filter((sr) => !previous.includes(sr))
+        : [];
+    let next: string | null;
+    if (created.length > 0) {
+      next = created[created.length - 1] ?? null;
+    } else if (currentSr !== null && parsed.srs.includes(currentSr)) {
+      next = currentSr;
+    } else {
+      next = parsed.srs[0] ?? null;
+    }
     set({
       srs: parsed.srs,
       ...(next === currentSr ? {} : { currentSr: next }),
@@ -109,12 +123,17 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
     set({ next: parsed });
   }
 
+  function applyPlan(parsed: AawPlanPayload): void {
+    set({ plan: parsed });
+  }
+
   return {
     loader: null,
     srs: [],
     currentSr: null,
     status: null,
     next: null,
+    plan: null,
     isLoading: false,
     lastError: null,
     lastRefreshedAt: null,
@@ -159,10 +178,12 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
         }
         const sr = get().currentSr;
         if (sr !== null) {
-          const [statusResult, nextResult] = await Promise.allSettled([
-            loader.readStatus(sr),
-            loader.readNext(sr),
-          ]);
+          const [statusResult, nextResult, planResult] =
+            await Promise.allSettled([
+              loader.readStatus(sr),
+              loader.readNext(sr),
+              loader.readPlan(sr),
+            ]);
           if (statusResult.status === "fulfilled") {
             const parsed = parseWorkflowStatus(statusResult.value);
             if (parsed === null) {
@@ -190,6 +211,20 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
             errors.push(
               `next --sr ${sr} 读取失败：${errorMessage(nextResult.reason)}`,
             );
+          }
+          // plan 是完整图的增强来源：失败**静默降级**（老 CLI 没有该命令
+          // 不是错误，按仅 status 的旧口径呈现，不进 lastError）
+          if (planResult.status === "fulfilled") {
+            const parsed = parsePlanPayload(planResult.value);
+            if (parsed !== null) {
+              applyPlan(parsed);
+            } else {
+              logger.debug(`plan --sr ${sr} 输出不可解析，按旧口径呈现`);
+            }
+          } else {
+            logger.debug(`plan --sr ${sr} 读取失败，按旧口径呈现`, {
+              reason: errorMessage(planResult.reason),
+            });
           }
         }
         set({

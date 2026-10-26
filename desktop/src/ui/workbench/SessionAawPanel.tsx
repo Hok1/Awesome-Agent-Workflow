@@ -20,6 +20,7 @@ import {
   tabInactiveClass,
 } from "../controls.tsx";
 import AawStatusPanel from "../AawStatusPanel.tsx";
+import { XIcon } from "../icons.tsx";
 import EntryWizard from "../EntryWizard.tsx";
 import type { WizardSubmitResult } from "./wizardSubmit.ts";
 
@@ -53,7 +54,7 @@ export function SessionAawPanel({
   return (
     <aside
       aria-label="AAW 面板"
-      className="flex w-[22rem] shrink-0 flex-col border-l border-line bg-surface"
+      className="aaw-panel-in flex w-[22rem] shrink-0 flex-col border-l border-line bg-surface"
     >
       <header className="flex shrink-0 items-center gap-2 border-b border-line px-2.5 py-2">
         <div
@@ -86,7 +87,7 @@ export function SessionAawPanel({
           title="收起 AAW 面板（回到对话）"
           className={`shrink-0 rounded px-1.5 py-0.5 text-xs text-ink-faint transition-colors hover:bg-raised hover:text-ink ${focusVisibleRing}`}
         >
-          ✕
+          <XIcon className="h-3.5 w-3.5" />
         </button>
       </header>
 

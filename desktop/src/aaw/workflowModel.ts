@@ -137,6 +137,10 @@ function asNumber(raw: unknown): number | null {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
+function asArray(raw: unknown): readonly unknown[] | null {
+  return Array.isArray(raw) ? raw : null;
+}
+
 function asBoolean(raw: unknown): boolean | null {
   return typeof raw === "boolean" ? raw : null;
 }
@@ -193,6 +197,80 @@ export function parseSrList(raw: unknown): AawSrList | null {
     return null;
   }
   return { srs };
+}
+
+/** `aaw plan --sr <SR> --json` 的节点投影（定义拓扑，非执行状态）。 */
+export interface AawPlanNode {
+  /** 节点类型 id（与 status step 的 type 对齐，如 dev-init / dev-design-gate）。 */
+  readonly id: string;
+  readonly name: string;
+  /** direct / choice / foreach / terminal。 */
+  readonly kind: string;
+  readonly isGate: boolean;
+}
+
+/** plan 的边（from → to；kind 同节点，foreach=true 表示展开边）。 */
+export interface AawPlanEdge {
+  readonly from: string;
+  readonly to: string;
+  readonly kind: string;
+  readonly foreach: boolean;
+}
+
+/**
+ * `aaw plan` 的解析结果：工作流模板的**完整链路**。status 的 steps 只包含
+ * 已物化的步骤（门禁放行才生成后继），后续步骤的全貌只有 plan 有——它是
+ * 时间线画完整流程图的唯一数据源（只读命令，不依赖工作流状态）。
+ */
+export interface AawPlanPayload {
+  readonly entry: string;
+  readonly nodes: readonly AawPlanNode[];
+  readonly edges: readonly AawPlanEdge[];
+}
+
+export function parsePlanPayload(raw: unknown): AawPlanPayload | null {
+  const record = asRecord(raw);
+  if (record === null) {
+    return null;
+  }
+  const entry = asString(record["entry"]);
+  const rawNodes = asArray(record["nodes"]);
+  if (entry === null || rawNodes === null) {
+    return null;
+  }
+  const nodes: AawPlanNode[] = [];
+  for (const item of rawNodes) {
+    const node = asRecord(item);
+    const id = node === null ? null : asString(node["id"]);
+    if (node === null || id === null) {
+      continue;
+    }
+    nodes.push({
+      id,
+      name: asString(node["name"]) ?? id,
+      kind: asString(node["kind"]) ?? "direct",
+      isGate: asBoolean(node["is_gate"]) === true,
+    });
+  }
+  const rawEdges = asArray(record["edges"]);
+  const edges: AawPlanEdge[] = [];
+  if (rawEdges !== null) {
+    for (const item of rawEdges) {
+      const edge = asRecord(item);
+      const from = edge?.["from"] !== undefined ? asString(edge["from"]) : null;
+      const to = edge?.["to"] !== undefined ? asString(edge["to"]) : null;
+      if (from === null || to === null) {
+        continue;
+      }
+      edges.push({
+        from,
+        to,
+        kind: edge === null ? "direct" : (asString(edge["kind"]) ?? "direct"),
+        foreach: edge !== null && asBoolean(edge["foreach"]) === true,
+      });
+    }
+  }
+  return { entry, nodes, edges };
 }
 
 /** 解析错误信封 `{ok:false, error:{code,message}}`；非错误形状返回 null。 */
@@ -432,19 +510,35 @@ export function formatArgvPreview(argv: readonly string[]): string {
 // ---------------------------------------------------------------------------
 
 /** 步骤条上的三态：已完成 / 当前 / 待办。 */
-export type AawStepPhase = "completed" | "current" | "pending";
-
 /**
  * 推导每个步骤在步骤条上的相位：
  * - finished → completed；
  * - 未完成中第一个 running 或 ready → current（正在做 / 即将做）；
  * - 其余 → pending。
  */
+/**
+ * 步骤相位的完整词汇表。failed / blocked / superseded 来自
+ * executionStatus 的终态（此前被折叠成 pending，失败步骤在 UI 上不可见——
+ * 修复：坏终态优先于 finished 判定，颜色语义见各消费方的样式表）。
+ */
+export type AawStepPhase =
+  "completed" | "current" | "pending" | "failed" | "blocked" | "superseded";
+
 export function deriveStepPhases(
   steps: readonly AawStepView[],
 ): AawStepPhase[] {
   let currentAssigned = false;
   return steps.map((step) => {
+    // 坏终态优先：失败 / 受阻 / 作废要能被看见，不能落回「待办」
+    if (step.executionStatus === "failed") {
+      return "failed";
+    }
+    if (step.executionStatus === "blocked") {
+      return "blocked";
+    }
+    if (step.executionStatus === "superseded") {
+      return "superseded";
+    }
     if (step.finished) {
       return "completed";
     }

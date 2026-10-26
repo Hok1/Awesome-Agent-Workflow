@@ -30,7 +30,7 @@ interface LoaderCounts {
 /** 可计数的假数据源：缺省返回夹具样本，可按需覆写。 */
 function makeLoader(
   overrides: Partial<
-    Record<"listSrs" | "readStatus" | "readNext", unknown>
+    Record<"listSrs" | "readStatus" | "readNext" | "readPlan", unknown>
   > = {},
 ): AawStatusLoader & { counts: LoaderCounts } {
   const counts: LoaderCounts = { listSrs: 0, readStatus: 0, readNext: 0 };
@@ -47,6 +47,11 @@ function makeLoader(
     readNext: () => {
       counts.readNext += 1;
       return Promise.resolve(overrides.readNext ?? sampleNextJson);
+    },
+    readPlan: () => {
+      // 老口径默认：plan 不可用（null 输出会被解析为不可解析并记错误，
+      // 测试断言按需覆写）
+      return Promise.resolve(overrides.readPlan ?? { ok: false });
     },
   };
 }
@@ -85,6 +90,23 @@ describe("refresh 真实通路", () => {
     expect(loader.counts).toEqual({ listSrs: 1, readStatus: 1, readNext: 1 });
   });
 
+  it("刷新发现新 SR 时自动切换（会话里刚创建的 SR 即正在运行的需求）", async () => {
+    const loader = makeLoader({
+      listSrs: { srs: ["SR-123"] },
+    });
+    store.getState().bindLoader(loader);
+    await store.getState().refresh();
+    expect(store.getState().currentSr).toBe("SR-123");
+
+    // 会话中创建了 SR-001：下一次刷新列表里出现新 SR → 时间线跟着切
+    const grown = makeLoader({
+      listSrs: { srs: ["SR-001", "SR-123"] },
+    });
+    store.getState().bindLoader(grown);
+    await store.getState().refresh();
+    expect(store.getState().currentSr).toBe("SR-001");
+  });
+
   it("selectSr 切换当前 SR 并触发该 SR 的刷新", async () => {
     const loader = makeLoader();
     store.getState().bindLoader(loader);
@@ -110,6 +132,7 @@ describe("refresh 真实通路", () => {
       listSrs: () => Promise.reject(new Error("ENOENT: aaw.py 不存在")),
       readStatus: () => Promise.resolve(sampleStatusJson),
       readNext: () => Promise.resolve(sampleNextJson),
+      readPlan: () => Promise.resolve({ ok: false }),
     });
     await store.getState().refresh();
     expect(store.getState().lastError).toMatch(/status 读取失败.*ENOENT/);

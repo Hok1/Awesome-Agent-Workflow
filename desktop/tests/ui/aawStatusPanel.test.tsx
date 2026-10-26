@@ -40,6 +40,7 @@ async function seedPanelData(
     listSrs: () => Promise.resolve(sampleSrListJson),
     readStatus: () => Promise.resolve(sampleStatusJson),
     readNext: () => Promise.resolve(nextPayload),
+    readPlan: () => Promise.resolve({ ok: false }),
   });
   await useAawStatusStore.getState().refresh();
   useAawStatusStore.getState().selectSr("SR-004");
@@ -123,7 +124,13 @@ describe("AawStatusPanel", () => {
     const listSrs = vi.fn(() => Promise.resolve(sampleSrListJson));
     const readStatus = vi.fn(() => Promise.resolve(sampleStatusJson));
     const readNext = vi.fn(() => Promise.resolve(sampleNextJson));
-    useAawStatusStore.getState().bindLoader({ listSrs, readStatus, readNext });
+    const readPlan = vi.fn(() => Promise.resolve({ ok: false }));
+    useAawStatusStore.getState().bindLoader({
+      listSrs,
+      readStatus,
+      readNext,
+      readPlan,
+    });
     render(<AawStatusPanel />);
 
     await user.click(screen.getByRole("button", { name: /^刷新$/ }));
@@ -138,7 +145,13 @@ describe("AawStatusPanel", () => {
     const listSrs = vi.fn(() => Promise.resolve(sampleSrListJson));
     const readStatus = vi.fn(() => Promise.resolve(sampleStatusJson));
     const readNext = vi.fn(() => Promise.resolve(sampleNextJson));
-    useAawStatusStore.getState().bindLoader({ listSrs, readStatus, readNext });
+    const readPlan = vi.fn(() => Promise.resolve({ ok: false }));
+    useAawStatusStore.getState().bindLoader({
+      listSrs,
+      readStatus,
+      readNext,
+      readPlan,
+    });
     await useAawStatusStore.getState().refresh();
     render(<AawStatusPanel />);
 
