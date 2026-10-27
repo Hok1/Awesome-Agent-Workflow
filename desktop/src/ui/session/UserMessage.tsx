@@ -17,7 +17,7 @@ export function UserMessage({ item }: { readonly item: UserMessageItem }) {
       <div
         // hover 时间戳：发送时刻（createdAt 缺省的旧数据不显示）
         title={formatClock(item.createdAt) ?? undefined}
-        className="max-w-[85%] rounded-lg bg-info-bg/60 px-4 py-2.5 text-sm leading-7 break-words text-ink ring-1 ring-info-line/70 ring-inset"
+        className="max-w-[85%] rounded-lg bg-info-bg/60 px-4 py-2.5 text-sm leading-6 break-words text-ink ring-1 ring-info-line/70 ring-inset"
       >
         <p className="whitespace-pre-wrap break-words">{item.text}</p>
       </div>

@@ -261,38 +261,35 @@ export async function openRealWorkspace(
     let restoredHistoric = false;
     // loadSession 失败回落新建时的用户公告（快照目标就位后写入消息流）
     let pendingRestoreNotice: string | null = null;
-    if (!forceNew && listed.length > 0) {
-      // 恢复目标：调用方点名的那条优先（点开历史会话的冷连接场景——
-      // 只回放用户要的那一条），否则回落「最近一个」（重启回上次的会话）
-      const preferred =
-        preferredSessionId === null
-          ? null
-          : (listed.find((info) => info.sessionId === preferredSessionId) ??
-            null);
-      const target = preferred ?? pickLatestSession(listed);
-      if (target !== null) {
-        try {
-          await session.loadSession(target.sessionId, workspacePath);
-          restoredId = target.sessionId;
-          restoredHistoric = true;
-          logger.info("已恢复历史会话", {
-            workspacePath,
-            sessionId: restoredId,
-            preferred: preferred !== null,
-          });
-        } catch (error) {
-          const loadFailReason =
-            error instanceof Error ? error.message : String(error);
-          logger.warn("session/load 失败，回落新建会话", {
-            workspacePath,
-            sessionId: target.sessionId,
-            reason: loadFailReason,
-          });
-          pendingRestoreNotice =
-            "上次会话恢复失败，已开启新会话；历史进度可在项目总览查看（原因：" +
-            loadFailReason +
-            "）";
-        }
+    // 恢复目标：调用方点名的 id 直接 load——session/list 只是左栏树的数据
+    // 源，chrys 的列表可能滞后（异常退出/被强杀后索引未刷新），拿它当
+    // 白名单会把点开的会话偷换成「最近一个」。点名 load 失败回落新建
+    // （带公告），绝不静默换一条；未点名才恢复「最近一个」（重启回上次）。
+    const fallbackLatest =
+      listed.length > 0 ? pickLatestSession(listed) : null;
+    const targetId = preferredSessionId ?? fallbackLatest?.sessionId ?? null;
+    if (!forceNew && targetId !== null) {
+      try {
+        await session.loadSession(targetId, workspacePath);
+        restoredId = targetId;
+        restoredHistoric = true;
+        logger.info("已恢复历史会话", {
+          workspacePath,
+          sessionId: restoredId,
+          preferred: preferredSessionId !== null,
+        });
+      } catch (error) {
+        const loadFailReason =
+          error instanceof Error ? error.message : String(error);
+        logger.warn("session/load 失败，回落新建会话", {
+          workspacePath,
+          sessionId: targetId,
+          reason: loadFailReason,
+        });
+        pendingRestoreNotice =
+          "上次会话恢复失败，已开启新会话；历史进度可在项目总览查看（原因：" +
+          loadFailReason +
+          "）";
       }
     }
     if (restoredId === null) {
@@ -328,11 +325,21 @@ export async function openRealWorkspace(
     // 会话列表回填（左栏树可见）：当前会话置顶，其余历史会话随后；
     // 标题一律不含 UUID（首条用户消息前 24 字 / 时间兜底）。带路径回填，
     // 断开后树仍能显示该项目的历史会话子节点。
+    // 恢复的历史会话优先用 session/list 的权威标题：回放事件此刻可能
+    // 还没到（消息流为空，标题会被兜底成「会话 · 当前时刻」，看起来像
+    // 新开的会话）；新会话才从消息流首条用户消息推导。
     const items = useSessionStore.getState().items;
+    const listedSelfTitle = restoredHistoric
+      ? listed.find((info) => info.sessionId === restoredId)?.title
+      : undefined;
+    const activeTitle =
+      typeof listedSelfTitle === "string" && listedSelfTitle.trim().length > 0
+        ? listedSelfTitle
+        : sessionTitleOf(items);
     const entries: SessionSummary[] = [
       {
         id: restoredId,
-        title: sessionTitleOf(items),
+        title: activeTitle,
         updatedAt: new Date().toISOString(),
       },
     ];

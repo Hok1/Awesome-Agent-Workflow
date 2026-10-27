@@ -5,8 +5,10 @@
  * - 「项目」：段头（▾ 项目 … ＋【+】面板触发）+ 收藏 / 最近打开两组
  *   项目节点；项目行 = 展开 chevron + folder 图标 + 目录名 + 行尾连接
  *   状态点（仅已连接 / 连接中 / 连接失败时出现）与收藏 / 移除操作；
- *   会话子行整块缩进，标题 + 行尾相对时间小字，末尾常驻「＋ 新会话」
- *   灰行——**空项目也有**，否则新加的项目在树上没有任何发起对话的入口；
+ *   会话子行整块缩进，标题 + 行尾相对时间小字，分页呈现（默认最近
+ *   SESSION_LIST_PAGE_SIZE 条，「加载更多」逐页纳新，见 ProjectChildren），
+ *   末尾常驻「＋ 新会话」灰行——**空项目也有**，否则新加的项目在树上
+ *   没有任何发起对话的入口；
  * - 「会话」：跨项目的「最近活跃会话」扁平列表（sessionsByPath 拍平，
  *   按 updatedAt 降序），每项显示会话标题 + 所属项目目录名（形态不变）。
  *
@@ -46,6 +48,7 @@ import { useRef } from "react";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { useSessionStore } from "../../stores/sessionStore.ts";
 import {
+  SESSION_LIST_PAGE_SIZE,
   useWorkbenchUiStore,
   type ContentView,
   type TreeViewMode,
@@ -279,12 +282,36 @@ function ProjectChildren({
   readonly sessions: readonly SessionSummary[];
 }) {
   const name = basenameOf(path);
+  // 分页呈现：默认最近 SESSION_LIST_PAGE_SIZE 条，「加载更多」逐页纳新；
+  // 只裁显示不裁数据——store 仍持有全量列表，连接回填不受影响
+  const limit = useWorkbenchUiStore(
+    (state) => state.sessionListLimits[path] ?? SESSION_LIST_PAGE_SIZE,
+  );
+  const expandSessionList = useWorkbenchUiStore(
+    (state) => state.expandSessionList,
+  );
+  const visible = sessions.slice(0, limit);
+  const hiddenCount = sessions.length - visible.length;
 
   return (
     <ul className="ml-6 flex flex-col">
-      {sessions.map((session) => (
+      {visible.map((session) => (
         <SessionNode key={session.id} path={path} session={session} />
       ))}
+      {hiddenCount > 0 ? (
+        <li>
+          <button
+            type="button"
+            aria-label={`加载更多会话（还有 ${hiddenCount} 条）`}
+            onClick={() => {
+              expandSessionList(path);
+            }}
+            className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-2xs text-ink-ghost transition-colors hover:bg-raised/60 hover:text-ink-faint ${focusVisibleRing}`}
+          >
+            加载更多 · 还有 {hiddenCount} 条
+          </button>
+        </li>
+      ) : null}
       <li>
         <button
           type="button"

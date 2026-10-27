@@ -167,7 +167,7 @@ describe("readSessionCatalog", () => {
   });
 
   it.each([true, false])(
-    "有效索引直接使用，不扫描目录（空索引：%s）",
+    "有效索引且收录数不少于目录时直接使用，不逐个读会话元数据（空索引：%s）",
     async (empty) => {
       const host = createDemoHost();
       host.setChrysSessionsDir("X:/sessions");
@@ -179,11 +179,48 @@ describe("readSessionCatalog", () => {
           ),
         ),
       );
-      const list = vi.spyOn(host, "listDirNames");
+      // 非空索引配一条同名会话目录：目录数与收录数一致，守卫放行
+      if (!empty) {
+        await host.writeTextFile(
+          "X:/sessions/a/session.json",
+          JSON.stringify(catalogRecord({ sessionId: "a", cwd: "D:/p" })),
+        );
+      }
+      const reads = vi.spyOn(host, "readTextFile");
+      const run = vi.spyOn(host, "runCommand");
       expect((await readSessionCatalog(host)).size).toBe(empty ? 0 : 1);
-      expect(list).not.toHaveBeenCalled();
+      // 只读了索引本身，没有逐个读 session.json（目录名枚举不算扫描）
+      expect(reads.mock.calls.length).toBe(1);
+      expect(run).not.toHaveBeenCalled();
     },
   );
+
+  it("索引落后于目录（chrys 被强杀未刷新索引）→ 回落扫描，新会话也在列表里", async () => {
+    const host = createDemoHost();
+    host.setChrysSessionsDir("X:/sessions");
+    // 索引只收录旧会话；磁盘上已经多出一条索引之后新建的会话
+    await host.writeTextFile(
+      "X:/sessions/.cache/session_catalog.json",
+      JSON.stringify(
+        catalogOf([
+          catalogRecord({ sessionId: "old-1", cwd: "D:/p", title: "旧会话" }),
+        ]),
+      ),
+    );
+    const writeSession = (sessionId: string, title: string) =>
+      host.writeTextFile(
+        `X:/sessions/${sessionId}/session.json`,
+        JSON.stringify(catalogRecord({ sessionId, cwd: "D:/p", title })),
+      );
+    await writeSession("old-1", "旧会话");
+    await writeSession("fresh-1", "新会话");
+
+    const titles = (await readSessionCatalog(host))
+      .get("d:/p")
+      ?.map((session) => session.title);
+    expect(titles).toContain("旧会话");
+    expect(titles).toContain("新会话");
+  });
 
   it("索引读取异常仍回落扫描，坏文件和非对话记录不阻断其他会话", async () => {
     const host = createDemoHost();

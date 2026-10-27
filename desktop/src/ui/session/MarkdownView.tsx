@@ -83,7 +83,7 @@ const markdownComponents: Components = {
     );
   },
   p: ({ children }) => (
-    <p className="my-2 leading-7 first:mt-0 last:mb-0">{children}</p>
+    <p className="my-2 leading-6 first:mt-0 last:mb-0">{children}</p>
   ),
   h1: ({ children }) => (
     <h1 className="mb-2 mt-4 text-lg font-semibold text-ink">{children}</h1>
@@ -103,7 +103,7 @@ const markdownComponents: Components = {
   ol: ({ children }) => (
     <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>
   ),
-  li: ({ children }) => <li className="leading-7">{children}</li>,
+  li: ({ children }) => <li className="leading-6">{children}</li>,
   a: ({ children, href }) => (
     <a
       href={href}

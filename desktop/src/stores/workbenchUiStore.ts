@@ -85,6 +85,11 @@ interface WorkbenchUiState {
   readonly overlay: OverlayView | null;
   /** 用户显式切换过展开态的项目路径 → 是否展开（缺省按组件默认规则）。 */
   readonly expandedOverrides: Readonly<Record<string, boolean>>;
+  /**
+   * 项目路径 → 会话子节点已呈现条数（缺省 SESSION_LIST_PAGE_SIZE）。
+   * 「加载更多」按页递增；纯展示态不持久化，重启回到默认页。
+   */
+  readonly sessionListLimits: Readonly<Record<string, number>>;
   /** 侧边栏（树列）是否收起为隐藏（持久化；常驻图标窄栏不受影响）。 */
   readonly sidebarCollapsed: boolean;
   /** 侧边栏视角：项目树 / 最近会话（持久化）。 */
@@ -149,15 +154,21 @@ interface WorkbenchUiState {
   readonly toggleAddPanel: () => void;
   /** 关闭【+】弹出面板（点外部 / Esc / 完成动作后的收口）。 */
   readonly closeAddPanel: () => void;
+  /** 「加载更多」：该项目的会话子节点再纳入一页（SESSION_LIST_PAGE_SIZE 条）。 */
+  readonly expandSessionList: (path: string) => void;
 }
 
 const logger = createLogger("ui");
+
+/** 会话子节点每项目的默认呈现条数，也是「加载更多」的步长。 */
+export const SESSION_LIST_PAGE_SIZE = 5;
 
 export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   treeView: "project-overview",
   contextPath: null,
   overlay: null,
   expandedOverrides: {},
+  sessionListLimits: {},
   sidebarCollapsed: restoreSidebarCollapsed(),
   treeViewMode: restoreTreeViewMode(),
   isTimelineCollapsed: restoreTimelineCollapsed(),
@@ -279,5 +290,16 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
       return;
     }
     set({ isAddPanelOpen: false });
+  },
+
+  expandSessionList: (path) => {
+    const { sessionListLimits } = get();
+    const current = sessionListLimits[path] ?? SESSION_LIST_PAGE_SIZE;
+    set({
+      sessionListLimits: {
+        ...sessionListLimits,
+        [path]: current + SESSION_LIST_PAGE_SIZE,
+      },
+    });
   },
 }));

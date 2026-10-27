@@ -147,6 +147,7 @@ describe("openRealWorkspace：会话恢复装配", () => {
         sessionId: "sess-old",
         cwd: WORKSPACE,
         updatedAt: "2026-10-19T09:00:00",
+        title: "旧会话权威标题",
       },
       {
         sessionId: "sess-latest",
@@ -162,9 +163,14 @@ describe("openRealWorkspace：会话恢复装配", () => {
     expect(useSessionStore.getState().activeSessionId).toBe("sess-old");
     // 列表仍完整回填（左栏树需要），当前会话置顶
     expect(useSessionStore.getState().sessions[0]?.id).toBe("sess-old");
+    // 恢复的历史会话用 list 的权威标题——回放未到时不得兜底成
+    // 「会话 · 当前时刻」（看起来像新开的会话）
+    expect(useSessionStore.getState().sessions[0]?.title).toBe(
+      "旧会话权威标题",
+    );
   });
 
-  it("指定的 sessionId 不在列表中（树索引过期）回落恢复最近一个", async () => {
+  it("指定的 sessionId 不在列表中（chrys 列表滞后）仍直接 load 点名那条，不偷换最近一个", async () => {
     fakeSessionControl.listed = [
       {
         sessionId: "sess-latest",
@@ -175,7 +181,25 @@ describe("openRealWorkspace：会话恢复装配", () => {
 
     await openRealWorkspace(WORKSPACE, { sessionId: "sess-gone" });
 
-    expect(fakeSessionControl.loadCalls).toEqual(["sess-latest"]);
+    // 点名优先：列表只是树的数据源，不是 load 的白名单
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-gone"]);
+    expect(useSessionStore.getState().activeSessionId).toBe("sess-gone");
+  });
+
+  it("点名的 sessionId load 失败（会话真不存在）回落 newSession 并公告", async () => {
+    fakeSessionControl.listed = [
+      {
+        sessionId: "sess-latest",
+        cwd: WORKSPACE,
+        updatedAt: "2026-10-20T11:30:00",
+      },
+    ];
+    fakeSessionControl.loadShouldFail = true;
+
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-gone" });
+
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-gone"]);
+    expect(useSessionStore.getState().activeSessionId).toBe("new-session-id");
   });
 
   it("loadSession 失败（会话过期）回落 newSession，打开工作区不失败", async () => {

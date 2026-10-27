@@ -1,8 +1,9 @@
 /**
  * chrys 历史会话的只读读取（src/agents 层）。
  *
- * 优先读取 `<sessions>/.cache/session_catalog.json`；索引不可用时，
- * 扫描直接子目录的 `session.json`，只保留 meta 中的列表字段。
+ * 优先读取 `<sessions>/.cache/session_catalog.json`；索引不可用、或落后
+ * 于目录（chrys 异常退出 / 被强杀未刷新索引）时，扫描直接子目录的
+ * `session.json`，只保留 meta 中的列表字段。
  * 全程不启动 agent；连接后的 ACP `session/list` 仍是权威快照。
  *
  * 它是**缓存，不是权威**，因此本模块的纪律：
@@ -143,10 +144,11 @@ function groupSessions(sessions: readonly KnownSession[]) {
 }
 
 /** 有界并发，只扫描直接子目录；不遍历缓存、锁目录或对话附件。 */
-async function scanSessionMetadata(host: HostRuntime, sessionsDir: string) {
-  const names = (await host.listDirNames(sessionsDir)).filter(
-    (name) => !name.startsWith(".") && !/[\\/]/.test(name),
-  );
+async function scanSessionMetadata(
+  host: HostRuntime,
+  sessionsDir: string,
+  names: readonly string[],
+) {
   const sessions: (KnownSession | null)[] = Array.from(
     { length: names.length },
     () => null,
@@ -185,7 +187,25 @@ function rankOf(updatedAt: string | null): number {
   return Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
 }
 
-/** 优先索引，索引不可用时扫描；两者均不可读时返回空，不清除已有列表。 */
+/** 索引里收录的会话总数（跨项目求和）。 */
+function countCatalogSessions(
+  catalog: ReadonlyMap<string, readonly KnownSession[]>,
+): number {
+  let total = 0;
+  for (const list of catalog.values()) {
+    total += list.length;
+  }
+  return total;
+}
+
+/**
+ * 优先索引，索引不可用或**落后于目录**时扫描；两者均不可读时返回空，
+ * 不清除已有列表。
+ *
+ * 过期守卫：索引是 chrys 收尾时才刷新的缓存，异常退出 / 被强杀会留下
+ * 旧索引（新会话全都不在里面，列表凭空缺一大截）。目录里可枚举的会话数
+ * 多于索引收录数，就认定索引滞后，回落扫描拿磁盘实况。
+ */
 export async function readSessionCatalog(
   host: HostRuntime,
 ): Promise<ReadonlyMap<string, readonly KnownSession[]>> {
@@ -194,13 +214,25 @@ export async function readSessionCatalog(
     if (typeof sessionsDir !== "string" || sessionsDir.trim() === "") {
       return new Map();
     }
+    // 目录名单只取一次：既是扫描的输入，也是索引的过期比对基准
+    const names = (
+      await host.listDirNames(sessionsDir)
+    ).filter((name) => !name.startsWith(".") && !/[\\/]/.test(name));
     const catalogPath = joinPath(sessionsDir, CATALOG_RELATIVE_PATH);
     try {
       if (await host.pathExists(catalogPath)) {
         const text = await host.readTextFile(catalogPath);
         if (text.length <= CATALOG_MAX_BYTES) {
           const catalog = tryParseSessionCatalog(JSON.parse(text) as unknown);
-          if (catalog !== null) return catalog;
+          if (catalog !== null) {
+            if (countCatalogSessions(catalog) >= names.length) {
+              return catalog;
+            }
+            logger.info("会话索引落后于目录，回落扫描元数据", {
+              indexed: countCatalogSessions(catalog),
+              onDisk: names.length,
+            });
+          }
         }
       }
     } catch (error) {
@@ -208,7 +240,7 @@ export async function readSessionCatalog(
         reason: error instanceof Error ? error.message : String(error),
       });
     }
-    return await scanSessionMetadata(host, sessionsDir);
+    return await scanSessionMetadata(host, sessionsDir, names);
   } catch (error) {
     // 缓存不可读不是错误状态：树退回「没有历史可显示」的既有观感
     logger.info("本地历史会话不可读，本次不补充", {
