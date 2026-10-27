@@ -18,6 +18,8 @@ export function ModalShell({ label, onDismiss, children }: ModalShellProps) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
+        // preventDefault 标记 Esc 已被模态消费（SessionView 的全局停止让位）
+        event.preventDefault();
         onDismiss();
       }
     }

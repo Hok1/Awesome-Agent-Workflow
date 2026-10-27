@@ -62,6 +62,67 @@ afterEach(async () => {
 });
 
 describe("轮次等待与明确终态", () => {
+  it.each(["cancelled", "end_turn"] as const)(
+    "点击停止立即暂停队列，最终返回 %s 也必须手动继续",
+    async (stopReason) => {
+      const binding = deferred();
+      store.getState().sendPrompt("第一条");
+      store.getState().enqueuePrompt("第二条");
+      store.getState().requestCancel();
+      expect(store.getState()).toMatchObject({
+        queuePaused: true,
+        isAgentRunning: true,
+      });
+      binding.resolve({ stopReason });
+      await Promise.resolve();
+      expect(binding.prompt).toHaveBeenCalledTimes(1);
+      expect(store.getState()).toMatchObject({
+        queuePaused: true,
+        queuedPrompts: ["第二条"],
+        isAgentRunning: false,
+      });
+      store.getState().resumeQueue();
+      expect(binding.prompt).toHaveBeenCalledTimes(2);
+      expect(binding.prompt).toHaveBeenLastCalledWith("第二条");
+      await Promise.resolve();
+    },
+  );
+
+  it("点击停止后才入队，也不会因当前轮正常完成而续发", async () => {
+    const binding = deferred();
+    store.getState().sendPrompt("第一条");
+    store.getState().requestCancel();
+    store.getState().enqueuePrompt("停止后排队");
+    binding.resolve({ stopReason: "end_turn" });
+    await Promise.resolve();
+    expect(binding.prompt).toHaveBeenCalledTimes(1);
+    expect(store.getState()).toMatchObject({
+      queuePaused: true,
+      queuedPrompts: ["停止后排队"],
+    });
+    // 用户单独发送另一轮也不等于放行队列。
+    store.getState().sendPrompt("单独发送");
+    await Promise.resolve();
+    expect(binding.prompt).toHaveBeenCalledTimes(2);
+    expect(store.getState().queuedPrompts).toEqual(["停止后排队"]);
+  });
+
+  it("暂停期间连接不可用，手动继续不会丢掉队首消息", async () => {
+    const binding = deferred();
+    store.getState().sendPrompt("第一条");
+    store.getState().enqueuePrompt("第二条");
+    store.getState().requestCancel();
+    binding.resolve({ stopReason: "cancelled" });
+    await Promise.resolve();
+    store.getState().bindSession(null);
+    store.getState().resumeQueue();
+    expect(store.getState()).toMatchObject({
+      queuePaused: true,
+      queuedPrompts: ["第二条"],
+    });
+    expect(binding.prompt).toHaveBeenCalledTimes(1);
+  });
+
   it("持续输出超过 90 秒，最终响应仍收尾且没有错误残留", async () => {
     const { agent } = await connect();
     vi.useFakeTimers();

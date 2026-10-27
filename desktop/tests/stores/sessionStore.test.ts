@@ -18,6 +18,7 @@ import {
   toolResultSummary,
   useSessionStore,
   type SessionBinding,
+  type SessionItem,
   type SystemNoticeItem,
 } from "../../src/stores/sessionStore.ts";
 import { replaySampleConversation } from "../fixtures/sessionScript.ts";
@@ -770,5 +771,242 @@ describe("会话消息快照持久化（session-log）", () => {
     feed([chunk("无目标回复")]);
     useSessionStore.getState().endTurn({ stopReason: "end_turn" });
     expect(window.localStorage.getItem(LOG_KEY)).toBeNull();
+  });
+});
+
+describe("条目时间字段（M1：耗时与时间戳）", () => {
+  type ToolEntry = Extract<SessionItem, { kind: "tool" }>;
+  type AssistantEntry = Extract<SessionItem, { kind: "assistant" }>;
+
+  function toolAt(index: number): ToolEntry {
+    const items = useSessionStore.getState().items;
+    const item = items[index];
+    if (item === undefined || item.kind !== "tool") {
+      throw new Error(`第 ${index} 条不是工具条目：${String(item?.kind)}`);
+    }
+    return item;
+  }
+
+  function assistantWhere(predicate: (entry: AssistantEntry) => boolean): AssistantEntry {
+    const found = useSessionStore
+      .getState()
+      .items.find(
+        (item): item is AssistantEntry =>
+          item.kind === "assistant" && predicate(item),
+      );
+    if (found === undefined) {
+      throw new Error("没有匹配的助手条目");
+    }
+    return found;
+  }
+
+  it("工具卡落笔即记起点；首次进入终态定格终点，后续 update 不覆盖", () => {
+    feed([
+      {
+        type: "tool_call",
+        sessionId: "s1",
+        toolCallId: "t1",
+        title: "run npm test",
+        status: "in_progress",
+      },
+    ]);
+    const created = toolAt(0);
+    expect(typeof created.startedAt).toBe("number");
+    expect(created.endedAt).toBeNull();
+
+    feed([
+      {
+        type: "tool_call_update",
+        sessionId: "s1",
+        toolCallId: "t1",
+        status: "completed",
+        rawOutput: "ok",
+      },
+    ]);
+    const done = toolAt(0);
+    expect(done.status).toBe("completed");
+    const startedAt = created.startedAt;
+    if (startedAt === null) {
+      throw new Error("起点缺失");
+    }
+    const endedAt = done.endedAt;
+    if (endedAt === null) {
+      throw new Error("终点缺失");
+    }
+    expect(endedAt).toBeGreaterThanOrEqual(startedAt);
+
+    // 再次 completed update（补发输出等）：终点保持定格
+    feed([
+      {
+        type: "tool_call_update",
+        sessionId: "s1",
+        toolCallId: "t1",
+        status: "completed",
+        rawOutput: "ok, with more",
+      },
+    ]);
+    expect(toolAt(0).endedAt).toBe(endedAt);
+  });
+
+  it("落笔即终态：起止同刻（耗时 0），不误报为运行中", () => {
+    feed([
+      {
+        type: "tool_call",
+        sessionId: "s1",
+        toolCallId: "t-late",
+        title: "instant",
+        status: "completed",
+      },
+    ]);
+    const item = toolAt(0);
+    expect(item.status).toBe("completed");
+    expect(typeof item.startedAt).toBe("number");
+    expect(typeof item.endedAt).toBe("number");
+  });
+
+  it("助手消息落笔带 createdAt（hover 时间戳用）", () => {
+    feed([chunk("带时间戳的回复")]);
+    const item = assistantWhere(() => true);
+    expect(item.text).toBe("带时间戳的回复");
+    expect(item.createdAt.length).toBeGreaterThan(0);
+  });
+
+  it("快照往返保留工具起止时刻与助手 createdAt", () => {
+    const WORKSPACE = "D:/work-ts";
+    const LOG_KEY = `aaw-desktop/session-log/${encodeURIComponent(WORKSPACE)}`;
+    useSessionStore.getState().setSessionLogTarget(WORKSPACE);
+    feed([
+      {
+        type: "tool_call",
+        sessionId: "s1",
+        toolCallId: "t1",
+        title: "run",
+        status: "in_progress",
+      },
+      chunk("回复正文"),
+    ]);
+    feed([
+      {
+        type: "tool_call_update",
+        sessionId: "s1",
+        toolCallId: "t1",
+        status: "completed",
+        rawOutput: "done",
+      },
+    ]);
+    useSessionStore.getState().endTurn({ stopReason: "end_turn" });
+    const raw = window.localStorage.getItem(LOG_KEY);
+    expect(raw).not.toBeNull();
+
+    useSessionStore.getState().setSessionLogTarget(null);
+    useSessionStore.getState().clear();
+    useSessionStore.getState().restoreSessionLog(WORKSPACE);
+    const items = useSessionStore.getState().items;
+    const tool = items.find((item) => item.kind === "tool");
+    if (tool === undefined || tool.kind !== "tool") {
+      throw new Error("快照恢复后没有工具条目");
+    }
+    expect(typeof tool.startedAt).toBe("number");
+    expect(typeof tool.endedAt).toBe("number");
+    const assistant = items.find((item) => item.kind === "assistant");
+    if (assistant === undefined || assistant.kind !== "assistant") {
+      throw new Error("快照恢复后没有助手条目");
+    }
+    expect(assistant.createdAt.length).toBeGreaterThan(0);
+  });
+});
+
+describe("plan 步骤清单（流内条目，ACP plan 事件归约）", () => {
+  const planEvent = (
+    entries: readonly { content: string; status: string }[],
+  ): AcpSessionEvent => ({
+    type: "plan",
+    sessionId: "s1",
+    entries: entries.map((entry) => ({
+      content: entry.content,
+      priority: "medium" as const,
+      status: entry.status as "pending" | "in_progress" | "completed",
+    })),
+  });
+
+  function planItems() {
+    return useSessionStore
+      .getState()
+      .items.filter(
+        (item): item is Extract<SessionItem, { kind: "plan" }> =>
+          item.kind === "plan",
+      );
+  }
+
+  it("落卡进消息流；后续整表更新刷新同一张卡", () => {
+    feed([
+      planEvent([
+        { content: "第一步", status: "completed" },
+        { content: "第二步", status: "in_progress" },
+      ]),
+    ]);
+    expect(planItems()).toHaveLength(1);
+
+    feed([
+      planEvent([
+        { content: "第二步", status: "completed" },
+        { content: "第三步", status: "pending" },
+      ]),
+    ]);
+    const cards = planItems();
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.entries.map((entry) => entry.content)).toEqual([
+      "第二步",
+      "第三步",
+    ]);
+  });
+
+  it("上一张全部完成后再来新清单：落新卡不改写历史；空清单 no-op", () => {
+    feed([
+      planEvent([
+        { content: "A", status: "completed" },
+        { content: "B", status: "completed" },
+      ]),
+    ]);
+    feed([
+      planEvent([
+        { content: "新任务一", status: "in_progress" },
+        { content: "新任务二", status: "pending" },
+      ]),
+    ]);
+    const cards = planItems();
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.entries[0]?.content).toBe("A");
+    expect(cards[1]?.entries[0]?.content).toBe("新任务一");
+
+    // 空 entries（todo_write 清空）：不改流
+    const before = useSessionStore.getState().items.length;
+    feed([planEvent([])]);
+    expect(useSessionStore.getState().items.length).toBe(before);
+  });
+
+  it("快照往返保留 plan 卡与条目状态", () => {
+    const WORKSPACE = "D:/work-plan";
+    const LOG_KEY = `aaw-desktop/session-log/${encodeURIComponent(WORKSPACE)}`;
+    useSessionStore.getState().setSessionLogTarget(WORKSPACE);
+    useSessionStore.getState().beginTurn("带清单的任务");
+    feed([
+      planEvent([
+        { content: "甲", status: "completed" },
+        { content: "乙", status: "in_progress" },
+      ]),
+    ]);
+    useSessionStore.getState().endTurn({ stopReason: "end_turn" });
+    expect(window.localStorage.getItem(LOG_KEY)).not.toBeNull();
+
+    useSessionStore.getState().setSessionLogTarget(null);
+    useSessionStore.getState().clear();
+    useSessionStore.getState().restoreSessionLog(WORKSPACE);
+    const restored = planItems();
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.entries.map((entry) => entry.status)).toEqual([
+      "completed",
+      "in_progress",
+    ]);
   });
 });

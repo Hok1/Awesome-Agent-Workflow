@@ -28,6 +28,7 @@
 | uv + AAW skills         | 健康检查会指路；skills 经设置页安装到 `%APPDATA%/chrys/skills` |
 
 ```
+desktop/dev-web.cmd  # 双击一键启动（= npm run dev:web + 就绪后自动开浏览器）
 npm run tauri dev    # 桌面应用（Rust 变更后需重启进程，HMR 只覆盖前端）
 npm run dev:web      # 浏览器开发运行时（推荐 UI 迭代与验证的入口，见下）
 npm run dev          # 仅前端（无宿主：布局可看，agent/CLI 为内存假数据）

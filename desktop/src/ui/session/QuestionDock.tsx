@@ -15,9 +15,10 @@
  * 组件持有本地选择/备注状态（纯 UI 态不入 store）；提交/取消调用
  * approvalStore 的 action。数据自取（activeId 焦点项），无需外部传参。
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useApprovalStore } from "../../stores/approvalStore.ts";
+import { useSettingsStore } from "../../stores/settingsStore.ts";
 import type { ChrysQuestion } from "../../acp/types.ts";
 import {
   Badge,
@@ -29,6 +30,9 @@ import {
 
 /** 只读空集兜底，避免每次渲染新建对象。 */
 const emptySelection: ReadonlySet<string> = new Set<string>();
+
+/** 问答自动应答倒计时（评审确认 60s；设置项默认关闭）。 */
+const AUTO_ANSWER_SECONDS = 60;
 
 function QuestionCard({
   question,
@@ -142,6 +146,17 @@ export function QuestionDock(): React.JSX.Element | null {
   >({});
   const [notes, setNotes] = useState<Readonly<Record<number, string>>>({});
 
+  // ---- 自动应答倒计时（M5）：设置开启才起表；面板内任何交互即取消本次，
+  // 这一批必须手动提交——不会"刚想点另一个选项它自己交了"。
+  // interactiveBatch 记录"已交互过的批次 id"：新批次天然重新起表，
+  // 不需要 effect 里重置状态
+  const autoAnswerEnabled = useSettingsStore(
+    (state) => state.autoAnswerQuestions,
+  );
+  const [interactiveBatch, setInteractiveBatch] = useState<string | null>(
+    null,
+  );
+
   if (active === null || active.kind !== "questions") {
     return null;
   }
@@ -170,6 +185,22 @@ export function QuestionDock(): React.JSX.Element | null {
     });
   }
 
+  // 到点自动提交：未作答的题用首个选项兜底（交互过即整批取消，到此为空选）
+  function handleAutoAnswerExpire(): void {
+    const orderedSelections = questions.map((question, index) => {
+      const existing = selections[index];
+      if (existing !== undefined && existing.size > 0) {
+        return [...existing];
+      }
+      return [question.options[0]?.label ?? ""];
+    });
+    submitAnswers(
+      focused.id,
+      orderedSelections,
+      questions.map((_, index) => notes[index]),
+    );
+  }
+
   // 闭包捕获收窄后的挂起项（function 声明会提升，丢掉上面的类型收窄）
   const focused = active;
   function handleSubmit(): void {
@@ -181,16 +212,18 @@ export function QuestionDock(): React.JSX.Element | null {
   }
 
   return (
-    <div
-      className="shrink-0"
-      style={{ padding: "0 20px" }}
+    <section
+      aria-label="结构化问答"
+      key={active.id}
       data-question-dock=""
+      onPointerDownCapture={() => {
+        setInteractiveBatch(focused.id);
+      }}
+      onFocusCapture={() => {
+        setInteractiveBatch(focused.id);
+      }}
+      className="w-full overflow-hidden rounded-2xl border border-info-line bg-surface shadow-lg"
     >
-      <section
-        aria-label="结构化问答"
-        key={active.id}
-        className="mx-auto w-full max-w-4xl overflow-hidden rounded-2xl border border-info-line bg-surface shadow-lg"
-      >
         <header className="flex items-center gap-2 border-b border-line px-4 py-2">
           <Badge tone="info">结构化提问</Badge>
           <span className="text-xs text-ink-faint">
@@ -205,6 +238,13 @@ export function QuestionDock(): React.JSX.Element | null {
             </span>
           ) : null}
           <span aria-hidden={true} className="flex-1" />
+          {autoAnswerEnabled && interactiveBatch !== focused.id ? (
+            <AutoAnswerCountdown
+              key={focused.id}
+              firstLabel={questions[0]?.options[0]?.label ?? ""}
+              onExpire={handleAutoAnswerExpire}
+            />
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -240,6 +280,46 @@ export function QuestionDock(): React.JSX.Element | null {
           ))}
         </div>
       </section>
-    </div>
+  );
+}
+
+/**
+ * 自动应答倒计时（QuestionDock 私有）：挂载即起表 60s；到点经 onExpire
+ * 提交（回调经 ref 取最新闭包）。按批次 key 重挂即重置，交互取消由
+ * 父组件卸载本组件实现（interval 随清理收口）。
+ */
+function AutoAnswerCountdown({
+  firstLabel,
+  onExpire,
+}: {
+  readonly firstLabel: string;
+  readonly onExpire: () => void;
+}): React.JSX.Element {
+  const [secondsLeft, setSecondsLeft] = useState(AUTO_ANSWER_SECONDS);
+  const onExpireRef = useRef(onExpire);
+  useEffect(() => {
+    onExpireRef.current = onExpire;
+  }, [onExpire]);
+  useEffect(() => {
+    if (secondsLeft !== 0) {
+      return;
+    }
+    onExpireRef.current();
+    return () => {
+      // 到点后不再需要计时（组件通常随即随挂起项一起消失，防御性收口）
+    };
+  }, [secondsLeft]);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSecondsLeft((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+  return (
+    <span className="text-2xs text-ink-ghost" data-auto-answer-countdown="">
+      {secondsLeft}s 后自动选「{firstLabel}」
+    </span>
   );
 }

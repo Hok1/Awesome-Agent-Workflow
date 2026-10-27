@@ -54,12 +54,16 @@ describe("useSettingsStore", () => {
     useSettingsStore.getState().setLanguage("en-US");
     useSettingsStore.getState().setSkillsSourceDir("X:/repo/skills");
     useSettingsStore.getState().setTheme("warm");
+    useSettingsStore.getState().setAutoAnswerQuestions(true);
+    useSettingsStore.getState().setChatWidth("wide");
     expect(readPersisted()).toEqual({
       chrysPath: "X:/tools/chrys.exe",
       approvalMode: "auto-allow",
       language: "en-US",
       skillsSourceDir: "X:/repo/skills",
       theme: "warm",
+      autoAnswerQuestions: true,
+      chatWidth: "wide",
     });
   });
 

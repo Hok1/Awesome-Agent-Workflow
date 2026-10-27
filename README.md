@@ -129,7 +129,7 @@ Awesome-Agent-Workflow/
 ├── LICENSE                      # MIT
 ├── README.md
 └── skills/
-    ├── aaw-workflow/            # 工作流编排器（主入口）
+    ├── aaw-workflow/            # 工作流编排器（主入口；workflows/ 含 chrys 工作流模式驱动器）
     ├── module-deep-research/    # 独立深度研究
     ├── code-check/              # 独立 CodeCheck 检查
     ├── mermaid-diagram/         # 独立 Mermaid 绘图与编译验证

@@ -23,6 +23,8 @@ import {
 } from "../stores/approvalStore";
 import type { PendingPermission } from "../stores/approvalStore";
 import { Badge, btnDanger, btnPrimary, btnSecondary } from "./controls";
+import { extractEditPayload } from "./session/editDiff.ts";
+import { EditDiffView } from "./session/EditDiffView.tsx";
 
 /** 按钮渲染顺序：允许在前，拒绝居后，未知（守卫回落）最后。 */
 const KIND_ORDER: Readonly<Record<PermissionOptionKind, number>> = {
@@ -41,6 +43,8 @@ export function ApprovalModal({ item }: { readonly item: PendingPermission }) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
+        // preventDefault 标记 Esc 已被审批弹窗消费（SessionView 的全局停止让位）
+        event.preventDefault();
         cancelPermission(item.id);
       }
     }
@@ -49,6 +53,15 @@ export function ApprovalModal({ item }: { readonly item: PendingPermission }) {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [cancelPermission, item.id]);
+
+  // 工具预览（M5）：edit/write 类渲染 diff 或新内容预览，execute 类渲染
+  // 完整命令——批准前一眼看到"要改成什么样 / 要跑什么"；形状不认识回落摘要
+  const editPayload = isEditLikeTool(item)
+    ? extractEditPayload(item.rawInput)
+    : null;
+  const commandText = isExecuteLikeTool(item)
+    ? extractCommand(item.rawInput)
+    : null;
 
   const sortedOptions = [...item.options].sort(
     (left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind],
@@ -99,15 +112,29 @@ export function ApprovalModal({ item }: { readonly item: PendingPermission }) {
               原因：{item.reason}
             </p>
           )}
-          <div>
-            <p className="mb-1 text-xs text-ink-faint">工具输入</p>
-            {/* pre-wrap + break-all：长命令（带路径 / --data-file）折行而非溢出 */}
-            <pre className="rounded-md border border-line bg-base px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-ink-soft">
-              {item.inputSummary.length > 0
-                ? item.inputSummary
-                : "（无输入参数）"}
-            </pre>
-          </div>
+          {editPayload !== null ? (
+            <div>
+              <p className="mb-1 text-xs text-ink-faint">改动预览</p>
+              <EditDiffView payload={editPayload} />
+            </div>
+          ) : commandText !== null ? (
+            <div>
+              <p className="mb-1 text-xs text-ink-faint">将执行的命令</p>
+              {/* pre-wrap + break-all：长命令（带路径 / --data-file）折行而非溢出 */}
+              <pre className="rounded-md border border-line bg-base px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-ink-soft">
+                {commandText}
+              </pre>
+            </div>
+          ) : (
+            <div>
+              <p className="mb-1 text-xs text-ink-faint">工具输入</p>
+              <pre className="rounded-md border border-line bg-base px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-ink-soft">
+                {item.inputSummary.length > 0
+                  ? item.inputSummary
+                  : "（无输入参数）"}
+              </pre>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-line px-5 py-4">
@@ -133,6 +160,46 @@ export function ApprovalModal({ item }: { readonly item: PendingPermission }) {
       </div>
     </div>
   );
+}
+
+/** edit/write 类工具判定（名字优先，meta kind 兜底）。 */
+function isEditLikeTool(item: {
+  readonly toolName: string | null;
+  readonly toolKind: string | null;
+}): boolean {
+  return (
+    (item.toolName?.includes("edit_file") ?? false) ||
+    (item.toolName?.includes("write_file") ?? false) ||
+    item.toolKind === "edit" ||
+    item.toolKind === "write"
+  );
+}
+
+/** execute/shell 类工具判定（chrys 的 shell 工具 kind 是 "shell"，
+ *  ACP 工具卡映射后是 "execute"，两个口径都认）。 */
+function isExecuteLikeTool(item: {
+  readonly toolName: string | null;
+  readonly toolKind: string | null;
+}): boolean {
+  if (item.toolKind === "execute" || item.toolKind === "shell") {
+    return true;
+  }
+  return /powershell|pwsh|bash|run_command|shell/i.test(item.toolName ?? "");
+}
+
+/** 宽容提取命令文本（rawInput.command / rawInput.cmd）。 */
+function extractCommand(rawInput: unknown): string | null {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    return null;
+  }
+  const record = rawInput as Readonly<Record<string, unknown>>;
+  for (const key of ["command", "cmd"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
 }
 
 /**

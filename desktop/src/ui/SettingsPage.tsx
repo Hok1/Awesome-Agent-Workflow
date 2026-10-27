@@ -269,6 +269,12 @@ function SettingsPage() {
   const theme = useSettingsStore((state) => state.theme);
   const connection = useSettingsStore((state) => state.connection);
   const setApprovalMode = useSettingsStore((state) => state.setApprovalMode);
+  const autoAnswerQuestions = useSettingsStore(
+    (state) => state.autoAnswerQuestions,
+  );
+  const setAutoAnswerQuestions = useSettingsStore(
+    (state) => state.setAutoAnswerQuestions,
+  );
   const setLanguage = useSettingsStore((state) => state.setLanguage);
   const setSkillsSourceDir = useSettingsStore(
     (state) => state.setSkillsSourceDir,
@@ -556,6 +562,30 @@ function SettingsPage() {
                   options={APPROVAL_SEGMENTS}
                   onChange={setApprovalMode}
                   warnValue="auto-reject"
+                />
+              </SettingRow>
+              <SettingRow
+                label="问答自动应答"
+                desc="结构化提问挂起 60 秒无交互，自动提交每题的第一个选项"
+                footer={
+                  <p className="text-xs leading-relaxed text-ink-faint">
+                    {autoAnswerQuestions
+                      ? "已开启：面板中悬停或开始作答即取消本次自动应答。"
+                      : "默认关闭——自动选择有误操作风险，开启是显式决定。"}
+                  </p>
+                }
+                footerAlign="start"
+              >
+                <SegmentedControl
+                  groupLabel="问答自动应答"
+                  value={autoAnswerQuestions ? "on" : "off"}
+                  options={[
+                    { value: "off", label: "关闭" },
+                    { value: "on", label: "开启" },
+                  ]}
+                  onChange={(value) => {
+                    setAutoAnswerQuestions(value === "on");
+                  }}
                 />
               </SettingRow>
             </SettingCard>

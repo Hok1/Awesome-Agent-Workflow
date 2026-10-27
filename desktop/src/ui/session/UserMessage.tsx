@@ -9,11 +9,16 @@
 import type { UserMessageItem } from "../../stores/sessionStore.ts";
 import { prefillComposer } from "./composerPrefill.ts";
 import { CopyButton } from "./CopyButton.tsx";
+import { formatClock } from "./clock.ts";
 
 export function UserMessage({ item }: { readonly item: UserMessageItem }) {
   return (
     <div className="group flex flex-col items-end gap-1" data-item-kind="user">
-      <div className="max-w-[85%] rounded-lg bg-info-bg/60 px-4 py-2.5 text-sm leading-7 break-words text-ink ring-1 ring-info-line/70 ring-inset">
+      <div
+        // hover 时间戳：发送时刻（createdAt 缺省的旧数据不显示）
+        title={formatClock(item.createdAt) ?? undefined}
+        className="max-w-[85%] rounded-lg bg-info-bg/60 px-4 py-2.5 text-sm leading-7 break-words text-ink ring-1 ring-info-line/70 ring-inset"
+      >
         <p className="whitespace-pre-wrap break-words">{item.text}</p>
       </div>
       <div className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">

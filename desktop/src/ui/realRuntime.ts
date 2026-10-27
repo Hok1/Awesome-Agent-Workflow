@@ -300,6 +300,14 @@ export async function openRealWorkspace(
       restoredId = created.sessionId;
     }
 
+    // 模型清单灌入（输入行切换器数据源）：attachSessionViews 在会话建立
+    // 之前挂接（要接住 load 回放），那时 acp.models 还是 null——统一在
+    // newSession / loadSession 落定后补灌。
+    useSessionStore.getState().setSessionModels(
+      session.models?.availableModels ?? [],
+      session.models?.currentModelId ?? null,
+    );
+
     // UI 消息历史：loadSession 已回放的视图不覆盖；视图为空（新建会话 /
     // 回放为空）时灌回本地快照兜底。随后把当前视图同步进快照。
     // forceNew 例外：本地快照是「该项目的上一段对话」，灌进一条全新的
@@ -393,6 +401,10 @@ export async function switchRealSession(sessionId: string): Promise<boolean> {
   store.clear();
   try {
     await runtime.session.loadSession(sessionId, runtime.workspacePath);
+    useSessionStore.getState().setSessionModels(
+      runtime.session.models?.availableModels ?? [],
+      runtime.session.models?.currentModelId ?? null,
+    );
   } catch (error) {
     logger.warn("切换会话失败（保留当前会话视图）", {
       sessionId,

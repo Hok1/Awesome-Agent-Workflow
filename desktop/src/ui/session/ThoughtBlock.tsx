@@ -8,18 +8,7 @@
 import { useState } from "react";
 import type { ThoughtItem } from "../../stores/sessionStore.ts";
 import { ChevronRightIcon } from "../icons.tsx";
-
-/** 毫秒 → 人读时长（<1s 保留一位小数，其余取整）。 */
-function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${(ms / 1000).toFixed(1)}s`;
-  }
-  if (ms < 60_000) {
-    return `${Math.round(ms / 1000)}s`;
-  }
-  const minutes = Math.floor(ms / 60_000);
-  return `${minutes}m${Math.round((ms % 60_000) / 1000)}s`;
-}
+import { formatClock, formatDuration } from "./clock.ts";
 
 export function ThoughtBlock({ item }: { readonly item: ThoughtItem }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -35,6 +24,8 @@ export function ThoughtBlock({ item }: { readonly item: ThoughtItem }) {
         onClick={() => {
           setIsOpen((current) => !current);
         }}
+        // hover 时间戳：思考开始时刻；快照恢复的条目无时刻则不显示
+        title={formatClock(item.startedAt) ?? undefined}
         className="flex items-center gap-2 text-xs text-ink-faint transition-colors hover:text-ink-soft"
       >
         <span

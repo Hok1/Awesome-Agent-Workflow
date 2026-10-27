@@ -22,7 +22,7 @@ describe("UserMessage 操作行", () => {
     render(
       <div>
         <UserMessage item={ITEM} />
-        <ChatInput isAgentRunning={false} onSend={onSend} onCancel={() => {}} />
+        <ChatInput isAgentRunning={false} onSend={onSend} onEnqueue={vi.fn()} onCancel={() => {}} />
       </div>,
     );
     await userEvent.click(screen.getByRole("button", { name: "再次发送" }));
