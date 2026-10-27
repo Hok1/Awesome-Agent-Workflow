@@ -19,6 +19,7 @@ SCOPE=""         # user | project
 METHOD=""        # copy | symlink
 MCP_ONLY=0
 UNINSTALL=0
+WORKFLOWS_DST=""  # chrys only: workflow driver files for the workflow mode
 
 usage() {
   cat <<'EOF'
@@ -39,6 +40,7 @@ Targets:
   codex      skills via /plugins marketplace      MCP → ~/.codex/config.toml
   opencode   skills → ~/.config/opencode/skills/  MCP → ~/.config/opencode/opencode.json
   chrys      skills → ~/.chrys/skills/            MCP → ~/.chrys/agents/Code.yaml
+             workflows (workflow 模式驱动器) → ~/.chrys/workflows/
 
 Prerequisites:
   uv (for config injection scripts only; MCP server is a standalone Go binary)
@@ -122,11 +124,15 @@ resolve_paths() {
       if [[ "$SCOPE" == "user" ]]; then
         if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == CYGWIN* || "$(uname -s)" == MSYS* ]]; then
           SKILLS_DST="$APPDATA/chrys/skills"
+          WORKFLOWS_DST="$APPDATA/chrys/workflows"
         else
           SKILLS_DST="$HOME/.chrys/skills"
+          WORKFLOWS_DST="$HOME/.chrys/workflows"
         fi
       else
-        SKILLS_DST="$PWD/.chrys/skills"
+        # chrys auto-loads project skills from <cwd>/.agents/skills/, not .chrys/skills/
+        SKILLS_DST="$PWD/.agents/skills"
+        WORKFLOWS_DST="$PWD/.chrys/workflows"
       fi
       CONFIG_FMT=chrys-yaml
       # Chrys agent profile is always user-level
@@ -176,6 +182,13 @@ if [[ $UNINSTALL -eq 1 ]]; then
       fi
     done
     rm -f "$SKILLS_DST/.aaw-target"
+  fi
+  if [[ -n "$WORKFLOWS_DST" ]]; then
+    for wf_file in "$SKILLS_SRC"/aaw-workflow/workflows/aaw-*.py; do
+      [[ -e "$wf_file" ]] || continue
+      wf_name="$(basename "$wf_file")"
+      rm -f "$WORKFLOWS_DST/$wf_name" && echo "  removed workflow: $wf_name"
+    done
   fi
   case "$CONFIG_FMT" in
     claude-json)
@@ -316,6 +329,25 @@ if [[ -n "$SKILLS_DST" ]]; then
   echo "$TARGET" > "$SKILLS_DST/.aaw-target"
 fi
 
+# --- Install chrys workflow drivers -------------------------------------------
+if [[ "$TARGET" == "chrys" && $MCP_ONLY -eq 0 && -n "$WORKFLOWS_DST" ]]; then
+  mkdir -p "$WORKFLOWS_DST"
+  echo
+  echo "Installing workflow drivers → $WORKFLOWS_DST"
+  for wf_file in "$SKILLS_SRC"/aaw-workflow/workflows/aaw-*.py; do
+    [[ -e "$wf_file" ]] || continue
+    wf_name="$(basename "$wf_file")"
+    rm -f "$WORKFLOWS_DST/$wf_name"
+    if [[ "$METHOD" == "symlink" ]]; then
+      ln -s "$wf_file" "$WORKFLOWS_DST/$wf_name"
+    else
+      cp "$wf_file" "$WORKFLOWS_DST/$wf_name"
+    fi
+    echo "  $wf_name"
+  done
+  echo "(First run of each workflow asks for trust confirmation in the chrys TUI.)"
+fi
+
 # --- Register MCP server (via uv) -------------------------------------------
 echo
 echo "Registering MCP server (question-tracker, $TARGET/$SCOPE)..."
@@ -415,6 +447,18 @@ if [[ -f "$MCP_EXE" ]]; then
 else
   echo "  [MISSING] $MCP_EXE" >&2
 fi
+if [[ -n "$WORKFLOWS_DST" ]]; then
+  echo "Workflow drivers:"
+  for wf_file in "$SKILLS_SRC"/aaw-workflow/workflows/aaw-*.py; do
+    [[ -e "$wf_file" ]] || continue
+    wf_name="$(basename "$wf_file")"
+    if [[ -e "$WORKFLOWS_DST/$wf_name" ]]; then
+      echo "  [OK] $wf_name"
+    else
+      echo "  [MISSING] $wf_name" >&2
+    fi
+  done
+fi
 echo "MCP server registration:"
 case "$CONFIG_FMT" in
   claude-json)
@@ -466,4 +510,4 @@ echo "(MCP server is a standalone Go binary — no Python/uv needed at runtime.)
 [[ "$TARGET" == "claude" ]] && echo "Try triggering with: 进入工作流"
 [[ "$TARGET" == "opencode" ]] && echo "Try triggering with: 进入工作流"
 [[ "$TARGET" == "codex" ]] && echo "Install the plugin via /plugins, then trigger with: 进入工作流"
-[[ "$TARGET" == "chrys" ]] && echo "Try triggering with: 进入工作流"
+[[ "$TARGET" == "chrys" ]] && echo "Try triggering with: 进入工作流（聊天模式）或 Workflows 面板中的 AAW 工作流驱动器"
