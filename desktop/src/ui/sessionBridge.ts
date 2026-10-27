@@ -16,10 +16,21 @@ import type { AcpSession } from "../acp/session.ts";
 import { attachSession, useSessionStore } from "../stores/sessionStore.ts";
 import { useAawStatusStore } from "../stores/aawStatusStore.ts";
 import { useRuntimeStatusStore } from "../stores/runtimeStatusStore.ts";
+import { useApprovalStore } from "../stores/approvalStore.ts";
 
 export function attachSessionViews(acp: AcpSession): () => void {
   const detachSessionView = attachSession(acp);
   const runtimeStatus = useRuntimeStatusStore.getState();
+  const syncAwaitingUser = (): void => {
+    useSessionStore
+      .getState()
+      .setAwaitingUser(
+        useApprovalStore
+          .getState()
+          .pending.some((item) => item.sessionId === acp.sessionId),
+      );
+  };
+  const unsubscribeApproval = useApprovalStore.subscribe(syncAwaitingUser);
   const unsubscribeAaw = acp.onEvent((event) => {
     useAawStatusStore.getState().handleSessionEvent(event);
     useRuntimeStatusStore.getState().handleSessionEvent(event);
@@ -34,14 +45,17 @@ export function attachSessionViews(acp: AcpSession): () => void {
     wasRunning = state.isAgentRunning;
     if (state.isAgentRunning) {
       useRuntimeStatusStore.getState().beginTurn();
+      syncAwaitingUser();
     } else {
       useRuntimeStatusStore.getState().endTurn();
     }
   });
   if (wasRunning) {
     runtimeStatus.beginTurn();
+    syncAwaitingUser();
   }
   return () => {
+    unsubscribeApproval();
     unsubscribeTurn();
     unsubscribeAaw();
     detachSessionView();

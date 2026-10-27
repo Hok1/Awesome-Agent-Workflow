@@ -153,7 +153,10 @@ function PlusMenu(): React.JSX.Element {
           ))
         ) : (
           runtime.skillSources.map((entry) => (
-            <MenuInfoRow key={entry.source} text={`${entry.source} · ${entry.count} 个`} />
+            <MenuInfoRow
+              key={entry.source}
+              text={`${entry.source} · ${entry.count} 个`}
+            />
           ))
         )}
       </div>
@@ -177,9 +180,9 @@ export function ModelTag(): React.JSX.Element {
   const effectiveCurrentId =
     currentModelId ??
     (label !== null
-      ? availableModels.find(
+      ? (availableModels.find(
           (model) => model.modelId === label || model.name === label,
-        )?.modelId ?? null
+        )?.modelId ?? null)
       : null);
   if (availableModels.length === 0) {
     return (
@@ -264,9 +267,11 @@ export function InputStatusRight(): React.JSX.Element {
  */
 export function TurnStatusRow(): React.JSX.Element | null {
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
-  const queuedCount = useSessionStore(
-    (state) => state.queuedPrompts.length,
+  const turnState = useSessionStore((state) => state.turnState);
+  const isWaitingForActivity = useSessionStore(
+    (state) => state.isWaitingForActivity,
   );
+  const queuedCount = useSessionStore((state) => state.queuedPrompts.length);
   const isTurnActive = useRuntimeStatusStore((state) => state.isTurnActive);
   // 等你回答/审批时轮次还开着（Promise 未 resolve），但相位不是
   // 「思考中/生成中」——是「在等你」，相位行退场让位给问答面板
@@ -276,9 +281,8 @@ export function TurnStatusRow(): React.JSX.Element | null {
   );
   if (
     !isAgentRunning ||
-    isTurnActive === false ||
-    phase === null ||
-    pendingCount > 0
+    ((isTurnActive === false || phase === null) && turnState !== "unknown") ||
+    (pendingCount > 0 && turnState !== "cancelling" && turnState !== "unknown")
   ) {
     return null;
   }
@@ -289,11 +293,17 @@ export function TurnStatusRow(): React.JSX.Element | null {
       className="flex items-center gap-2 px-1 py-1.5 text-xs text-ink-faint"
     >
       <span className="inline-block size-1.5 animate-pulse rounded-full bg-info" />
-      {phase}…
+      {turnState === "unknown"
+        ? "执行状态未确认，请检查连接；当前轮次仍被保留"
+        : turnState === "cancelling"
+          ? isWaitingForActivity
+            ? "仍在等待取消确认…"
+            : "正在取消，等待确认…"
+          : isWaitingForActivity
+            ? "暂未收到新进度，仍在等待响应…"
+            : `${phase}…`}
       {queuedCount > 0 ? (
-        <span className="text-ink-ghost">
-          （{queuedCount} 条排队待发）
-        </span>
+        <span className="text-ink-ghost">（{queuedCount} 条排队待发）</span>
       ) : null}
     </li>
   );

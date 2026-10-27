@@ -7,7 +7,7 @@
  *   响应（有 id 无 method）按 id 匹配 pending Promise；agent→client
  *   的请求（有 id 有 method）交给 handler 异步处理后回写响应；通知
  *   （无 id）回调派发；
- * - 超时：每个请求独立计时（默认 90s，可全局配置、可单次覆盖），超时
+ * - 超时：短请求独立计时（默认 90s）；长任务可显式传 null 等待最终响应。超时
  *   清理挂起项并 reject `AcpTimeoutError`；迟到的响应对已超时请求是
  *   no-op（不会误 resolve 也不会泄漏）；
  * - 错误传播：对端 error 响应 reject `AcpResponseError`；连接关闭 /
@@ -56,7 +56,7 @@ export type NotificationHandler = (
 
 interface PendingRequest {
   readonly method: string;
-  readonly timer: ReturnType<typeof setTimeout>;
+  readonly timer: ReturnType<typeof setTimeout> | undefined;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 }
@@ -103,7 +103,7 @@ export class AcpConnection {
   async request(
     method: string,
     params?: Readonly<Record<string, unknown>>,
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number | null } = {},
   ): Promise<unknown> {
     if (this.closed) {
       throw new AcpClosedError("ACP 连接已关闭，无法发送请求");
@@ -113,15 +113,21 @@ export class AcpConnection {
     if (params !== undefined) {
       payload.params = params;
     }
-    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    const timeoutMs =
+      options.timeoutMs === undefined
+        ? this.requestTimeoutMs
+        : options.timeoutMs;
 
     const responsePromise = new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (this.pending.get(id) !== undefined) {
-          this.pending.delete(id);
-          reject(new AcpTimeoutError(method, timeoutMs));
-        }
-      }, timeoutMs);
+      const timer =
+        timeoutMs === null
+          ? undefined
+          : setTimeout(() => {
+              if (this.pending.get(id) !== undefined) {
+                this.pending.delete(id);
+                reject(new AcpTimeoutError(method, timeoutMs));
+              }
+            }, timeoutMs);
       this.pending.set(id, { method, timer, resolve, reject });
     });
 
@@ -148,9 +154,15 @@ export class AcpConnection {
     }
   }
 
-  /** 发送通知（不等待）。连接已关闭时静默丢弃（对齐 Python 参考的 _notify）。 */
-  notify(method: string, params?: Readonly<Record<string, unknown>>): void {
+  /** 发送通知（不等待）。默认忽略写入失败；取消等控制操作可要求抛错。 */
+  notify(
+    method: string,
+    params?: Readonly<Record<string, unknown>>,
+    options: { throwOnError?: boolean } = {},
+  ): void {
     if (this.closed) {
+      if (options.throwOnError)
+        throw new AcpClosedError("ACP 连接已关闭，通知未发送");
       return;
     }
     const payload: Record<string, unknown> = { jsonrpc: "2.0", method };
@@ -160,6 +172,7 @@ export class AcpConnection {
     try {
       this.sendLine(payload);
     } catch (error) {
+      if (options.throwOnError) throw error;
       if (error instanceof AcpWriteError) {
         this.logger?.warn(`通知 ${method} 写入失败（连接已断）`, {
           reason: error.message,

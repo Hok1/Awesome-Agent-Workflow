@@ -20,6 +20,11 @@
  */
 import { create } from "zustand";
 import { createLogger } from "../core/logger.ts";
+import {
+  AcpClosedError,
+  AcpTimeoutError,
+  AcpWriteError,
+} from "../acp/errors.ts";
 import type { AcpSession, AcpSessionEvent } from "../acp/session.ts";
 import type {
   ModelInfo,
@@ -260,19 +265,34 @@ export function toolResultSummary(rawOutput: unknown): string {
 // store
 // ---------------------------------------------------------------------------
 
+export type TurnState =
+  | "idle"
+  | "running"
+  | "cancelling"
+  | "unknown"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+/** 无进度只提醒等待，不终止请求，也不释放轮次锁。 */
+export const TURN_IDLE_NOTICE_MS = 90_000;
+
 interface SessionStoreState {
   /** 会话条目（含流式中的条目；plan 步骤清单也是流内条目之一）。 */
   readonly items: readonly SessionItem[];
   /** agent 是否正在处理一轮 prompt。 */
   readonly isAgentRunning: boolean;
+  readonly turnState: TurnState;
+  readonly isWaitingForActivity: boolean;
+  readonly isAwaitingUser: boolean;
+  readonly setAwaitingUser: (waiting: boolean) => void;
   /**
    * 运行中「稍后发送」的排队消息（内存态，不进快照，切换会话即清）。
-   * 出队策略（评审确认）：轮次**正常**结束自动发下一条；**取消 / 出错**
-   * 结束则挂起（queuePaused=true），等用户在队列面板放行——按了停止就
-   * 是要停，不能它自己又跑起来。
+   * 出队策略：未暂停时正常结束自动发下一条；点击停止立即暂停，即使
+   * 本轮抢先正常完成也不续发。取消/出错同样暂停，等待用户手动继续。
    */
   readonly queuedPrompts: readonly string[];
-  /** 队列是否被挂起（取消/出错后）：true 时等待用户 resumeQueue。 */
+  /** 点击停止或取消/出错后挂起；true 时等待用户 resumeQueue。 */
   readonly queuePaused: boolean;
   /** 最近一轮的 stopReason（请求失败时为 null）。 */
   readonly lastStopReason: StopReason | null;
@@ -570,8 +590,10 @@ function sanitizeRestoredItem(raw: unknown): SessionItem | null {
           typeof record["resultSummary"] === "string"
             ? record["resultSummary"]
             : "",
-        startedAt: typeof record["startedAt"] === "number" ? record["startedAt"] : null,
-        endedAt: typeof record["endedAt"] === "number" ? record["endedAt"] : null,
+        startedAt:
+          typeof record["startedAt"] === "number" ? record["startedAt"] : null,
+        endedAt:
+          typeof record["endedAt"] === "number" ? record["endedAt"] : null,
       };
     case "plan": {
       const rawEntries = Array.isArray(record["entries"])
@@ -676,6 +698,22 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   let openThoughtId: string | null = null;
   // 当前的下行通道绑定
   let activeBinding: SessionBinding | null = null;
+  // 旧 Promise 只能收尾它所属的轮次；清空、换绑、恢复均使其失效。
+  let turnGeneration = 0;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const stopIdleTimer = (): void => {
+    clearTimeout(idleTimer);
+    idleTimer = undefined;
+  };
+  const noteActivity = (): void => {
+    stopIdleTimer();
+    if (get().isWaitingForActivity) set({ isWaitingForActivity: false });
+    if (!get().isAgentRunning || get().isAwaitingUser) return;
+    idleTimer = setTimeout(() => {
+      idleTimer = undefined;
+      set({ isWaitingForActivity: true });
+    }, TURN_IDLE_NOTICE_MS);
+  };
   // 消息快照的持久化目标（null = 不持久化）与节流定时器
   let logTargetPath: string | null = null;
   let logFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -788,6 +826,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
 
   /** 落笔用户消息并标记轮次开始（轮次生命周期的真实领域入口）。 */
   const beginTurn = (text: string): void => {
+    turnGeneration += 1;
     turnStartLength = get().items.length;
     const closed = closeStreamingItems(get().items);
     set({
@@ -801,11 +840,18 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
         },
       ],
       isAgentRunning: true,
+      turnState: "running",
+      isAwaitingUser: false,
+      turnError: null,
+      lastStopReason: null,
     });
+    noteActivity();
   };
 
   /** 轮次收尾（prompt 响应 / 取消 / 失败共用）：封口、记录结局。 */
   const endTurn = (outcome: TurnOutcome): void => {
+    turnGeneration += 1;
+    stopIdleTimer();
     const additions: SystemNoticeItem[] = [];
     if (outcome.errorMessage !== undefined) {
       additions.push({
@@ -834,16 +880,28 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     set({
       items: additions.length > 0 ? [...closed, ...additions] : closed,
       isAgentRunning: false,
+      turnState:
+        outcome.errorMessage !== undefined
+          ? "failed"
+          : outcome.stopReason === "cancelled"
+            ? "cancelled"
+            : "completed",
+      isWaitingForActivity: false,
+      isAwaitingUser: false,
+      turnError:
+        outcome.errorMessage === undefined
+          ? null
+          : classifyTurnError(outcome.errorMessage),
       lastStopReason: outcome.stopReason,
+      lastError: null,
     });
-    // 队列出队：正常结束自动发下一条；取消/出错挂起等放行。
-    // 挂起不是粘性锁——之后任何一轮正常结束都会恢复自动出队。
+    // 点击停止时已暂停队列；本轮正常完成不能撤销用户的停止意图。
     if (get().queuedPrompts.length > 0) {
       const failed = outcome.errorMessage !== undefined;
       const cancelled = outcome.stopReason === "cancelled";
       if (failed || cancelled) {
         set({ queuePaused: true });
-      } else {
+      } else if (!get().queuePaused) {
         drainNextQueued();
       }
     }
@@ -853,6 +911,11 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
 
   /** 出队下一条排队消息（不检查挂起——调用方负责）。 */
   const drainNextQueued = (): void => {
+    // 不能发送时保留队首，避免合并后的发送保护拒绝消息而队列已丢失它。
+    if (get().isAgentRunning || get().isConnecting || activeBinding === null) {
+      set({ queuePaused: true });
+      return;
+    }
     const next = get().queuedPrompts[0];
     if (next === undefined) {
       return;
@@ -958,8 +1021,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     const wasTerminal =
       existing.status === "completed" || existing.status === "failed";
     const isTerminal = status === "completed" || status === "failed";
-    const endedAt =
-      !wasTerminal && isTerminal ? Date.now() : existing.endedAt;
+    const endedAt = !wasTerminal && isTerminal ? Date.now() : existing.endedAt;
     const merged: ToolCallItem = {
       ...existing,
       title,
@@ -990,6 +1052,9 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     queuedPrompts: [],
     queuePaused: false,
     isAgentRunning: false,
+    turnState: "idle",
+    isWaitingForActivity: false,
+    isAwaitingUser: false,
     lastStopReason: null,
     modelLabel: null,
     availableModels: [],
@@ -1006,8 +1071,19 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     lastError: null,
 
     bindSession: (binding) => {
+      if (binding !== activeBinding) {
+        turnGeneration += 1;
+        if (get().isAgentRunning) set({ turnState: "unknown" });
+      }
       activeBinding = binding;
       set({ isBound: binding !== null });
+    },
+
+    setAwaitingUser: (waiting) => {
+      const next = waiting && get().isAgentRunning;
+      if (get().isAwaitingUser === next) return;
+      set({ isAwaitingUser: next });
+      noteActivity();
     },
 
     sealStreamingItems: () => {
@@ -1015,6 +1091,16 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     },
 
     handleEvent: (event) => {
+      if (
+        event.type === "agent_message_chunk" ||
+        event.type === "agent_thought_chunk" ||
+        event.type === "tool_call" ||
+        event.type === "tool_call_update" ||
+        event.type === "plan" ||
+        event.type === "usage_update"
+      ) {
+        noteActivity();
+      }
       switch (event.type) {
         case "agent_message_chunk":
           appendChunk(false, event.text);
@@ -1065,7 +1151,11 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
             set({
               items: [
                 ...items,
-                { kind: "plan", id: nextItemId("plan"), entries: event.entries },
+                {
+                  kind: "plan",
+                  id: nextItemId("plan"),
+                  entries: event.entries,
+                },
               ],
             });
           }
@@ -1158,6 +1248,12 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
 
     setAgentCrashed: (reason) => {
       set({ agentCrashed: reason === null ? null : { reason } });
+      if (reason !== null) {
+        activeBinding = null;
+        set({ isBound: false });
+        if (get().isAgentRunning)
+          endTurn({ stopReason: null, errorMessage: reason });
+      }
     },
 
     setSessions: (sessions, workspacePath) => {
@@ -1229,7 +1325,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
 
     sendPrompt: (text) => {
       const trimmed = text.trim();
-      if (trimmed.length === 0) {
+      if (trimmed.length === 0 || get().isAgentRunning || get().isConnecting) {
         return;
       }
       const binding = activeBinding;
@@ -1245,15 +1341,34 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       beginTurn(trimmed);
       set({ turnError: null });
       logger.info("用户消息已发送", { length: trimmed.length });
-      void binding.prompt(trimmed).then(
-        (result) => endTurn({ stopReason: result.stopReason }),
-        (error: unknown) => {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          logger.warn("本轮 prompt 失败", { reason: message });
-          endTurn({ stopReason: null, errorMessage: message });
-        },
-      );
+      const generation = turnGeneration;
+      const isCurrent = (): boolean =>
+        generation === turnGeneration && binding === activeBinding;
+      const onFailure = (error: unknown): void => {
+        if (!isCurrent()) return;
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn("本轮 prompt 失败", { reason: message });
+        if (
+          error instanceof AcpTimeoutError ||
+          error instanceof AcpWriteError
+        ) {
+          // 等待失败不能证明远端已停止，保持锁定，避免重复执行。
+          set({ turnState: "unknown", lastError: message });
+          return;
+        }
+        if (error instanceof AcpClosedError) {
+          activeBinding = null;
+          set({ isBound: false, agentCrashed: { reason: message } });
+        }
+        endTurn({ stopReason: null, errorMessage: message });
+      };
+      try {
+        void binding.prompt(trimmed).then((result) => {
+          if (isCurrent()) endTurn({ stopReason: result.stopReason });
+        }, onFailure);
+      } catch (error) {
+        onFailure(error);
+      }
     },
 
     setSessionModels: (models, currentModelId) => {
@@ -1321,20 +1436,32 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     },
 
     requestCancel: () => {
-      if (!get().isAgentRunning) {
+      if (!get().isAgentRunning || get().turnState === "cancelling") {
         return;
       }
+      // 先记录停止意图，再发通知；即使当前没有排队消息，随后入队的也等待放行。
+      set({ queuePaused: true });
       const binding = activeBinding;
       if (binding === null) {
-        // 未绑定：直接按取消收尾（真实路径由 prompt 响应带回）
-        endTurn({ stopReason: "cancelled" });
+        set({ turnState: "unknown" });
         return;
       }
-      binding.cancel();
-      logger.info("已请求取消当前轮（session/cancel）");
+      set({ turnState: "cancelling" });
+      noteActivity();
+      try {
+        binding.cancel();
+        logger.info("已请求取消当前轮（session/cancel）");
+      } catch (error) {
+        set({
+          turnState: "unknown",
+          lastError: error instanceof Error ? error.message : String(error),
+        });
+      }
     },
 
     clear: () => {
+      turnGeneration += 1;
+      stopIdleTimer();
       // 会话清空时流式落笔锚点一并复位，否则后续 chunk 会拼到已消失的条目上
       openAssistantId = null;
       openThoughtId = null;
@@ -1345,9 +1472,13 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       }
       set({
         items: [],
-            queuedPrompts: [],
+        queuedPrompts: [],
         queuePaused: false,
         isAgentRunning: false,
+        turnState: "idle",
+        isWaitingForActivity: false,
+        isAwaitingUser: false,
+        turnError: null,
         lastStopReason: null,
         lastError: null,
         openingSessionId: null,
@@ -1355,13 +1486,19 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     },
 
     restoreItems: (items) => {
+      turnGeneration += 1;
+      stopIdleTimer();
       openAssistantId = null;
       openThoughtId = null;
       set({
         items: snapshotItems(items),
-            queuedPrompts: [],
+        queuedPrompts: [],
         queuePaused: false,
         isAgentRunning: false,
+        turnState: "idle",
+        isWaitingForActivity: false,
+        isAwaitingUser: false,
+        turnError: null,
         lastStopReason: null,
       });
     },

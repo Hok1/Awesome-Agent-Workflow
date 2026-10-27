@@ -305,4 +305,3 @@ describe("ChatInput 草稿按（工作区 × 会话）持久化", () => {
     expect(getTextarea()).toHaveValue("会话一草稿");
   });
 });
-

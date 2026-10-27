@@ -393,6 +393,10 @@ export async function switchRealSession(sessionId: string): Promise<boolean> {
   }
   const store = useSessionStore.getState();
   // 先快照再清空：load 失败时按快照回滚，成功时视图由回放事件重建
+  if (store.isAgentRunning) {
+    logger.info("当前轮次尚未结束，暂不切换会话", { sessionId });
+    return false;
+  }
   const previousItems = store.items;
   store.clear();
   try {

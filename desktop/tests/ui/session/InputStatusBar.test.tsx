@@ -18,7 +18,7 @@ import { useApprovalStore } from "../../../src/stores/approvalStore.ts";
 
 beforeEach(() => {
   useRuntimeStatusStore.getState().reset();
-  useSessionStore.setState({ isAgentRunning: false });
+  useSessionStore.getState().clear();
 });
 
 afterEach(() => {
@@ -56,6 +56,32 @@ function seedRuntime(): void {
 }
 
 describe("InputStatusBar", () => {
+  it("等待、取消和未知状态使用各自文案，未知状态不依赖运行时相位", () => {
+    useSessionStore.setState({
+      isAgentRunning: true,
+      turnState: "running",
+      isWaitingForActivity: true,
+    });
+    useRuntimeStatusStore.getState().beginTurn();
+    const { rerender } = render(<TurnStatusRow />);
+    expect(
+      screen.getByText("暂未收到新进度，仍在等待响应…"),
+    ).toBeInTheDocument();
+    act(() =>
+      useSessionStore.setState({
+        turnState: "cancelling",
+        isWaitingForActivity: false,
+      }),
+    );
+    expect(screen.getByText("正在取消，等待确认…")).toBeInTheDocument();
+    act(() => {
+      useSessionStore.setState({ turnState: "unknown" });
+      useRuntimeStatusStore.getState().reset();
+    });
+    rerender(<TurnStatusRow />);
+    expect(screen.getByText(/执行状态未确认/)).toBeInTheDocument();
+  });
+
   it("上下文用量圆环：百分比 + 悬停明细（窗口/累计/缓存）", () => {
     seedRuntime();
     render(<InputStatusRight />);

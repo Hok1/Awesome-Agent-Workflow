@@ -17,7 +17,7 @@ ACP（Agent Client Protocol）是 JSON-RPC 2.0 over stdio 的**行分帧**协议
 | `transport/nodeStdioTransport.ts` | Node 子进程实现：spawn 三管道、行分帧、stderr 旁路、Windows `taskkill /PID <pid> /T /F` 进程树终止、POSIX SIGTERM→SIGKILL；子进程 `exit` 时主动关父端 stdin（否则 Node 的 `close` 事件会因父端写端未关而悬置）                                                                                                  |
 | `transport/inMemoryTransport.ts`  | 进程内对连管道（协议层单测的测试替身）                                                                                                                                                                                                                                                                          |
 | `parse.ts`                        | unknown → 基础类型的收窄守卫（asRecord / asString / asNumber / asBoolean），connection / session 与各 agent 方言共用                                                                                                                                                                                            |
-| `connection.ts`                   | JSON-RPC 收发：自增 id 匹配、每请求独立超时（默认 90s）、迟到响应 no-op、error 传播、断线唤醒全部挂起请求、逐行登记 `acpTraffic`；反向请求的响应回写在通道已断时降级为日志（不逃逸 unhandled rejection）                                                                                                        |
+| `connection.ts`                   | JSON-RPC 收发：自增 id 匹配、短请求独立超时（默认 90s）、长任务可无限等待、已超时请求的迟到响应 no-op、error 传播、断线唤醒全部挂起请求、逐行登记 `acpTraffic`；反向请求的响应回写在通道已断时降级为日志（不逃逸 unhandled rejection）                                                                                                        |
 | `session.ts`                      | 会话生命周期（initialize→new/load/list→prompt→cancel→set_mode/set_model→close），wire 通知守卫收窄为类型化事件 `AcpSessionEvent`；方言扩展点 `AcpDialect`（私有通知翻译 + 私有反向请求，由 `src/agents` 注入）；标准反向请求回调注入（未注入时**安全默认**：权限自动取消，表外 kind 回落 `unknown` 而非 allow） |
 | `mock/echo-agent.ts`              | 进程内仿真 agent（测试替身）：讲同一套方言，可编程轮次脚本（通知序列 / 反向请求 / 挂起等取消），供协议层单测使用                                                                                                                                                                                                |
 
@@ -26,8 +26,13 @@ ACP（Agent Client Protocol）是 JSON-RPC 2.0 over stdio 的**行分帧**协议
 - **连接生命周期**：spawn agent 子进程（如 `chrys acp`），接管 stdin/stdout，
   stderr 单独落盘；进程树终止（Windows 必须 `taskkill /PID <pid> /T /F`，
   单杀父进程会留下孤儿子进程）。
-- **请求-响应关联**：自增 id → pending map → Event/Promise 唤醒；每个请求有
-  超时（参考实现为 90s），超时清理挂起项并报 `ACP_REQUEST_TIMEOUT` 类错误。
+- **请求-响应关联**：自增 id → pending map → Event/Promise 唤醒。短请求默认
+  90s 超时；`session/prompt` 默认传 `timeoutMs: null`，持续等待最终响应或
+  连接退出。显式指定数值仍可限制单次请求的等待时间，但等待超时不代表远端停止。
+- **桌面轮次生命周期**：90s 无新进度只显示等待提示，收到进度后恢复；人工
+  审批/问答期间暂停提醒。取消通知发出后保持「正在取消」，以 prompt 最终
+  响应确认取消或正常完成。状态未确认时保留轮次锁；禁止重复发送，旧轮次
+  Promise 不能收尾新会话。进程退出才按连接失败收尾。
 - **通知流解析**：`session/update` 的各类 `sessionUpdate`（agent_message_chunk /
   agent_thought_chunk / tool_call / tool_call_update / plan / usage_update /
   session_info_update…），以及 chrys 扩展通知（`_chrys/runtime_update`、

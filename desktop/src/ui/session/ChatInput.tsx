@@ -124,13 +124,16 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // 审批模式随会话事件更新（模型/上下文/skills/mcp 在 InputStatusCluster 自取）
   const approvalMode = useSessionStore((state) => state.approvalMode);
+  const turnState = useSessionStore((state) => state.turnState);
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   // 审批默认模式（ask / auto-allow / auto-reject）：客户端对权限请求的
   // 缺省应答策略，即时切换（与设置页同一字段）
   const approvalPolicy = useSettingsStore((state) => state.approvalMode);
   const setApprovalPolicy = useSettingsStore((state) => state.setApprovalMode);
   // 输入卡宽度与消息流同档（对齐）
-  const widthClass = chatWidthClassOf(useSettingsStore((state) => state.chatWidth));
+  const widthClass = chatWidthClassOf(
+    useSettingsStore((state) => state.chatWidth),
+  );
   const activePath = useWorkspaceStore((state) => state.activePath);
 
   // ---- 草稿 / 输入历史的持久化（见 draftStore / promptHistory 文件头）----
@@ -420,7 +423,9 @@ export function ChatInput({
           </div>
         </div>
       ) : null}
-      <div className={`composer-card mx-auto w-full overflow-hidden rounded-2xl border border-line bg-surface shadow-elev-2 ${widthClass}`}>
+      <div
+        className={`composer-card mx-auto w-full overflow-hidden rounded-2xl border border-line bg-surface shadow-elev-2 ${widthClass}`}
+      >
         {/* 上行：透明无边框的多行输入 */}
         <div className="px-4 pb-1 pt-3">
           <textarea
@@ -491,8 +496,13 @@ export function ChatInput({
             <button
               type="button"
               onClick={onCancel}
-              aria-label="停止"
-              title="停止（Esc）"
+              disabled={turnState === "cancelling"}
+              aria-label={turnState === "cancelling" ? "正在取消" : "停止"}
+              title={
+                turnState === "cancelling"
+                  ? "正在取消，等待确认"
+                  : "停止（Esc）"
+              }
               className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-danger-line bg-danger-bg/40 text-danger-ink transition-colors hover:bg-danger-bg/70"
             >
               <StopIcon />
@@ -504,9 +514,7 @@ export function ChatInput({
               onClick={submit}
               disabled={disabled || draft.trim().length === 0}
               aria-label={isAgentRunning ? "加入队列" : "发送"}
-              title={
-                isAgentRunning ? "加入队列，当前轮结束后按序发出" : "发送"
-              }
+              title={isAgentRunning ? "加入队列，当前轮结束后按序发出" : "发送"}
               className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowUpIcon />

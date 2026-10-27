@@ -35,6 +35,40 @@ describe("extractJsonObject", () => {
 });
 
 describe("runAawJsonQuery", () => {
+  it("非零退出优先读取多行 JSON 错误，保留迁移原因而非 stderr 末行", async () => {
+    const message =
+      "当前工作流缺少布局版本标记，需要先完成迁移。\n预览：aaw migrate-layout --sr SR-001 --json";
+    const runner = fakeRunner(() => ({
+      ok: false,
+      code: 1,
+      stdout: JSON.stringify(
+        {
+          schema_version: 1,
+          ok: false,
+          error: { code: "MIGRATION_NEEDED", message },
+        },
+        null,
+        2,
+      ),
+      stderr: "迁移说明\naaw migrate-layout --sr SR-001 --apply --json",
+      durationMs: 1,
+    }));
+    await expect(
+      runAawJsonQuery(
+        {
+          workspacePath: "D:/project",
+          uvCommand: "uv",
+          aawScriptPath: "D:/tools/aaw.py",
+          runner,
+        },
+        ["next", "--sr", "SR-001", "--peek", "--json"],
+      ),
+    ).rejects.toMatchObject({
+      code: "MIGRATION_NEEDED",
+      message: `[MIGRATION_NEEDED] ${message}`,
+    });
+  });
+
   it("按 loader 契约组装命令并抽取 JSON（next 走 --peek 只读语义）", async () => {
     const calls: string[][] = [];
     const runner = fakeRunner((command) => {

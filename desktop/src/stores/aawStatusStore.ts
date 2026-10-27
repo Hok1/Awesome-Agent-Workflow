@@ -13,6 +13,7 @@ import { create } from "zustand";
 import { createLogger } from "../core/logger.ts";
 import type { AcpSessionEvent } from "../acp/session.ts";
 import type { AawStatusLoader } from "../aaw/statusLoader.ts";
+import { AawQueryError } from "../aaw/aawCli.ts";
 import {
   parseCliError,
   parseNextPayload,
@@ -52,7 +53,10 @@ interface AawStatusStoreState {
   /** 会话事件自动刷新开关。 */
   autoRefresh: boolean;
   /** 绑定 / 解绑数据源。 */
-  bindLoader: (loader: AawStatusLoader | null) => void;
+  bindLoader: (
+    loader: AawStatusLoader | null,
+    workspacePath?: string | null,
+  ) => void;
   /** 切换当前跟踪的 SR（并立即刷新该 SR）。 */
   selectSr: (sr: string) => void;
   /** 手动刷新：srs 列表 + 当前 SR 的 status / next。 */
@@ -75,10 +79,28 @@ const AUTO_REFRESH_MIN_INTERVAL_MS = 2_000;
 let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let lastAutoRefreshAt = 0;
 /** refresh 重入保护（手动刷新与自动刷新并发时只跑一份）。 */
-let refreshInFlight = false;
+let refreshInFlight: number | null = null;
+let queryGeneration = 0;
+let boundWorkspace: string | null = null;
+
+/** 换项目、配置或 SR 后，旧请求不再允许落地，也不能释放新请求的锁。 */
+function invalidateQueries(): void {
+  queryGeneration += 1;
+  refreshInFlight = null;
+  if (autoRefreshTimer !== null) clearTimeout(autoRefreshTimer);
+  autoRefreshTimer = null;
+  lastAutoRefreshAt = 0;
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function describeQueryFailure(source: string, error: unknown): string {
+  // status / next 被同一个领域门禁拦住时只呈现一份完整原因。
+  return error instanceof AawQueryError
+    ? error.message
+    : `${source} 读取失败：${errorMessage(error)}`;
 }
 
 function describeUnparsable(source: string, raw: unknown): string {
@@ -91,7 +113,7 @@ function describeUnparsable(source: string, raw: unknown): string {
 
 export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
   /** 解析结果 → store（refresh 的唯一写入口）。 */
-  function applySrList(parsed: AawSrList): void {
+  function chooseSr(parsed: AawSrList): string | null {
     const { currentSr, srs: previous } = get();
     // 新出现的 SR 优先：会话中刚创建的 SR 就是「正在运行的需求」——陈旧
     // 的首个 SR（如早期演示数据）不应一直占着时间线。初次加载（旧列表为
@@ -108,23 +130,7 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
     } else {
       next = parsed.srs[0] ?? null;
     }
-    set({
-      srs: parsed.srs,
-      ...(next === currentSr ? {} : { currentSr: next }),
-    });
-  }
-
-  /** status/next 原样入 store：currentSr 是 UI 的选择，不被数据回写。 */
-  function applyStatus(parsed: AawWorkflowStatus): void {
-    set({ status: parsed });
-  }
-
-  function applyNext(parsed: AawNextPayload): void {
-    set({ next: parsed });
-  }
-
-  function applyPlan(parsed: AawPlanPayload): void {
-    set({ plan: parsed });
+    return next;
   }
 
   return {
@@ -139,8 +145,25 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
     lastRefreshedAt: null,
     autoRefresh: true,
 
-    bindLoader: (loader) => {
-      set({ loader });
+    bindLoader: (loader, workspacePath = boundWorkspace) => {
+      invalidateQueries();
+      const changedProject = workspacePath !== boundWorkspace;
+      boundWorkspace = workspacePath;
+      set({
+        loader,
+        isLoading: false,
+        lastError: null,
+        ...(changedProject
+          ? {
+              srs: [],
+              currentSr: null,
+              status: null,
+              next: null,
+              plan: null,
+              lastRefreshedAt: null,
+            }
+          : {}),
+      });
       logger.info(loader === null ? "AAW 数据源已解绑" : "AAW 数据源已绑定");
     },
 
@@ -148,7 +171,14 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
       if (get().currentSr === sr) {
         return;
       }
-      set({ currentSr: sr, status: null, next: null });
+      invalidateQueries();
+      set({
+        currentSr: sr,
+        status: null,
+        next: null,
+        plan: null,
+        lastRefreshedAt: null,
+      });
       void get().refresh();
     },
 
@@ -158,25 +188,45 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
         logger.debug("未绑定 AAW 数据源，跳过刷新");
         return;
       }
-      if (refreshInFlight) {
+      if (refreshInFlight !== null) {
         return;
       }
-      refreshInFlight = true;
-      set({ isLoading: true });
+      const generation = queryGeneration;
+      refreshInFlight = generation;
+      const isCurrent = (): boolean =>
+        generation === queryGeneration && get().loader === loader;
+      set({ isLoading: true, lastError: null });
       const errors: string[] = [];
       try {
+        let parsedSrs: AawSrList | null = null;
         try {
           const rawSrs = await loader.listSrs();
-          const parsed = parseSrList(rawSrs);
-          if (parsed === null) {
+          if (!isCurrent()) return;
+          parsedSrs = parseSrList(rawSrs);
+          if (parsedSrs === null) {
             errors.push(describeUnparsable("status", rawSrs));
-          } else {
-            applySrList(parsed);
           }
         } catch (error) {
-          errors.push(`status 读取失败：${errorMessage(error)}`);
+          errors.push(describeQueryFailure("status", error));
         }
-        const sr = get().currentSr;
+        if (!isCurrent()) return;
+        if (parsedSrs === null) {
+          set({ isLoading: false, lastError: errors.join("；") });
+          return;
+        }
+        const sr = chooseSr(parsedSrs);
+        // 列表成功即可用于选择 SR。详情失败不能把其他 SR 也锁在空下拉里；
+        // 换 SR 时清空旧详情，同一 SR 刷新失败才保留之前的快照。
+        set({
+          srs: parsedSrs.srs,
+          currentSr: sr,
+          ...(sr !== get().currentSr
+            ? { status: null, next: null, plan: null, lastRefreshedAt: null }
+            : {}),
+        });
+        let status: AawWorkflowStatus | null = null;
+        let next: AawNextPayload | null = null;
+        let plan: AawPlanPayload | null = null;
         if (sr !== null) {
           const [statusResult, nextResult, planResult] =
             await Promise.allSettled([
@@ -184,6 +234,7 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
               loader.readNext(sr),
               loader.readPlan(sr),
             ]);
+          if (!isCurrent()) return;
           if (statusResult.status === "fulfilled") {
             const parsed = parseWorkflowStatus(statusResult.value);
             if (parsed === null) {
@@ -191,11 +242,11 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
                 describeUnparsable(`status --sr ${sr}`, statusResult.value),
               );
             } else {
-              applyStatus(parsed);
+              status = parsed;
             }
           } else {
             errors.push(
-              `status --sr ${sr} 读取失败：${errorMessage(statusResult.reason)}`,
+              describeQueryFailure(`status --sr ${sr}`, statusResult.reason),
             );
           }
           if (nextResult.status === "fulfilled") {
@@ -205,11 +256,11 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
                 describeUnparsable(`next --sr ${sr}`, nextResult.value),
               );
             } else {
-              applyNext(parsed);
+              next = parsed;
             }
           } else {
             errors.push(
-              `next --sr ${sr} 读取失败：${errorMessage(nextResult.reason)}`,
+              describeQueryFailure(`next --sr ${sr}`, nextResult.reason),
             );
           }
           // plan 是完整图的增强来源：失败**静默降级**（老 CLI 没有该命令
@@ -217,7 +268,7 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
           if (planResult.status === "fulfilled") {
             const parsed = parsePlanPayload(planResult.value);
             if (parsed !== null) {
-              applyPlan(parsed);
+              plan = parsed;
             } else {
               logger.debug(`plan --sr ${sr} 输出不可解析，按旧口径呈现`);
             }
@@ -227,15 +278,25 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
             });
           }
         }
+        if (!isCurrent()) return;
+        // 同一 SR 的详情整轮成功后一起替换，避免不同刷新时刻的数据混用。
         set({
           isLoading: false,
-          lastError: errors.length === 0 ? null : errors.join("；"),
+          lastError:
+            errors.length === 0 ? null : [...new Set(errors)].join("\n\n"),
           ...(errors.length === 0
-            ? { lastRefreshedAt: new Date().toISOString() }
+            ? {
+                srs: parsedSrs.srs,
+                currentSr: sr,
+                status,
+                next,
+                plan,
+                lastRefreshedAt: new Date().toISOString(),
+              }
             : {}),
         });
       } finally {
-        refreshInFlight = false;
+        if (refreshInFlight === generation) refreshInFlight = null;
       }
     },
 
@@ -250,11 +311,15 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
     },
 
     reset: () => {
+      invalidateQueries();
+      boundWorkspace = null;
       set({
+        loader: null,
         srs: [],
         currentSr: null,
         status: null,
         next: null,
+        plan: null,
         isLoading: false,
         lastError: null,
         lastRefreshedAt: null,

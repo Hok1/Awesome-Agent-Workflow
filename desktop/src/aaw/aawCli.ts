@@ -14,6 +14,7 @@
  * 数据源）。JSON 对象 → 领域模型的解析在 `src/aaw/workflowModel.ts`。
  */
 import { describeRunFailure } from "./healthChecks.ts";
+import { parseCliError } from "./workflowModel.ts";
 import type { ProcessRunner } from "./processRunner.ts";
 
 /** 单次 aaw CLI 调用入参。 */
@@ -27,6 +28,17 @@ export interface AawStatusOptions {
 /** status 会触发 aaw 的会话入口自动更新，超时给足。 */
 const AAW_STATUS_TIMEOUT_MS = 120_000;
 
+/** CLI 的领域错误与进程启动/超时错误分开保留，供界面去重与呈现。 */
+export class AawQueryError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(`[${code}] ${message}`);
+    this.name = "AawQueryError";
+  }
+}
+
 /**
  * 执行一条 aaw CLI 只读查询并抽取 JSON（status / next 共用的出站封装）。
  * `src/aaw/statusLoader.ts` 的 loader 契约与这里共用同一命令形态，防止
@@ -37,12 +49,33 @@ export async function runAawJsonQuery(
   options: AawStatusOptions,
   args: readonly string[],
 ): Promise<unknown> {
+  const scriptPath = options.aawScriptPath.trim();
+  if (scriptPath === "") {
+    throw new Error("尚未配置 aaw 脚本路径，请在设置的工具路径中选择 aaw.py");
+  }
+  if (options.uvCommand.trim() === "") {
+    throw new Error("尚未配置 uv 命令，请检查设置中的工具路径");
+  }
+  // 相对脚本路径与 CLI 一致，按所选项目解析；绝对工具路径原样复用。
+  const resolvedPath = /^(?:[a-z]:[\\/]|[\\/])/i.test(scriptPath)
+    ? scriptPath
+    : `${options.workspacePath.replace(/[\\/]+$/, "")}/${scriptPath}`;
+  if (!(await options.runner.exists(resolvedPath))) {
+    throw new Error(
+      `aaw 工具文件不存在或无法访问：${resolvedPath}；请检查设置中的 aaw 脚本路径`,
+    );
+  }
   const result = await options.runner.run({
-    command: [options.uvCommand, "run", options.aawScriptPath, ...args],
+    command: [options.uvCommand.trim(), "run", scriptPath, ...args],
     cwd: options.workspacePath,
     timeoutMs: AAW_STATUS_TIMEOUT_MS,
   });
   if (!result.ok) {
+    // --json 的错误信封包含真正原因；stderr 最后一行往往只是修复命令。
+    const cliError = parseCliError(extractJsonObject(result.stdout));
+    if (cliError !== null) {
+      throw new AawQueryError(cliError.code, cliError.message);
+    }
     throw new Error(describeRunFailure(result));
   }
   return extractJsonObject(result.stdout);
