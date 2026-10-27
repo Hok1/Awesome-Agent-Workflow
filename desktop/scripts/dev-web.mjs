@@ -11,7 +11,7 @@ import net from "node:net";
 import { fileURLToPath } from "node:url";
 
 const PORT = 1420;
-const URL = `http://localhost:${PORT}/`;
+const PAGE_URL = `http://localhost:${PORT}/`;
 
 function tryConnect(host, port, timeoutMs = 400) {
   return new Promise((resolve) => {
@@ -34,13 +34,13 @@ async function isUp() {
 
 function openBrowser() {
   if (process.platform === "win32") {
-    spawn("cmd", ["/c", "start", "", URL], {
+    spawn("cmd", ["/c", "start", "", PAGE_URL], {
       detached: true,
       stdio: "ignore",
     }).unref();
   } else {
     const opener = process.platform === "darwin" ? "open" : "xdg-open";
-    spawn(opener, [URL], { detached: true, stdio: "ignore" }).unref();
+    spawn(opener, [PAGE_URL], { detached: true, stdio: "ignore" }).unref();
   }
 }
 
@@ -59,7 +59,7 @@ const child = spawn(process.execPath, [viteBin], {
   env: { ...process.env },
 });
 console.log(
-  `[dev-web] 启动中……就绪后自动打开 ${URL}（Ctrl+C 退出并收口 agent 进程）`,
+  `[dev-web] 启动中……就绪后自动打开 ${PAGE_URL}（Ctrl+C 退出并收口 agent 进程）`,
 );
 
 // 轮询端口就绪后开一次浏览器（90s 未就绪则提示手动打开）
@@ -69,7 +69,7 @@ const deadline = Date.now() + 90_000;
     return;
   }
   if (Date.now() > deadline) {
-    console.log(`[dev-web] 等待超时：请手动打开 ${URL}，并查看上方 vite 日志`);
+    console.log(`[dev-web] 等待超时：请手动打开 ${PAGE_URL}，并查看上方 vite 日志`);
     return;
   }
   void isUp().then((up) => {
