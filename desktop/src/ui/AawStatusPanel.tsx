@@ -216,7 +216,7 @@ function AawStatusPanel({ onRunCommand }: AawStatusPanelProps = {}) {
       status === null &&
       next === null ? (
         <p className="rounded-md border border-dashed border-line px-3 py-6 text-center text-sm text-ink-faint">
-          该项目暂无工作流记录（.sdd/ 下没有进行中的 SR）。
+          尚未连接工作流数据源，请选择项目并检查工具路径设置。
         </p>
       ) : (
         <div className="space-y-3">
@@ -263,13 +263,29 @@ function AawStatusPanel({ onRunCommand }: AawStatusPanelProps = {}) {
           {lastError !== null ? (
             <p
               role="alert"
-              className="rounded border border-danger-line bg-danger-bg/60 px-3 py-2 text-xs text-danger-ink"
+              className="rounded border border-danger-line bg-danger-bg/60 px-3 py-2 text-xs whitespace-pre-wrap break-words text-danger-ink"
             >
               {lastError}
+              {lastRefreshedAt !== null
+                ? "（刷新失败，显示上次读取结果）"
+                : null}
             </p>
           ) : null}
 
-          {srs.length === 0 && status === null ? (
+          {isLoading && lastRefreshedAt === null ? (
+            <p
+              role="status"
+              className="px-3 py-6 text-center text-sm text-ink-faint"
+            >
+              正在读取工作流…
+            </p>
+          ) : null}
+
+          {!isLoading &&
+          lastError === null &&
+          lastRefreshedAt !== null &&
+          srs.length === 0 &&
+          status === null ? (
             <p className="rounded-md border border-dashed border-line px-3 py-6 text-center text-sm text-ink-faint">
               当前项目暂无 AAW 工作流（.sdd/ 下没有 workflow.yaml）。
             </p>

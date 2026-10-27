@@ -316,6 +316,20 @@ describe("openRealWorkspace：新建会话语义（forceNew）", () => {
 });
 
 describe("switchRealSession：左栏点击历史会话的切换", () => {
+  it("轮次未确认结束时拒绝切换，保留当前消息与运行态", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    await openRealWorkspace(WORKSPACE);
+    useSessionStore.getState().beginTurn("仍在运行");
+    expect(await switchRealSession("sess-other")).toBe(false);
+    expect(fakeSessionControl.loadCalls).toEqual(["sess-latest"]);
+    expect(useSessionStore.getState().isAgentRunning).toBe(true);
+    expect(useSessionStore.getState().items[0]).toMatchObject({
+      text: "仍在运行",
+    });
+    useSessionStore.getState().endTurn({ stopReason: "end_turn" });
+    expect(await switchRealSession("sess-other")).toBe(true);
+  });
+
   it("切换成功载入目标会话；失败回滚当前视图且不切换聚焦", async () => {
     fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
     await openRealWorkspace(WORKSPACE);

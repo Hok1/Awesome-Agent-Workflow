@@ -26,13 +26,10 @@ import { isTauriEnv } from "./core/host.ts";
 import { useSessionStore } from "./stores/sessionStore.ts";
 import { useApprovalStore } from "./stores/approvalStore.ts";
 import { useWorkspaceStore } from "./stores/workspaceStore.ts";
-import { useAawStatusStore } from "./stores/aawStatusStore.ts";
 import { useSettingsStore } from "./stores/settingsStore.ts";
 import { useWorkbenchUiStore } from "./stores/workbenchUiStore.ts";
-import { createCliAawStatusLoader } from "./aaw/statusLoader.ts";
-import { defaultProcessRunner } from "./aaw/tauriProcessRunner.ts";
+import { AawStatusLoaderBinding } from "./ui/AawStatusLoaderBinding.tsx";
 import { closeRealRuntime, openRealWorkspace } from "./ui/realRuntime.ts";
-import { settingsPathsOverride } from "./ui/workspaces/settingsLinks.ts";
 import { btnDanger, btnSecondary } from "./ui/controls.tsx";
 import { ColumnResizer } from "./ui/workbench/ColumnResizer.tsx";
 import {
@@ -249,43 +246,6 @@ function RealSessionRuntime() {
     }
     void openRealWorkspace(activePath);
   }, [activePath]);
-  return null;
-}
-
-/**
- * 生产装配（无渲染）：内容区所示项目（左栏树选中项的项目上下文）+
- * 设置工具路径 → 工作流状态面板（项目总览内）的真实数据源（aaw CLI
- * 只读查询）。未选项目或未配置 aaw 脚本路径时呈空态。
- */
-function AawStatusLoaderBinding() {
-  const contextPath = useWorkbenchUiStore((state) => state.contextPath);
-  useEffect(() => {
-    const store = useAawStatusStore.getState();
-    if (contextPath === null) {
-      store.bindLoader(null);
-      return;
-    }
-    const merged = {
-      ...useWorkspaceStore.getState().toolPaths,
-      ...settingsPathsOverride(),
-    };
-    if (merged.aawScriptPath.trim() === "") {
-      store.bindLoader(null);
-      return;
-    }
-    store.bindLoader(
-      createCliAawStatusLoader({
-        workspacePath: contextPath,
-        uvCommand: merged.uvCommand,
-        aawScriptPath: merged.aawScriptPath,
-        runner: defaultProcessRunner,
-      }),
-    );
-    void store.refresh();
-    return () => {
-      useAawStatusStore.getState().bindLoader(null);
-    };
-  }, [contextPath]);
   return null;
 }
 

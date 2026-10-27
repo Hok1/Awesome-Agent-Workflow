@@ -53,9 +53,91 @@ async function seedPanelData(
 }
 
 describe("AawStatusPanel", () => {
+  it("列表成功但详情失败时仍可选择其他 SR", async () => {
+    useAawStatusStore.getState().bindLoader({
+      listSrs: () => Promise.resolve(sampleSrListJson),
+      readStatus: (sr) =>
+        sr === "SR-001"
+          ? Promise.reject(new Error("需要迁移"))
+          : Promise.resolve(sampleStatusJson),
+      readNext: (sr) =>
+        sr === "SR-001"
+          ? Promise.reject(new Error("需要迁移"))
+          : Promise.resolve(sampleNextJson),
+      readPlan: () => Promise.resolve(null),
+    });
+    await useAawStatusStore.getState().refresh();
+    render(<AawStatusPanel />);
+    const select = screen.getByRole("combobox", { name: "当前 SR" });
+    expect(select).toHaveTextContent("SR-001");
+    expect(select).not.toBeDisabled();
+    await user.click(select);
+    await user.click(screen.getByRole("option", { name: "SR-004" }));
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
+    expect(select).toHaveTextContent("SR-004");
+  });
+
+  it("首次读取失败只显示错误，不声称没有工作流", async () => {
+    useAawStatusStore.getState().bindLoader({
+      listSrs: () => Promise.reject(new Error("aaw 工具文件不存在")),
+      readStatus: () => Promise.resolve(null),
+      readNext: () => Promise.resolve(null),
+      readPlan: () => Promise.resolve(null),
+    });
+    await useAawStatusStore.getState().refresh();
+    render(<AawStatusPanel />);
+    expect(screen.getByRole("alert")).toHaveTextContent("aaw 工具文件不存在");
+    expect(screen.queryByText(/暂无.*工作流/)).not.toBeInTheDocument();
+  });
+
+  it("查询成功且列表为空才显示暂无工作流", async () => {
+    useAawStatusStore.getState().bindLoader({
+      listSrs: () => Promise.resolve({ ok: true, srs: [] }),
+      readStatus: () => Promise.resolve(null),
+      readNext: () => Promise.resolve(null),
+      readPlan: () => Promise.resolve(null),
+    });
+    await useAawStatusStore.getState().refresh();
+    render(<AawStatusPanel />);
+    expect(screen.getByText(/当前项目暂无 AAW 工作流/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("首次读取中只显示加载提示", () => {
+    useAawStatusStore.getState().bindLoader({
+      listSrs: () => new Promise<unknown>(() => undefined),
+      readStatus: () => Promise.resolve(null),
+      readNext: () => Promise.resolve(null),
+      readPlan: () => Promise.resolve(null),
+    });
+    void useAawStatusStore.getState().refresh();
+    render(<AawStatusPanel />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取工作流");
+    expect(screen.queryByText(/暂无.*工作流/)).not.toBeInTheDocument();
+  });
+
+  it("刷新失败保留上次进度并标注过期数据", async () => {
+    await seedPanelData();
+    const loader = useAawStatusStore.getState().loader!;
+    useAawStatusStore.getState().bindLoader({
+      ...loader,
+      listSrs: () => Promise.reject(new Error("查询失败")),
+    });
+    await useAawStatusStore.getState().refresh();
+    render(<AawStatusPanel />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "刷新失败，显示上次读取结果",
+    );
+    expect(
+      screen.getByRole("list", { name: "就绪工作单" }),
+    ).toBeInTheDocument();
+  });
+
   it("未绑定数据源时显示引导空态，不显示刷新动作", () => {
     render(<AawStatusPanel />);
-    expect(screen.getByText(/该项目暂无工作流记录/)).toBeInTheDocument();
+    expect(screen.getByText(/尚未连接工作流数据源/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^刷新$/ })).toBeDisabled();
   });
 

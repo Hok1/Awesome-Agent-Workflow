@@ -8,6 +8,7 @@ import {
   type AawStatusLoader,
 } from "../../src/stores/aawStatusStore.ts";
 import type { AcpSessionEvent } from "../../src/acp/session.ts";
+import { AawQueryError } from "../../src/aaw/aawCli.ts";
 import {
   sampleNextJson,
   sampleSrListJson,
@@ -169,6 +170,141 @@ describe("refresh 真实通路", () => {
 });
 
 describe("refresh 落地与容错", () => {
+  it("旧 SR 被迁移门禁拦住时仍保留列表，可切换其他 SR，重复错误只显示一次", async () => {
+    const migration = new AawQueryError("MIGRATION_NEEDED", "旧布局需要迁移");
+    const loader = makeLoader();
+    store.getState().bindLoader({
+      ...loader,
+      readStatus: (sr) =>
+        sr === "SR-001"
+          ? Promise.reject(migration)
+          : Promise.resolve(sampleStatusJson),
+      readNext: (sr) =>
+        sr === "SR-001"
+          ? Promise.reject(migration)
+          : Promise.resolve(sampleNextJson),
+    });
+    await store.getState().refresh();
+    expect(store.getState()).toMatchObject({
+      srs: ["SR-001", "SR-004"],
+      currentSr: "SR-001",
+      status: null,
+      lastError: migration.message,
+    });
+    store.getState().selectSr("SR-004");
+    await vi.waitFor(() => expect(store.getState().status?.sr).toBe("SR-004"));
+    expect(store.getState().lastError).toBeNull();
+  });
+
+  it("自动选中新 SR 后详情失败，不显示旧 SR 的进度", async () => {
+    store.getState().bindLoader(makeLoader());
+    await store.getState().refresh();
+    store.getState().bindLoader({
+      ...makeLoader({ listSrs: { srs: ["SR-001", "SR-004", "SR-NEW"] } }),
+      readStatus: () => Promise.reject(new Error("详情失败")),
+    });
+    await store.getState().refresh();
+    expect(store.getState()).toMatchObject({
+      currentSr: "SR-NEW",
+      status: null,
+      next: null,
+      plan: null,
+      lastRefreshedAt: null,
+    });
+    expect(store.getState().srs).toContain("SR-NEW");
+  });
+
+  it("切项目清空快照，旧查询完成不能覆盖新项目或解除新请求锁", async () => {
+    store.getState().bindLoader(makeLoader(), "D:/old");
+    await store.getState().refresh();
+    let finishOld!: (value: unknown) => void;
+    store.getState().bindLoader(
+      makeLoader({
+        listSrs: new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+      }),
+      "D:/old",
+    );
+    const oldQuery = store.getState().refresh();
+    let finishNew!: (value: unknown) => void;
+    const nextLoader = makeLoader({
+      listSrs: new Promise((resolve) => {
+        finishNew = resolve;
+      }),
+    });
+    store.getState().bindLoader(nextLoader, "D:/new");
+    expect(store.getState()).toMatchObject({
+      srs: [],
+      status: null,
+      next: null,
+      plan: null,
+      lastRefreshedAt: null,
+    });
+    const newQuery = store.getState().refresh();
+    finishOld({ srs: ["SR-OLD"] });
+    await oldQuery;
+    expect(store.getState()).toMatchObject({
+      isLoading: true,
+      srs: [],
+      lastError: null,
+    });
+    await store.getState().refresh();
+    expect(nextLoader.counts.listSrs).toBe(1);
+    finishNew({ srs: [] });
+    await newQuery;
+    expect(store.getState()).toMatchObject({
+      isLoading: false,
+      srs: [],
+      lastError: null,
+    });
+    expect(store.getState().lastRefreshedAt).not.toBeNull();
+  });
+
+  it("详情读取期间切换配置，旧详情不能覆盖新结果", async () => {
+    let finishDetail!: (value: unknown) => void;
+    store.getState().bindLoader(
+      makeLoader({
+        readStatus: new Promise((resolve) => {
+          finishDetail = resolve;
+        }),
+      }),
+    );
+    const oldQuery = store.getState().refresh();
+    await Promise.resolve();
+    store.getState().bindLoader(makeLoader({ listSrs: { srs: [] } }));
+    await store.getState().refresh();
+    finishDetail(sampleStatusJson);
+    await oldQuery;
+    expect(store.getState()).toMatchObject({
+      srs: [],
+      currentSr: null,
+      status: null,
+      next: null,
+      lastError: null,
+    });
+  });
+
+  it("错误信封带空列表仍然是失败，保留成功快照", async () => {
+    store.getState().bindLoader(makeLoader());
+    await store.getState().refresh();
+    const snapshot = store.getState();
+    store.getState().bindLoader(
+      makeLoader({
+        listSrs: {
+          ok: false,
+          srs: [],
+          error: { code: "READ_FAILED", message: "读取失败" },
+        },
+      }),
+    );
+    await store.getState().refresh();
+    expect(store.getState().lastError).toContain("READ_FAILED");
+    expect(store.getState().srs).toBe(snapshot.srs);
+    expect(store.getState().status).toBe(snapshot.status);
+    expect(store.getState().lastRefreshedAt).toBe(snapshot.lastRefreshedAt);
+  });
+
   it("selectSr + refresh 落地该 SR 的完整数据状态", async () => {
     store.getState().bindLoader(makeLoader());
     await store.getState().refresh();

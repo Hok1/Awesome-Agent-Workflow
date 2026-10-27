@@ -360,7 +360,8 @@ export class AcpSession {
 
   /**
    * 发送一轮 prompt。响应到达前，通知流照常派发为事件；
-   * 返回守卫后的 PromptResult（stopReason / usage）。
+   * 默认不限制整轮时长，直到完成、取消确认或连接退出；短请求的超时
+   * 不适用于模型、工具和人工审批。返回 PromptResult（stopReason / usage）。
    */
   async prompt(
     text: string,
@@ -371,7 +372,7 @@ export class AcpSession {
     const raw = await this.connection.request(
       ACP_METHOD.sessionPrompt,
       { sessionId: this.sessionId, prompt: blocks },
-      options,
+      { timeoutMs: options.timeoutMs ?? null },
     );
     const result = asPromptResult(raw);
     if (result === null) {
@@ -389,9 +390,13 @@ export class AcpSession {
     if (this.sessionId === null) {
       return;
     }
-    this.connection.notify(ACP_METHOD.sessionCancel, {
-      sessionId: this.sessionId,
-    });
+    this.connection.notify(
+      ACP_METHOD.sessionCancel,
+      {
+        sessionId: this.sessionId,
+      },
+      { throwOnError: true },
+    );
     this.logger.info("已请求取消当前轮次（session/cancel）");
   }
 

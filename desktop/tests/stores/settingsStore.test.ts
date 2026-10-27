@@ -42,7 +42,8 @@ describe("useSettingsStore", () => {
     expect(state.chrysPath).toBe("");
     expect(state.approvalMode).toBe("ask");
     expect(state.language).toBe("zh-CN");
-    expect(state.skillsSourceDir).not.toBe("");
+    // 工具来源由用户选择，不能默认指向某位开发者的机器。
+    expect(state.skillsSourceDir).toBe("");
     // 主题默认暗夜
     expect(state.theme).toBe("dark");
   });

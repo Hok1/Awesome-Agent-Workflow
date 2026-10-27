@@ -557,7 +557,10 @@ describe("项目树 → 新会话（普通会话）", () => {
     await waitFor(() => {
       expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
     });
-    expect(await screen.findByRole("alert")).toHaveTextContent(/连接失败/);
+    // 工作流工具未配置也可独立显示告警；这里仅验证连接失败横幅。
+    expect(
+      (await screen.findByText(/连接失败：/)).closest('[role="alert"]'),
+    ).toHaveTextContent("chrys.exe 不存在");
   });
 });
 

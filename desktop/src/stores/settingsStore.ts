@@ -74,9 +74,8 @@ const CHRYS_FALLBACK_CANDIDATES: readonly string[] = [
   "D:/Program Files/Chrys/chrys.exe",
 ];
 
-/** AAW skills 安装源目录默认值（本仓库 skills/ 全集；可在设置页修改）。 */
-export const defaultSkillsSourceDir =
-  "D:/dev/workspace-ai/Awesome-Agent-Workflow/skills";
+/** 安装源由用户选择，不假定开发者机器上的仓库位置。 */
+export const defaultSkillsSourceDir = "";
 
 const defaultLanguage: Language = "zh-CN";
 const defaultApprovalMode: ApprovalMode = "ask";

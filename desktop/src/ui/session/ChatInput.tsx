@@ -94,6 +94,7 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // 审批模式随会话事件更新（模型/上下文/skills/mcp 在 InputStatusCluster 自取）
   const approvalMode = useSessionStore((state) => state.approvalMode);
+  const turnState = useSessionStore((state) => state.turnState);
   const activePath = useWorkspaceStore((state) => state.activePath);
 
   // @ 提及：触发态（query + 选中下标）+ 当前工作区的文件清单
@@ -383,8 +384,9 @@ export function ChatInput({
             <button
               type="button"
               onClick={onCancel}
-              aria-label="停止"
-              title="停止"
+              disabled={turnState === "cancelling"}
+              aria-label={turnState === "cancelling" ? "正在取消" : "停止"}
+              title={turnState === "cancelling" ? "正在取消，等待确认" : "停止"}
               className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-danger-line bg-danger-bg/40 text-danger-ink transition-colors hover:bg-danger-bg/70"
             >
               <StopIcon />

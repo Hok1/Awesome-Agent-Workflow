@@ -189,7 +189,11 @@ export function isGateStepType(type: string): boolean {
  */
 export function parseSrList(raw: unknown): AawSrList | null {
   const record = asRecord(raw);
-  if (record === null) {
+  if (
+    record === null ||
+    record["ok"] === false ||
+    record["status"] === "failed"
+  ) {
     return null;
   }
   const srs = asStringArray(record["srs"]);
