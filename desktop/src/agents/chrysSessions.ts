@@ -1,25 +1,16 @@
 /**
  * chrys 历史会话的只读读取（src/agents 层）。
  *
- * 为什么需要它：会话列表今天只有一条来源——ACP 握手后的 `session/list`
- * （见 realRuntime.openRealWorkspace）。也就是说**必须先 spawn chrys、
- * 连上某个项目，那个项目的会话才会出现**：冷启动时树里每个项目都是空
- * 的，点进去才「突然」冒出历史。但这份数据本来就躺在磁盘上，读取它不
- * 需要 agent 进程。
- *
- * 数据源：chrys 的会话索引缓存 `<sessions>/.cache/session_catalog.json`
- * （chrys `service/state/session_catalog.py`）。每条记录带 `session_id` /
- * `kind` / `title` 系列 / `updated_at` / `primary_cwd`，正好是树要的字段。
- * 实测（本机 29 条会话）该缓存与磁盘上各会话目录的 `session.json` 集合
- * 零漂移。
+ * 优先读取 `<sessions>/.cache/session_catalog.json`；索引不可用时，
+ * 扫描直接子目录的 `session.json`，只保留 meta 中的列表字段。
+ * 全程不启动 agent；连接后的 ACP `session/list` 仍是权威快照。
  *
  * 它是**缓存，不是权威**，因此本模块的纪律：
- * - 版本号不匹配 / 形状不合 / 读不到 → 一律返回空，绝不猜；
+ * - 索引版本不匹配 / 形状不合 / 读不到 → 回落扫描；单文件失败不影响其他会话；
  * - 返回空**不等于**「该项目没有会话」，只等于「这次没读到」——调用方
  *   不得据此覆盖已连接项目的权威列表（见 sessionHistory 组装层）；
  * - 缓存文件有大小上限保护（超限不解析），避免会话上千的机器拖慢启动；
- * - 只读 `kind === "chat"`：`workflow` 是 chrys 自己的工作流运行记录，
- *   不是本应用的对话会话（与 ACP `session/list` 的 kind 过滤一致）；
+ * - 只读 chat，兼容 schema_version=1 且没有 kind 的旧版会话元数据；
  * - 路径匹配只做字符串规范化（斜杠 / 大小写 / 尾斜杠），不要求目录存在
  *   ——树里本来就可能挂着已被删除的项目目录。
  */
@@ -89,48 +80,100 @@ function pickTitle(meta: Readonly<Record<string, unknown>>): string {
 export function parseSessionCatalog(
   raw: unknown,
 ): ReadonlyMap<string, readonly KnownSession[]> {
-  const grouped = new Map<string, KnownSession[]>();
+  return tryParseSessionCatalog(raw) ?? new Map();
+}
+
+/** null 表示索引不可用；有效的空索引不需要扫描磁盘。 */
+function tryParseSessionCatalog(
+  raw: unknown,
+): ReadonlyMap<string, readonly KnownSession[]> | null {
   const record = asRecord(raw);
   if (record === null || record["version"] !== SUPPORTED_CATALOG_VERSION) {
-    return grouped;
+    return null;
   }
   const sessions = asRecord(record["sessions"]);
   if (sessions === null) {
-    return grouped;
+    return null;
   }
+  const known: KnownSession[] = [];
   for (const entry of Object.values(sessions)) {
     const wrapper = asRecord(entry);
     const meta = wrapper === null ? null : asRecord(wrapper["meta"]);
-    if (meta === null) {
-      continue;
-    }
-    if (meta["kind"] !== "chat") {
-      continue;
-    }
-    const id = asNonEmptyString(meta["session_id"]);
-    const cwd = asNonEmptyString(meta["primary_cwd"]);
-    if (id === null || cwd === null) {
-      continue;
-    }
-    const key = normalizeSessionPath(cwd);
-    const list = grouped.get(key);
-    const known: KnownSession = {
-      id,
-      title: pickTitle(meta),
-      updatedAt: asNonEmptyString(meta["updated_at"]),
-      cwd,
-    };
-    if (list === undefined) {
-      grouped.set(key, [known]);
-    } else {
-      list.push(known);
+    const session = parseSessionMeta(meta);
+    if (session !== null) {
+      known.push(session);
     }
   }
-  // 组内按 updatedAt 降序（缺失时间的条目排末尾；相同时保持稳定）
-  for (const list of grouped.values()) {
-    list.sort((a, b) => rankOf(b.updatedAt) - rankOf(a.updatedAt));
+  return groupSessions(known);
+}
+
+function parseSessionMeta(raw: unknown): KnownSession | null {
+  const meta = asRecord(raw);
+  if (meta === null) return null;
+  const isLegacyChat =
+    meta["kind"] === undefined && meta["schema_version"] === 1;
+  if (meta["kind"] !== "chat" && !isLegacyChat) return null;
+  const id = asNonEmptyString(meta["session_id"]);
+  const cwd = asNonEmptyString(meta["primary_cwd"]);
+  if (id === null || cwd === null) return null;
+  return {
+    id,
+    cwd,
+    title: pickTitle(meta),
+    updatedAt: asNonEmptyString(meta["updated_at"]),
+  };
+}
+
+/** 按更新时间排序并去重，避免备份目录使同一会话出现两次。 */
+function groupSessions(sessions: readonly KnownSession[]) {
+  const grouped = new Map<string, KnownSession[]>();
+  const seen = new Set<string>();
+  for (const session of [...sessions].sort(
+    (a, b) => rankOf(b.updatedAt) - rankOf(a.updatedAt),
+  )) {
+    const key = normalizeSessionPath(session.cwd);
+    const identity = JSON.stringify([key, session.id]);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const list = grouped.get(key) ?? [];
+    list.push(session);
+    grouped.set(key, list);
   }
   return grouped;
+}
+
+/** 有界并发，只扫描直接子目录；不遍历缓存、锁目录或对话附件。 */
+async function scanSessionMetadata(host: HostRuntime, sessionsDir: string) {
+  const names = (await host.listDirNames(sessionsDir)).filter(
+    (name) => !name.startsWith(".") && !/[\\/]/.test(name),
+  );
+  const sessions: (KnownSession | null)[] = Array.from(
+    { length: names.length },
+    () => null,
+  );
+  let next = 0;
+  let skipped = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, names.length) }, async () => {
+      while (next < names.length) {
+        const index = next++;
+        const name = names[index];
+        if (name === undefined) continue;
+        try {
+          const text = await host.readTextFile(
+            joinPath(sessionsDir, name, "session.json"),
+          );
+          const record = asRecord(JSON.parse(text) as unknown);
+          sessions[index] = parseSessionMeta(record?.["meta"]);
+        } catch {
+          // 写入中的 JSON、已删除的目录或单文件权限问题不阻断整批扫描。
+          skipped += 1;
+        }
+      }
+    }),
+  );
+  logger.info("已扫描本地会话元数据", { directories: names.length, skipped });
+  return groupSessions(sessions.filter((session) => session !== null));
 }
 
 /** 排序时间戳：缺失或非法时间视为最旧。 */
@@ -142,7 +185,7 @@ function rankOf(updatedAt: string | null): number {
   return Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
 }
 
-/** 读取并解析会话索引缓存；任何失败（无宿主 / 读不到 / 不合版本）返回空。 */
+/** 优先索引，索引不可用时扫描；两者均不可读时返回空，不清除已有列表。 */
 export async function readSessionCatalog(
   host: HostRuntime,
 ): Promise<ReadonlyMap<string, readonly KnownSession[]>> {
@@ -152,21 +195,23 @@ export async function readSessionCatalog(
       return new Map();
     }
     const catalogPath = joinPath(sessionsDir, CATALOG_RELATIVE_PATH);
-    if (!(await host.pathExists(catalogPath))) {
-      return new Map();
-    }
-    const text = await host.readTextFile(catalogPath);
-    if (text.length > CATALOG_MAX_BYTES) {
-      logger.warn("会话索引缓存过大，本次不解析", {
-        path: catalogPath,
-        length: text.length,
+    try {
+      if (await host.pathExists(catalogPath)) {
+        const text = await host.readTextFile(catalogPath);
+        if (text.length <= CATALOG_MAX_BYTES) {
+          const catalog = tryParseSessionCatalog(JSON.parse(text) as unknown);
+          if (catalog !== null) return catalog;
+        }
+      }
+    } catch (error) {
+      logger.info("会话索引不可读，回落扫描元数据", {
+        reason: error instanceof Error ? error.message : String(error),
       });
-      return new Map();
     }
-    return parseSessionCatalog(JSON.parse(text) as unknown);
+    return await scanSessionMetadata(host, sessionsDir);
   } catch (error) {
     // 缓存不可读不是错误状态：树退回「没有历史可显示」的既有观感
-    logger.info("会话索引缓存不可读，历史会话本次不补充", {
+    logger.info("本地历史会话不可读，本次不补充", {
       reason: error instanceof Error ? error.message : String(error),
     });
     return new Map();

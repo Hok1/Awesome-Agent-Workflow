@@ -44,7 +44,7 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
     动词，结果不同，不得合并；连接失败落在总览（那里有失败横幅与去设置
     工具路径的出口）；
   - `sessionHistory.ts`：装配层的历史会话补充——应用启动与添加项目后读
-    agent 会话索引（`src/agents/chrysSessions.ts`），按归一化路径补进
+    agent 会话索引，不可用则扫描会话元数据（`src/agents/chrysSessions.ts`），按归一化路径补进
     `sessionStore.sessionsByPath`。**只补空缺项目**，不覆盖
     session/list 的权威快照；
   - `ContextBar.tsx`：全应用唯一顶栏（44px，内容区顶部）：左侧是随视图

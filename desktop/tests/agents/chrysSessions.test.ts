@@ -2,10 +2,9 @@
  * chrys 历史会话读取的测试（src/agents/chrysSessions）。
  *
  * 这一层是「树的会话子节点」在未连接项目下的数据来源，纪律比功能更重要：
- * 缓存不合版本 / 形状不对 / 读不到都只能返回空，且**返回空不等于没有
- * 会话**——调用方据此只做补充，不做清空。测试按这条边界组织。
+ * 索引不可用时扫描元数据，返回空不等于没有会话；只做补充，不做清空。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   normalizeSessionPath,
   parseSessionCatalog,
@@ -126,6 +125,117 @@ describe("parseSessionCatalog", () => {
 });
 
 describe("readSessionCatalog", () => {
+  it.each([
+    undefined,
+    "{损坏",
+    JSON.stringify({ version: 2, sessions: {} }),
+    JSON.stringify({ version: 1, sessions: [] }),
+    " ".repeat(3 * 1024 * 1024),
+  ])("索引不可用时扫描旧版元数据（%#）", async (catalog) => {
+    const host = createDemoHost();
+    host.setChrysSessionsDir("X:/sessions");
+    if (catalog !== undefined) {
+      await host.writeTextFile(
+        "X:/sessions/.cache/session_catalog.json",
+        catalog,
+      );
+    }
+    await host.writeTextFile(
+      "X:/sessions/legacy/session.json",
+      JSON.stringify({
+        meta: {
+          schema_version: 1,
+          session_id: "legacy-id",
+          primary_cwd: "D:\\Project\\",
+          generated_title: "旧会话",
+        },
+        state: { messages: ["不应出现在摘要中"] },
+      }),
+    );
+    const run = vi.spyOn(host, "runCommand");
+    const write = vi.spyOn(host, "writeTextFile");
+    expect((await readSessionCatalog(host)).get("d:/project")).toEqual([
+      {
+        id: "legacy-id",
+        cwd: "D:\\Project\\",
+        title: "旧会话",
+        updatedAt: null,
+      },
+    ]);
+    expect(run).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    "有效索引直接使用，不扫描目录（空索引：%s）",
+    async (empty) => {
+      const host = createDemoHost();
+      host.setChrysSessionsDir("X:/sessions");
+      await host.writeTextFile(
+        "X:/sessions/.cache/session_catalog.json",
+        JSON.stringify(
+          catalogOf(
+            empty ? [] : [catalogRecord({ sessionId: "a", cwd: "D:/p" })],
+          ),
+        ),
+      );
+      const list = vi.spyOn(host, "listDirNames");
+      expect((await readSessionCatalog(host)).size).toBe(empty ? 0 : 1);
+      expect(list).not.toHaveBeenCalled();
+    },
+  );
+
+  it("索引读取异常仍回落扫描，坏文件和非对话记录不阻断其他会话", async () => {
+    const host = createDemoHost();
+    host.setChrysSessionsDir("X:/sessions");
+    host.addDir("X:/sessions/.cache/session_catalog.json");
+    await host.writeTextFile("X:/sessions/broken/session.json", "{");
+    host.addDir("X:/sessions/missing");
+    const write = async (name: string, kind: string, updatedAt: string) => {
+      await host.writeTextFile(
+        `X:/sessions/${name}/session.json`,
+        JSON.stringify(
+          catalogRecord({
+            sessionId: "same-id",
+            cwd: "D:/p",
+            title: name,
+            kind,
+            updatedAt,
+          }),
+        ),
+      );
+    };
+    await write("old", "chat", "2025-01-01T00:00:00Z");
+    await write("new", "chat", "2026-01-01T00:00:00Z");
+    await write("workflow", "workflow", "2027-01-01T00:00:00Z");
+    await write(".locks", "chat", "2028-01-01T00:00:00Z");
+    const result = (await readSessionCatalog(host)).get("d:/p");
+    expect(result).toHaveLength(1);
+    expect(result?.[0]?.title).toBe("new");
+  });
+
+  it("未知旧版格式和缺少关键字段的元数据不显示", async () => {
+    const host = createDemoHost();
+    host.setChrysSessionsDir("X:/sessions");
+    for (const [index, meta] of [
+      { schema_version: 2, session_id: "a", primary_cwd: "D:/p" },
+      { schema_version: 1, session_id: "b" },
+      { schema_version: 1, primary_cwd: "D:/p" },
+      {
+        schema_version: 1,
+        kind: "workflow",
+        session_id: "c",
+        primary_cwd: "D:/p",
+      },
+    ].entries()) {
+      await host.writeTextFile(
+        `X:/sessions/${String(index)}/session.json`,
+        JSON.stringify({ meta }),
+      );
+    }
+    expect((await readSessionCatalog(host)).size).toBe(0);
+  });
+
   it("从会话目录读 .cache/session_catalog.json 并解析", async () => {
     const host = createDemoHost();
     host.setChrysSessionsDir("X:/chrys/sessions");
