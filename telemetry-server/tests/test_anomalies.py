@@ -395,28 +395,13 @@ def test_archive_request_is_rejected_when_rule_disallows_it(client):
 
 
 def test_admin_console_can_request_archive_without_event(client):
-    """业务页（工作流/归因）对数据对象直接申请屏蔽：无事件、需管理员会话、审核后出清。"""
-    headers = _admin(client)
+    """业务页可直接申请屏蔽，无需管理员会话；审核需登录和 CSRF，审核后出清。"""
     _stalled_workflow(client)
     workflow = client.get("/api/v1/admin/workflows").json()["items"][0]
     workflow_id = workflow["workflow_run_id"]
 
-    unauthenticated = client.post(
-        f"/api/v1/anomalies/targets/workflow/{workflow_id}/archive-requests",
-        json={"reason": "未登录", "requested_by": "运营管理员"},
-    )
-    # AdminAuth.require(csrf=True)：先查会话再比对 CSRF，两种失败都返回管理员错误码。
-    assert unauthenticated.status_code in (401, 403), unauthenticated.text
-
-    no_csrf = client.post(
-        f"/api/v1/anomalies/targets/workflow/{workflow_id}/archive-requests",
-        json={"reason": "缺少 CSRF", "requested_by": "运营管理员"},
-    )
-    assert no_csrf.status_code == 403, no_csrf.text
-
     created = client.post(
         f"/api/v1/anomalies/targets/workflow/{workflow_id}/archive-requests",
-        headers=headers,
         json={"reason": "验证数据不应计入统计", "requested_by": "运营管理员"},
     )
     assert created.status_code == 201, created.text
@@ -428,7 +413,6 @@ def test_admin_console_can_request_archive_without_event(client):
 
     duplicate = client.post(
         f"/api/v1/anomalies/targets/workflow/{workflow_id}/archive-requests",
-        headers=headers,
         json={"reason": "重复申请", "requested_by": "运营管理员"},
     )
     assert duplicate.status_code == 409, duplicate.text
@@ -436,20 +420,31 @@ def test_admin_console_can_request_archive_without_event(client):
 
     invalid_type = client.post(
         f"/api/v1/anomalies/targets/component/{workflow_id}/archive-requests",
-        headers=headers,
         json={"reason": "不支持的对象", "requested_by": "运营管理员"},
     )
     assert invalid_type.status_code == 400, invalid_type.text
     assert invalid_type.json()["code"] == "ARCHIVE_NOT_SUPPORTED"
 
+    review_url = f"/api/v1/anomalies/archive-requests/{body['id']}/review"
+    review_payload = {"approved": True, "note": "同意屏蔽"}
+    unauthenticated = client.post(review_url, json=review_payload)
+    assert unauthenticated.status_code == 401, unauthenticated.text
+    assert unauthenticated.json()["code"] == "ADMIN_AUTH_REQUIRED"
+
+    headers = _admin(client)
+    no_csrf = client.post(review_url, json=review_payload)
+    assert no_csrf.status_code == 403, no_csrf.text
+    assert no_csrf.json()["code"] == "ADMIN_CSRF_INVALID"
+
     listing = client.get("/api/v1/anomalies/archive-requests", headers=headers).json()
     assert listing["items"][0]["id"] == body["id"]
     assert listing["items"][0]["source"] == "admin_console"
+    assert listing["items"][0]["status"] == "pending"
 
     approved = client.post(
-        f"/api/v1/anomalies/archive-requests/{body['id']}/review",
+        review_url,
         headers=headers,
-        json={"approved": True, "note": "同意屏蔽"},
+        json=review_payload,
     )
     assert approved.status_code == 200, approved.text
     archived = client.get("/api/v1/admin/workflows?lifecycle=deleted").json()
