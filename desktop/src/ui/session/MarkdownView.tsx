@@ -5,7 +5,7 @@
  * 代码块（pre）重写为带「语言标签 + 复制按钮」头栏的容器；行内代码
  * 与代码块内的高亮 span 分别处理样式。
  */
-import React, { type ReactNode } from "react";
+import React, { memo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import { CopyButton } from "./CopyButton.tsx";
@@ -135,7 +135,7 @@ const markdownComponents: Components = {
   ),
 };
 
-export function MarkdownView({ text }: { readonly text: string }) {
+function MarkdownViewBase({ text }: { readonly text: string }) {
   return (
     // break-words：Windows 绝对路径 / URL 这类超长不可断 token 按字符折行，
     // 不把消息流撑出横向滚动（代码块自身的横向滚动不受影响：pre 的
@@ -150,3 +150,10 @@ export function MarkdownView({ text }: { readonly text: string }) {
     </div>
   );
 }
+
+/**
+ * memo（按 text 浅比较）：文本不变则跳过整棵 Markdown 重解析——
+ * react-markdown + rehype-highlight 是消息流里最贵的渲染路径，
+ * 配合条目级引用稳定，历史消息在流式期间零重渲。
+ */
+export const MarkdownView = memo(MarkdownViewBase);

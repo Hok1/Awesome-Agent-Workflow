@@ -6,7 +6,7 @@
  *   全部完成后默认收起为一行历史记录（点开仍可回看）；
  * - 空清单不会成卡（store 层已过滤）。
  */
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { PlanItem } from "../../stores/sessionStore.ts";
 import type { PlanEntry } from "../../acp/types.ts";
 import { ChevronRightIcon } from "../icons.tsx";
@@ -55,7 +55,7 @@ function currentEntryOf(
   return pending !== undefined ? { text: pending.content } : null;
 }
 
-export function PlanCard({ item }: { readonly item: PlanItem }) {
+function PlanCardBase({ item }: { readonly item: PlanItem }) {
   // 有活干默认展开；全部完成的历史卡默认收起（用户可随时点开回看）
   const [isOpen, setIsOpen] = useState(
     () => !item.entries.every((entry) => entry.status === "completed"),
@@ -125,3 +125,6 @@ export function PlanCard({ item }: { readonly item: PlanItem }) {
     </div>
   );
 }
+
+/** memo：item 引用不变则整树跳过（流式分片只改最后一条的引用）。 */
+export const PlanCard = memo(PlanCardBase);

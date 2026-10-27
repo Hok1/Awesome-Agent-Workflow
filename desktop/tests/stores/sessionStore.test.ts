@@ -75,8 +75,10 @@ describe("事件折叠：消息与思考", () => {
     });
   });
 
-  it("多个 agent_message_chunk 拼接为一条流式消息", () => {
+  it("多个 agent_message_chunk 拼接为一条流式消息（120ms 窗口内合并提交）", () => {
     feed([chunk("第一段，"), chunk("第二段"), chunk("第三段")]);
+    // 时间片合并：首分片即时建条目，后续在缓冲里，flush 后才拼齐
+    useSessionStore.getState().flushStreamingChunks();
     const items = useSessionStore.getState().items;
     expect(items).toHaveLength(1);
     const message = items[0];

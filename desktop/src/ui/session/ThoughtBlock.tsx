@@ -5,12 +5,12 @@
  * 一枚无文字的灰点；流式结束后折叠行给思考耗时（store 记录的起止时刻，
  * 快照恢复的历史条目没有时刻则不显示）。
  */
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { ThoughtItem } from "../../stores/sessionStore.ts";
 import { ChevronRightIcon } from "../icons.tsx";
 import { formatClock, formatDuration } from "./clock.ts";
 
-export function ThoughtBlock({ item }: { readonly item: ThoughtItem }) {
+function ThoughtBlockBase({ item }: { readonly item: ThoughtItem }) {
   const [isOpen, setIsOpen] = useState(false);
   const durationMs =
     item.startedAt !== null && item.endedAt !== null
@@ -55,3 +55,6 @@ export function ThoughtBlock({ item }: { readonly item: ThoughtItem }) {
     </div>
   );
 }
+
+/** memo：item 引用不变则整树跳过（流式分片只改最后一条的引用）。 */
+export const ThoughtBlock = memo(ThoughtBlockBase);

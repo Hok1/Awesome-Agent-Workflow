@@ -190,6 +190,37 @@ function collapseWhitespace(text: string): string {
     .join(" ");
 }
 
+/**
+ * 性能种子的合成 assistant 正文：标题 / 段落 / 列表 / 代码块齐备，
+ * 单条约 1.5KB——体量对齐真实 agent 回复，覆盖最贵的渲染路径
+ * （rehype-highlight 代码块）与不可断 token 折行。
+ */
+function perfSeedBody(n: number): string {
+  return [
+    `## 模块 ${n} 审阅结论`,
+    "",
+    `第 ${n} 轮合成消息：用于消息流的性能与内存基准。包含常规段落、列表与`,
+    "代码块，路径如 `D:/dev/demo/src/mod.ts` 这类超长不可断 token 也在覆盖范围。",
+    "",
+    "验证要点：",
+    "- 流式分片到达时，历史消息应零重渲（memo + 条目引用稳定）",
+    "- 代码块走 rehype-highlight，是单条消息里最贵的渲染路径",
+    "- 快照序列化按引用脏判跳过，条目未变更不重复落盘",
+    "",
+    "```ts",
+    `export function mod${n}(input: readonly number[]): number {`,
+    "  let total = 0;",
+    "  for (const value of input) {",
+    "    total += value * 2;",
+    "  }",
+    "  return total;",
+    "}",
+    "```",
+    "",
+    `结论：模块 ${n} 无阻塞问题，可以合并。`,
+  ].join("\n");
+}
+
 /** 摘要字段值：对象序列化为 JSON，其余按类型名兜底（不用 String 兜底）。 */
 function valueToSummaryText(value: unknown): string {
   if (typeof value === "string") {
@@ -331,6 +362,10 @@ interface SessionStoreState {
    * 指示器永远挂着（轮次 Promise 要等回答后才 resolve，没人封口）。
    */
   readonly sealStreamingItems: () => void;
+  /** 立即提交缓冲中的流式文本（合并窗口不等待；测试 / 诊断用）。 */
+  readonly flushStreamingChunks: () => void;
+  /** 性能基准：向当前消息流灌入 N 轮合成条目（用户 + Markdown + 工具卡）。 */
+  readonly seedPerfMessages: (turns: number) => void;
   /** 轮次开始：落笔用户消息并置运行态（sendPrompt 的归约入口）。 */
   readonly beginTurn: (text: string) => void;
   /** 轮次收尾：封口流式条目并记录结局（prompt 响应 / 取消 / 失败共用）。 */
@@ -456,6 +491,14 @@ const SESSION_LOG_ITEM_LIMIT = 200;
 /** 增量事件的节流落盘间隔（ms）。 */
 const SESSION_LOG_THROTTLE_MS = 2000;
 
+/**
+ * 流式分片的时间片合并窗口（ms）：agent_message_chunk / agent_thought_chunk
+ * 高频到达，逐条 set 会让整棵消息流跟随重提交（长会话流式期间掉帧的根因）。
+ * 追加文本先进缓冲、窗口内合并为一次提交；封口 / 其他条目变更 / 快照落盘
+ * 前一律先 flush，条目顺序与内容语义和逐条提交完全一致。
+ */
+export const CHUNK_COALESCE_MS = 120;
+
 /** 快照持久化形状（带版本号，形状变更时升版本）。 */
 interface SessionLogPayload {
   readonly version: 1;
@@ -482,15 +525,31 @@ function snapshotItems(items: readonly SessionItem[]): SessionItem[] {
 }
 
 /** 把条目快照写入 localStorage（失败仅记日志，不影响会话主流程）。 */
+/** 快照持久化的条数上限：超过只保最近的条目（防 localStorage 撑爆）。 */
+export const PERSIST_MAX_ITEMS = 2000;
+
 function writeSessionLog(
   workspacePath: string,
   items: readonly SessionItem[],
 ): void {
   try {
+    // 条数上限：超限只持久化最近的条目（消息流窗口化本来就只渲染尾部，
+    // 更早的以 chrys 侧会话历史为权威来源）
+    const persisted =
+      items.length > PERSIST_MAX_ITEMS
+        ? items.slice(items.length - PERSIST_MAX_ITEMS)
+        : items;
+    if (persisted !== items) {
+      logger.warn("会话快照超上限，仅持久化最近条目", {
+        workspacePath,
+        total: items.length,
+        persisted: persisted.length,
+      });
+    }
     const payload: SessionLogPayload = {
       version: 1,
       savedAt: new Date().toISOString(),
-      items: snapshotItems(items),
+      items: snapshotItems(persisted),
     };
     window.localStorage.setItem(
       sessionLogKey(workspacePath),
@@ -717,9 +776,14 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   // 消息快照的持久化目标（null = 不持久化）与节流定时器
   let logTargetPath: string | null = null;
   let logFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  // 上次已落盘的条目引用：条目数组引用未变则跳过序列化（长会话全量
+  // JSON.stringify 单次几 MB，未变更的重复落盘是纯浪费）
+  let lastWrittenItems: readonly SessionItem[] | null = null;
 
   /** 立即落盘当前条目流（并取消挂起的节流定时器）。 */
   const flushSessionLogNow = (): void => {
+    // 快照必须包含缓冲中的流式文本（否则丢最后 120ms 的内容）
+    flushPendingChunks();
     if (logFlushTimer !== null) {
       clearTimeout(logFlushTimer);
       logFlushTimer = null;
@@ -727,7 +791,12 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     if (logTargetPath === null) {
       return;
     }
-    writeSessionLog(logTargetPath, get().items);
+    const items = get().items;
+    if (items === lastWrittenItems) {
+      return;
+    }
+    writeSessionLog(logTargetPath, items);
+    lastWrittenItems = items;
   };
 
   /** 增量事件的节流落盘（2s 内合并为一次写入）。 */
@@ -757,8 +826,65 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     );
   };
 
+  // 流式分片缓冲（CHUNK_COALESCE_MS 窗口内合并提交）
+  let pendingAssistantText = "";
+  let pendingThoughtText = "";
+  let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 把缓冲中的流式文本一次性拼进对应落笔条目（空缓冲不提交，幂等）。 */
+  const flushPendingChunks = (): void => {
+    if (chunkFlushTimer !== null) {
+      clearTimeout(chunkFlushTimer);
+      chunkFlushTimer = null;
+    }
+    const assistant = pendingAssistantText;
+    const thought = pendingThoughtText;
+    pendingAssistantText = "";
+    pendingThoughtText = "";
+    if (assistant === "" && thought === "") {
+      return;
+    }
+    set((state) => ({
+      items: state.items.map((item) => {
+        if (
+          assistant !== "" &&
+          item.kind === "assistant" &&
+          item.id === openAssistantId &&
+          item.isStreaming
+        ) {
+          return { ...item, text: item.text + assistant };
+        }
+        if (
+          thought !== "" &&
+          item.kind === "thought" &&
+          item.id === openThoughtId &&
+          item.isStreaming
+        ) {
+          return { ...item, text: item.text + thought };
+        }
+        return item;
+      }),
+    }));
+  };
+
+  /** 丢弃未提交的流式缓冲（会话条目整体替换前用——不把旧会话文本拼进新流）。 */
+  const dropPendingChunks = (): void => {
+    if (chunkFlushTimer !== null) {
+      clearTimeout(chunkFlushTimer);
+      chunkFlushTimer = null;
+    }
+    pendingAssistantText = "";
+    pendingThoughtText = "";
+  };
+
+  /** 先 flush 流式缓冲再封口（「读当前条目并封口」的统一入口）。 */
+  const sealedItems = (): SessionItem[] => {
+    flushPendingChunks();
+    return closeStreamingItems(get().items);
+  };
+
   const pushSystemItem = (level: SystemNoticeLevel, text: string): void => {
-    const closed = closeStreamingItems(get().items);
+    const closed = sealedItems();
     set({
       items: [
         ...closed,
@@ -828,7 +954,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   const beginTurn = (text: string): void => {
     turnGeneration += 1;
     turnStartLength = get().items.length;
-    const closed = closeStreamingItems(get().items);
+    const closed = sealedItems();
     set({
       items: [
         ...closed,
@@ -876,7 +1002,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
         additions.push(buildCancelledRecap(get().items.slice(turnStartLength)));
       }
     }
-    const closed = closeStreamingItems(get().items);
+    const closed = sealedItems();
     set({
       items: additions.length > 0 ? [...closed, ...additions] : closed,
       isAgentRunning: false,
@@ -931,18 +1057,23 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   const appendChunk = (isThought: boolean, text: string): void => {
     const openId = isThought ? openThoughtId : openAssistantId;
     if (openId !== null) {
-      set((state) => ({
-        items: state.items.map((item) =>
-          item.kind === (isThought ? "thought" : "assistant") &&
-          item.id === openId
-            ? { ...item, text: item.text + text }
-            : item,
-        ),
-      }));
+      // 时间片合并：首个分片已建条目即时可见，后续分片进缓冲，
+      // CHUNK_COALESCE_MS 窗口内合并为一次提交（封口前必 flush）
+      if (isThought) {
+        pendingThoughtText += text;
+      } else {
+        pendingAssistantText += text;
+      }
+      if (chunkFlushTimer === null) {
+        chunkFlushTimer = setTimeout(() => {
+          chunkFlushTimer = null;
+          flushPendingChunks();
+        }, CHUNK_COALESCE_MS);
+      }
       return;
     }
-    // 先封口既有流式条目，再登记新的落笔位置（顺序不可颠倒）
-    const closed = closeStreamingItems(get().items);
+    // 换落笔目标：先把上一段的缓冲拼进旧条目再封口（顺序不可颠倒）
+    const closed = sealedItems();
     const id = nextItemId(isThought ? "thought" : "assistant");
     if (isThought) {
       openThoughtId = id;
@@ -975,7 +1106,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       { readonly type: "tool_call" | "tool_call_update" }
     >,
   ): void => {
-    const items = closeStreamingItems(get().items);
+    // 工具事件会封口流式文本条目：先 flush 缓冲，保证文本先于工具卡落位
+    const items = sealedItems();
     const index = items.findIndex(
       (item) => item.kind === "tool" && item.toolCallId === event.toolCallId,
     );
@@ -1087,7 +1219,58 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     },
 
     sealStreamingItems: () => {
-      set({ items: closeStreamingItems(get().items) });
+      set({ items: sealedItems() });
+    },
+
+    /** 测试与诊断用：立即提交缓冲中的流式文本（合并窗口不等待）。 */
+    flushStreamingChunks: () => {
+      flushPendingChunks();
+    },
+
+    seedPerfMessages: (turns) => {
+      dropPendingChunks();
+      const now = Date.now();
+      const additions: SessionItem[] = [];
+      for (let n = 1; n <= turns; n += 1) {
+        const at = new Date(now - (turns - n) * 60_000).toISOString();
+        const stamp = `${now}-${n}`;
+        additions.push({
+          kind: "user",
+          id: `perf-user-${stamp}`,
+          text: `性能种子 ${n}：请审阅这段实现，指出可优化点并给出修改建议。`,
+          createdAt: at,
+        });
+        additions.push({
+          kind: "assistant",
+          id: `perf-agent-${stamp}`,
+          isStreaming: false,
+          createdAt: at,
+          text: perfSeedBody(n),
+        });
+        if (n % 3 === 0) {
+          const startedAt = now - (turns - n) * 60_000;
+          additions.push({
+            kind: "tool",
+            id: `perf-tool-${stamp}`,
+            toolCallId: `perf-tool-${stamp}`,
+            title: `read src/mod${n}.ts`,
+            toolKind: "read",
+            status: "completed",
+            rawInput: { path: `src/mod${n}.ts` },
+            rawOutput: `${perfSeedBody(n).length} bytes`,
+            inputSummary: `path: src/mod${n}.ts`,
+            resultSummary: "读取完成（合成输出）",
+            startedAt,
+            endedAt: startedAt + 400,
+          });
+        }
+      }
+      set({ items: [...get().items, ...additions] });
+      scheduleSessionLogFlush();
+      logger.info("已灌入性能种子消息", {
+        turns,
+        items: additions.length,
+      });
     },
 
     handleEvent: (event) => {
@@ -1125,7 +1308,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
           if (event.entries.length === 0) {
             return;
           }
-          const items = closeStreamingItems(get().items);
+          const items = sealedItems();
           const lastIndex = (() => {
             for (let index = items.length - 1; index >= 0; index -= 1) {
               if (items[index]?.kind === "plan") {
@@ -1504,6 +1687,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     },
 
     restoreSessionLog: (workspacePath) => {
+      // 会话条目即将整体替换：旧会话的未提交流式缓冲一并丢弃
+      dropPendingChunks();
       const restored = readSessionLog(workspacePath);
       if (restored.length === 0) {
         return;
@@ -1522,6 +1707,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       // 切换前以旧目标收口落盘（flushSessionLogNow 读的是旧目标）
       flushSessionLogNow();
       logTargetPath = workspacePath;
+      // 新目标的首写不受「引用未变跳过」约束（旧键的落盘记录不代表新键）
+      lastWrittenItems = null;
     },
 
     flushSessionLog: () => {

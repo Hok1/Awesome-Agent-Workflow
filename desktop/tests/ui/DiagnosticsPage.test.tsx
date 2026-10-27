@@ -5,7 +5,9 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import DiagnosticsPage from "../../src/ui/DiagnosticsPage";
+import DiagnosticsPage, {
+  resetDiagnosticsTabForTests,
+} from "../../src/ui/DiagnosticsPage";
 import { useLogStore } from "../../src/stores/logStore";
 import { acpTraffic, appLogSink } from "../../src/core/logger";
 import { selectFromListbox } from "../helpers/listbox";
@@ -28,6 +30,7 @@ function seedDiagnostics(): void {
 
 describe("DiagnosticsPage", () => {
   beforeEach(() => {
+    resetDiagnosticsTabForTests();
     seedDiagnostics();
   });
 

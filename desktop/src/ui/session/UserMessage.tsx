@@ -1,3 +1,4 @@
+import { memo } from "react";
 /**
  * 用户消息：右侧气泡（保留换行）+ hover 浮现的操作行。
  *
@@ -11,7 +12,7 @@ import { prefillComposer } from "./composerPrefill.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { formatClock } from "./clock.ts";
 
-export function UserMessage({ item }: { readonly item: UserMessageItem }) {
+function UserMessageBase({ item }: { readonly item: UserMessageItem }) {
   return (
     <div className="group flex flex-col items-end gap-1" data-item-kind="user">
       <div
@@ -38,3 +39,6 @@ export function UserMessage({ item }: { readonly item: UserMessageItem }) {
     </div>
   );
 }
+
+/** memo：item 引用不变则整树跳过（流式分片只改最后一条的引用）。 */
+export const UserMessage = memo(UserMessageBase);

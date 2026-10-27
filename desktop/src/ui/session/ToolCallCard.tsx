@@ -10,7 +10,7 @@
  * - 运行中展开盯进度的卡，跑完**自动收起**（长轮次里盯过就还回去，
  *   不让历史工具卡把会话撑爆）；失败的保持展开——原因需要被人看到。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, memo } from "react";
 import type { ToolCallItem } from "../../stores/sessionStore.ts";
 import { ChevronRightIcon } from "../icons.tsx";
 import { formatClock, formatDuration } from "./clock.ts";
@@ -130,7 +130,7 @@ function ElapsedLabel({
   );
 }
 
-export function ToolCallCard({ item }: { readonly item: ToolCallItem }) {
+function ToolCallCardBase({ item }: { readonly item: ToolCallItem }) {
   const [isOpen, setIsOpen] = useState(false);
   // 运行中→完成的瞬变自动收起（失败不收：输出是排障现场）
   const prevStatusRef = useRef(item.status);
@@ -268,3 +268,6 @@ export function ToolCallCard({ item }: { readonly item: ToolCallItem }) {
     </div>
   );
 }
+
+/** memo：item 引用不变则整树跳过（流式分片只改最后一条的引用）。 */
+export const ToolCallCard = memo(ToolCallCardBase);

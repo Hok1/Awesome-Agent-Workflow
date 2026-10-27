@@ -1,3 +1,4 @@
+import { memo } from "react";
 /**
  * 助手消息：Markdown 渲染 + 流式指示 + 整条复制（复制 Markdown 源文本）。
  */
@@ -6,7 +7,7 @@ import { CopyButton } from "./CopyButton.tsx";
 import { formatClock } from "./clock.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 
-export function AssistantMessage({
+function AssistantMessageBase({
   item,
 }: {
   readonly item: AssistantMessageItem;
@@ -49,3 +50,6 @@ export function AssistantMessage({
     </div>
   );
 }
+
+/** memo：item 引用不变则整树跳过（流式分片只改最后一条的引用）。 */
+export const AssistantMessage = memo(AssistantMessageBase);

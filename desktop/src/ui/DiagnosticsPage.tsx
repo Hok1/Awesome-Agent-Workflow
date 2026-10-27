@@ -10,21 +10,34 @@ import { useLogStore } from "../stores/logStore";
 import { tabActiveClass, tabInactiveClass } from "./controls";
 import LogView from "./LogView";
 import AcpTrafficView from "./AcpTrafficView";
+import { PerfHud } from "./PerfHud.tsx";
 
-type DiagnosticsTab = "logs" | "traffic";
+type DiagnosticsTab = "logs" | "traffic" | "perf";
+
+// 页签状态放模块级：性能自检会临时收起诊断覆盖层（回会话视图采样），
+// 覆盖层重挂载时不能把用户丢回日志页——否则自检结果看不见
+let diagnosticsTab: DiagnosticsTab = "logs";
+
+/** 测试专用：页签状态是模块级，用例间复位回默认日志页。 */
+export function resetDiagnosticsTabForTests(): void {
+  diagnosticsTab = "logs";
+}
 
 function DiagnosticsPage() {
-  const [tab, setTab] = useState<DiagnosticsTab>("logs");
+  const [tab, setTab] = useState<DiagnosticsTab>(diagnosticsTab);
   const logCount = useLogStore((state) => state.entries.length);
   const trafficCount = useLogStore((state) => state.traffic.length);
 
+  // 「性能」不带计数徽标：内存 / 存储是读数不是条目数（日志与流量页签
+  // 的计数是「有多少条可查看」，性能页没有对应语义）
   const tabs: ReadonlyArray<{
     id: DiagnosticsTab;
     label: string;
-    count: number;
+    count: number | null;
   }> = [
     { id: "logs", label: "运行日志", count: logCount },
     { id: "traffic", label: "ACP 流量", count: trafficCount },
+    { id: "perf", label: "性能", count: null },
   ];
 
   return (
@@ -48,17 +61,24 @@ function DiagnosticsPage() {
             role="tab"
             aria-selected={tab === item.id}
             onClick={() => {
+              diagnosticsTab = item.id;
               setTab(item.id);
             }}
             className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
               tab === item.id ? tabActiveClass : tabInactiveClass
             }`}
           >
-            {`${item.label}（${item.count}）`}
+            {item.count === null ? item.label : `${item.label}（${item.count}）`}
           </button>
         ))}
       </div>
-      {tab === "logs" ? <LogView /> : <AcpTrafficView />}
+      {tab === "logs" ? (
+        <LogView />
+      ) : tab === "traffic" ? (
+        <AcpTrafficView />
+      ) : (
+        <PerfHud />
+      )}
     </section>
   );
 }
