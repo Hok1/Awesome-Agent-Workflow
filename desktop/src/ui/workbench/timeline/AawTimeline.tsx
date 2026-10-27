@@ -655,6 +655,8 @@ export function AawTimeline(): React.JSX.Element | null {
     }
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
+        // preventDefault 标记 Esc 已被抽屉消费（SessionView 的全局停止让位）
+        event.preventDefault();
         useWorkbenchUiStore.getState().toggleTimeline();
       }
     }

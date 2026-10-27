@@ -26,6 +26,7 @@ function makeItem(
     id: "a-1",
     text: "普通段落，包含 `行内代码`。",
     isStreaming: false,
+    createdAt: "2026-10-26T10:00:00",
     ...overrides,
   };
 }

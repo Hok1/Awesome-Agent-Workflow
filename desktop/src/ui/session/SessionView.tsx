@@ -18,7 +18,7 @@
  *
  * 组件只订阅 sessionStore 的选择器；数据折叠全部在 store 层完成。
  */
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   useSessionStore,
   type SessionItem,
@@ -27,12 +27,27 @@ import { useApprovalStore } from "../../stores/approvalStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { useWorkbenchUiStore } from "../../stores/workbenchUiStore.ts";
 import { useAawStatusStore } from "../../stores/aawStatusStore.ts";
+import {
+  chatWidthClassOf,
+  chatWidthOptions,
+  useSettingsStore,
+} from "../../stores/settingsStore.ts";
 import { btnPrimary } from "../controls.tsx";
 import { ScopedErrorBoundary } from "../ErrorBoundary.tsx";
-import { ArrowDownToLineIcon, SparkleIcon, XIcon } from "../icons.tsx";
+import {
+  ArrowDownToLineIcon,
+  SparkleIcon,
+  WidthFullIcon,
+  WidthStandardIcon,
+  WidthWideIcon,
+  XIcon,
+} from "../icons.tsx";
 import { AssistantMessage } from "./AssistantMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
+import { PlanCard } from "./PlanCard.tsx";
 import { QuestionDock } from "./QuestionDock.tsx";
+import { QueueDock } from "./QueueDock.tsx";
+import { SessionDock } from "./SessionDock.tsx";
 import { TurnStatusRow } from "./InputStatusBar.tsx";
 import { Spinner } from "../controls.tsx";
 import { openRealWorkspace } from "../realRuntime.ts";
@@ -43,6 +58,8 @@ import { prefillComposer } from "./composerPrefill.ts";
 import { SystemNotice } from "./SystemNotice.tsx";
 import { ThoughtBlock } from "./ThoughtBlock.tsx";
 import { ToolCallCard } from "./ToolCallCard.tsx";
+import { groupTurnWork } from "./turnGrouping.ts";
+import { WorkGroupCard } from "./WorkGroupCard.tsx";
 import {
   isNearBottom,
   shouldLoadOlder,
@@ -71,6 +88,8 @@ function SessionItemView({ item }: { readonly item: SessionItem }) {
       return <ThoughtBlock item={item} />;
     case "tool":
       return <ToolCallCard item={item} />;
+    case "plan":
+      return <PlanCard item={item} />;
     case "system":
       return <SystemNotice item={item} />;
   }
@@ -158,6 +177,7 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   const items = useSessionStore((state) => state.items);
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
   const sendPrompt = useSessionStore((state) => state.sendPrompt);
+  const enqueuePrompt = useSessionStore((state) => state.enqueuePrompt);
   const requestCancel = useSessionStore((state) => state.requestCancel);
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   // 挂起计数：有挂起的审批/提问时不再展示「会话为空」空态，
@@ -175,6 +195,15 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   const isAawOpen = useWorkbenchUiStore((state) => state.isAawOpen);
   const toggleAaw = useWorkbenchUiStore((state) => state.toggleAaw);
   const currentSr = useAawStatusStore((state) => state.currentSr);
+  // 内容宽度档：消息流 / 输入卡 / 停靠坞共用（对齐），就地三档循环
+  const chatWidth = useSettingsStore((state) => state.chatWidth);
+  const setChatWidth = useSettingsStore((state) => state.setChatWidth);
+  const widthClass = chatWidthClassOf(chatWidth);
+  const nextWidth =
+    chatWidthOptions[
+      (chatWidthOptions.findIndex((o) => o.value === chatWidth) + 1) %
+        chatWidthOptions.length
+    ]?.value ?? "standard";
 
   // ---- 消息流窗口化 + 跟随状态机 ----
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -184,8 +213,51 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   const lastLengthRef = useRef(0);
   // 补载锚：loadOlder 前的「距底距离」，补载渲染后恢复（前插不顶飞视口）
   const prependAnchorRef = useRef<number | null>(null);
+  // 工作组的展开态（默认全收起——降噪是目的）：会话清空 / 切换时一并复位
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const visibleItems = sliceVisible(items, visibleCount);
+  // 轮内已完成工作折叠（作用于窗口化切片之后，不碰锚定与跟随）
+  const visibleUnits = useMemo(
+    () => groupTurnWork(visibleItems),
+    [visibleItems],
+  );
+
+  // ---- Esc 全局停止：agent 运行中按 Esc 直接取消当前轮 ----
+  // 让位规则（不误停）：IME 组词中；mention 面板 / 审批弹窗 / 提问面板 /
+  // 关闭确认 / 项目添加浮层 / 覆盖页 / 时间线抽屉打开时——前四者各自
+  // preventDefault 消费掉 Esc，这里按 defaultPrevented 让位；后三者按
+  // 状态判断让位。按下的目标在输入框内（含正在编辑的草稿）也照停——
+  // 「运行中一律停止」是评审确认的行为。
+  useEffect(() => {
+    if (!isAgentRunning) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing
+      ) {
+        return;
+      }
+      if (useApprovalStore.getState().pending.length > 0) {
+        return;
+      }
+      const ui = useWorkbenchUiStore.getState();
+      if (ui.overlay !== null || !ui.isTimelineCollapsed) {
+        return;
+      }
+      event.preventDefault();
+      requestCancel();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isAgentRunning, requestCancel]);
 
   useEffect(() => {
     const previous = lastLengthRef.current;
@@ -195,6 +267,7 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
       setVisibleCount(WINDOW_CHUNK);
       setIsFollowing(true);
       setUnseenCount(0);
+      setOpenGroups(new Set());
       return;
     }
     if (items.length > previous && !isFollowing) {
@@ -308,6 +381,30 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
             状态机（贴底自动滚入；上翻解除并给回底按钮）；relative 承载
             回底按钮 */}
         <div className="relative min-h-0 flex-1">
+          {/* 宽度切换：右上角图标按钮三档循环（标准 / 宽 / 全宽），档位持久化 */}
+          <button
+            type="button"
+            aria-label={`内容宽度：${
+              chatWidthOptions.find((option) => option.value === chatWidth)?.label ?? "标准"
+            }`}
+            title={`内容宽度：${
+              chatWidthOptions.find((option) => option.value === chatWidth)?.label ?? "标准"
+            }（点击切换为${
+              chatWidthOptions.find((option) => option.value === nextWidth)?.label ?? "标准"
+            }）`}
+            onClick={() => {
+              setChatWidth(nextWidth);
+            }}
+            className="absolute right-3 top-2 z-10 rounded-md border border-line bg-surface/80 p-1 text-ink-faint backdrop-blur transition-colors hover:border-ink-faint hover:text-ink-soft"
+          >
+            {chatWidth === "wide" ? (
+              <WidthWideIcon className="h-3.5 w-3.5" />
+            ) : chatWidth === "full" ? (
+              <WidthFullIcon className="h-3.5 w-3.5" />
+            ) : (
+              <WidthStandardIcon className="h-3.5 w-3.5" />
+            )}
+          </button>
           <div
             ref={scrollRef}
             onScroll={handleScroll}
@@ -358,12 +455,35 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
                   <EmptyPrompts currentSr={currentSr} />
                 )
               ) : (
-                <ol className="mx-auto flex max-w-4xl list-none flex-col gap-5 p-0">
-                  {visibleItems.map((item) => (
-                    <li key={item.id}>
-                      <SessionItemView item={item} />
-                    </li>
-                  ))}
+                <ol className={`mx-auto flex list-none flex-col gap-5 p-0 ${widthClass}`}>
+                  {visibleUnits.map((unit) =>
+                    unit.kind === "item" ? (
+                      <li key={unit.id}>
+                        <SessionItemView item={unit.item} />
+                      </li>
+                    ) : (
+                      <li key={unit.id}>
+                        <WorkGroupCard
+                          unit={unit}
+                          expanded={openGroups.has(unit.id)}
+                          onToggle={() => {
+                            setOpenGroups((current) => {
+                              const next = new Set(current);
+                              if (next.has(unit.id)) {
+                                next.delete(unit.id);
+                              } else {
+                                next.add(unit.id);
+                              }
+                              return next;
+                            });
+                          }}
+                          renderItem={(item) => (
+                            <SessionItemView item={item} />
+                          )}
+                        />
+                      </li>
+                    ),
+                  )}
                   {/* 轮次相位行长在消息流末尾：思考中 / 工具运行中 n / 生成中 */}
                   <TurnStatusRow />
                 </ol>
@@ -386,7 +506,7 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
         {turnError !== null && !isAgentRunning ? (
           <div
             role="alert"
-            className="mx-auto mb-2 flex w-full max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-danger-ink"
+            className={`mx-auto mb-2 flex w-full flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-danger-ink ${widthClass}`}
           >
             <span className="font-medium">
               {turnError.category === "auth"
@@ -431,12 +551,19 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
             </button>
           </div>
         ) : null}
-        {/* 结构化问答停靠面板：不弹窗、不遮会话——回答所需上下文就在上方 */}
-        <QuestionDock />
+        {/* 会话停靠坞：问答 > 队列——队列永远紧挨输入框；任务步骤在
+            消息流内（PlanCard），不占停靠坞 */}
+        <SessionDock>
+          {/* 结构化问答：不弹窗、不遮会话——回答所需上下文就在上方 */}
+          <QuestionDock />
+          {/* 排队消息：运行中「稍后发送」，取消/出错后挂起等放行 */}
+          <QueueDock />
+        </SessionDock>
         <ChatInput
           isAgentRunning={isAgentRunning}
           disabled={isConnecting}
           onSend={sendPrompt}
+          onEnqueue={enqueuePrompt}
           onCancel={requestCancel}
         />
       </section>

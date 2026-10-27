@@ -3,15 +3,14 @@
  * 丢弃的会话能力信息放到用户视线落点。
  *
  * 布局分工（状态行的左右两簇）：
- * - 左簇（InputStatusLeft）：skill 计数（悬停列名字与来源）· MCP 计数
- *   （悬停列服务器与工具数，失败的服务器以 danger 徽标单列）——能力面
- *   信息，与审批模式徽标作伴；
+ * - 左簇（InputStatusLeft）：「+」二级菜单（ZCode 式）——skills 清单
+ *   收进弹出菜单，状态行只留一枚 + 芯片；
  * - 右簇（InputStatusRight）：上下文用量**圆环**（最近一次调用占当前模型
  *   窗口的百分比，环色按 70/90 阈值换档，悬停给 token 明细）+ 模型标识
  *   （模型名优先，回落 profile id）——「现在用什么模型、窗口还剩多少」
  *   是发送前的最后一眼，放在发送钮一侧。
  *
- * 全部只读，悬停即明细，不占交互入口。
+ * 模型标识在有可用清单时升级为切换器（session/set_model）。
  *
  * TurnStatusRow 是对话流末尾的相位行（思考中 / 工具运行中 n / 生成中）：
  * 状态长在消息流里而不是输入框上——用户盯着的是对话，不是输入条。
@@ -24,7 +23,12 @@ import {
   turnStatusLabel,
   useRuntimeStatusStore,
 } from "../../stores/runtimeStatusStore.ts";
-import { Badge } from "../controls.tsx";
+import {
+  MenuInfoRow,
+  MenuItemButton,
+  MenuSectionLabel,
+  StatusChipMenu,
+} from "./StatusChipMenu.tsx";
 
 /** token 数的人读短格式（51_000 → 51k；1_280_000 → 1.3M）。 */
 function formatTokens(value: number): string {
@@ -122,76 +126,115 @@ export function ContextRing(): React.JSX.Element | null {
 }
 
 /** skill 计数徽标：优先顶层 skillNames，缺失时按来源计数求和。 */
-function SkillsBadge(): React.JSX.Element | null {
+/**
+ * 「+」二级菜单（ZCode 式）：skills 清单收进弹出菜单，状态行只留一枚
+ * + 芯片——这里也是将来附件 / 命令入口的家。只放 skills（评审确认）；
+ * MCP 属 agent 侧能力细节，入口在诊断页。
+ */
+function PlusMenu(): React.JSX.Element {
   const runtime = useRuntimeStatusStore((state) => state.runtime);
-  const fromSources = runtime.skillSources.reduce(
-    (total, entry) => total + entry.count,
-    0,
-  );
-  const count =
-    runtime.skillNames.length > 0 ? runtime.skillNames.length : fromSources;
-  if (count === 0) {
-    return null;
-  }
-  const detail = hoverLines([
+  const skillCount =
     runtime.skillNames.length > 0
-      ? runtime.skillNames.join("、")
-      : runtime.skillSources.map((s) => `${s.source}：${s.count}`).join(" · "),
-  ]);
+      ? runtime.skillNames.length
+      : runtime.skillSources.reduce((total, entry) => total + entry.count, 0);
   return (
-    <Badge tone="neutral" title={detail}>
-      skills {count}
-    </Badge>
+    <StatusChipMenu
+      label="+"
+      title="会话已加载的 skills 清单"
+      menuLabel="会话 skills"
+    >
+      <MenuSectionLabel text={`Skills · ${skillCount}`} />
+      <div className="max-h-56 overflow-y-auto py-1">
+        {skillCount === 0 ? (
+          <MenuInfoRow text="无已加载 skill" />
+        ) : runtime.skillNames.length > 0 ? (
+          runtime.skillNames.map((name) => (
+            <MenuInfoRow key={name} text={name} />
+          ))
+        ) : (
+          runtime.skillSources.map((entry) => (
+            <MenuInfoRow key={entry.source} text={`${entry.source} · ${entry.count} 个`} />
+          ))
+        )}
+      </div>
+    </StatusChipMenu>
   );
 }
 
-/** MCP 计数徽标：服务器数，失败的服务器以 danger 单列在旁。 */
-function McpBadge(): React.JSX.Element | null {
-  const runtime = useRuntimeStatusStore((state) => state.runtime);
-  if (runtime.mcpServers.length === 0 && runtime.mcpFailures.length === 0) {
-    return null;
-  }
-  const detail = hoverLines([
-    ...runtime.mcpServers.map(
-      (server) => `${server.name} · ${server.toolCount} 工具`,
-    ),
-    ...runtime.mcpFailures.map(
-      (failure) => `${failure.name}：${failure.error}`,
-    ),
-  ]);
-  return (
-    <Fragment>
-      <Badge tone="neutral" title={detail}>
-        mcp {runtime.mcpServers.length}
-      </Badge>
-      {runtime.mcpFailures.length > 0 ? (
-        <Badge tone="danger" title={detail}>
-          {runtime.mcpFailures.length} 失败
-        </Badge>
-      ) : null}
-    </Fragment>
-  );
-}
-
-/** 模型标识：模型名（runtimeDetails.model.name）优先，回落 profile id。 */
+/**
+ * 模型标识 + 切换器：有可用模型清单（会话建立时 chrys 下发）时点开即换
+ * （session/set_model，chrys 随后回推 runtime 更新刷新标识）；无清单回落
+ * 纯展示。选中态优先 currentModelId，未知时按显示名回配。
+ */
 export function ModelTag(): React.JSX.Element {
   const sessionModelLabel = useSessionStore((state) => state.modelLabel);
+  const availableModels = useSessionStore((state) => state.availableModels);
+  const currentModelId = useSessionStore((state) => state.currentModelId);
+  const switchModel = useSessionStore((state) => state.switchModel);
   const runtime = useRuntimeStatusStore((state) => state.runtime);
   const label =
     runtime.modelName ?? runtime.modelProfileId ?? sessionModelLabel;
-  return (
-    <span
-      className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-ink-mute"
-      title={hoverLines([label ?? "", runtime.modelProvider ?? ""])}
-    >
+  const effectiveCurrentId =
+    currentModelId ??
+    (label !== null
+      ? availableModels.find(
+          (model) => model.modelId === label || model.name === label,
+        )?.modelId ?? null
+      : null);
+  if (availableModels.length === 0) {
+    return (
       <span
-        aria-hidden={true}
-        className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500"
-      />
-      <span className="truncate font-mono">
-        {label === null ? "—" : shortModelLabel(label)}
+        className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-ink-mute"
+        title={hoverLines([label ?? "", runtime.modelProvider ?? ""])}
+      >
+        <span
+          aria-hidden={true}
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500"
+        />
+        <span className="truncate font-mono">
+          {label === null ? "—" : shortModelLabel(label)}
+        </span>
       </span>
-    </span>
+    );
+  }
+  return (
+    <StatusChipMenu
+      title={`当前模型：${label ?? "—"}（点击切换，仅本会话生效）`}
+      menuLabel="模型选择"
+      label={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span
+            aria-hidden={true}
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500"
+          />
+          <span className="max-w-40 truncate font-mono">
+            {label === null ? "—" : shortModelLabel(label)}
+          </span>
+        </span>
+      }
+    >
+      <MenuSectionLabel text="模型（本会话）" />
+      <div className="max-h-52 overflow-y-auto py-1">
+        {availableModels.map((model) => (
+          <MenuItemButton
+            key={model.modelId}
+            selected={model.modelId === effectiveCurrentId}
+            onClick={() => {
+              switchModel(model.modelId);
+            }}
+          >
+            <span className="block font-mono text-xs">{model.name}</span>
+            {model.description !== null &&
+            model.description !== undefined &&
+            model.description.length > 0 ? (
+              <span className="mt-0.5 block text-2xs leading-relaxed text-ink-faint">
+                {model.description}
+              </span>
+            ) : null}
+          </MenuItemButton>
+        ))}
+      </div>
+    </StatusChipMenu>
   );
 }
 
@@ -199,8 +242,7 @@ export function ModelTag(): React.JSX.Element {
 export function InputStatusLeft(): React.JSX.Element {
   return (
     <Fragment>
-      <SkillsBadge />
-      <McpBadge />
+      <PlusMenu />
     </Fragment>
   );
 }
@@ -222,6 +264,9 @@ export function InputStatusRight(): React.JSX.Element {
  */
 export function TurnStatusRow(): React.JSX.Element | null {
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
+  const queuedCount = useSessionStore(
+    (state) => state.queuedPrompts.length,
+  );
   const isTurnActive = useRuntimeStatusStore((state) => state.isTurnActive);
   // 等你回答/审批时轮次还开着（Promise 未 resolve），但相位不是
   // 「思考中/生成中」——是「在等你」，相位行退场让位给问答面板
@@ -245,6 +290,11 @@ export function TurnStatusRow(): React.JSX.Element | null {
     >
       <span className="inline-block size-1.5 animate-pulse rounded-full bg-info" />
       {phase}…
+      {queuedCount > 0 ? (
+        <span className="text-ink-ghost">
+          （{queuedCount} 条排队待发）
+        </span>
+      ) : null}
     </li>
   );
 }

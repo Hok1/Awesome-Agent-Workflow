@@ -98,6 +98,8 @@ export function AddProjectPanel({ onClose, triggerRef }: AddProjectPanelProps) {
     }
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
+        // preventDefault 标记 Esc 已被浮层消费（SessionView 的全局停止让位）
+        event.preventDefault();
         onClose();
       }
     }

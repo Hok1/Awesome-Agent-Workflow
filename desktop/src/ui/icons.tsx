@@ -29,6 +29,36 @@ function Svg({ children, ...rest }: IconProps) {
   );
 }
 
+/** 内容宽度·标准：窄内容列（两侧留白多）。 */
+export function WidthStandardIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 5v14M20 5v14" opacity="0.45" />
+      <rect x="9.5" y="6.5" width="5" height="11" rx="1.2" />
+    </Svg>
+  );
+}
+
+/** 内容宽度·宽：宽内容列（两侧留白收窄）。 */
+export function WidthWideIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 5v14M21 5v14" opacity="0.45" />
+      <rect x="6.5" y="6.5" width="11" height="11" rx="1.2" />
+    </Svg>
+  );
+}
+
+/** 内容宽度·全宽：内容铺满（外扩箭头）。 */
+export function WidthFullIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9 4H4v5M15 20h5v-5M4 4l5.5 5.5M20 20l-5.5-5.5" />
+      <path d="M4 13v3M20 11V8" opacity="0.45" />
+    </Svg>
+  );
+}
+
 /** 下折 chevron（展开态 / 下拉指示）。 */
 export function ChevronDownIcon(props: IconProps) {
   return (

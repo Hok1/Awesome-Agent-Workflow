@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("ApprovalModal", () => {
-  it("模态展示工具名、标题、输入摘要与对话框语义", () => {
+  it("模态展示工具名、标题、命令预览（execute 类）与对话框语义", () => {
     const item = seedPermission();
     render(<ApprovalModal item={item} />);
     expect(
@@ -62,9 +62,12 @@ describe("ApprovalModal", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("bash")).toBeInTheDocument();
     expect(screen.getByText("执行 aaw run --stage review")).toBeInTheDocument();
+    // execute 类：完整命令预览替代 key=value 摘要
+    expect(screen.getByText("将执行的命令")).toBeInTheDocument();
+    expect(screen.getByText("aaw run --stage review")).toBeInTheDocument();
     expect(
-      screen.getByText("command=aaw run --stage review · cwd=D:/dev/demo"),
-    ).toBeInTheDocument();
+      screen.queryByText("command=aaw run --stage review · cwd=D:/dev/demo"),
+    ).not.toBeInTheDocument();
   });
 
   it("按 kind 渲染「允许 / 拒绝」，点击允许后挂起项清空", async () => {
@@ -184,5 +187,55 @@ describe("ApprovalModal", () => {
     render(<ApprovalModal item={item} />);
     expect(screen.getByText("原因：上一次执行超时")).toBeInTheDocument();
     expect(screen.getByText("（无输入参数）")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------- 工具预览（M5）
+describe("ApprovalModal 工具预览", () => {
+  function seedWith(toolCall: Record<string, unknown>): void {
+    void useApprovalStore.getState().offerPermission({
+      sessionId: "s1",
+      toolCall,
+      options: CHRYS_OPTIONS,
+    });
+  }
+
+  it("edit_file 审批渲染 diff 预览（路径 + 增删行）", () => {
+    seedWith({
+      toolCallId: "call-edit",
+      title: "edit_file src/app.ts",
+      _meta: { chrys: { tool_name: "edit_file", tool_kind: "edit" } },
+      rawInput: {
+        path: "src/app.ts",
+        old_string: "const a = 1;",
+        new_string: "const a = 2;",
+      },
+    });
+    const item = useApprovalStore.getState().pending[0];
+    if (item === undefined || item.kind !== "permission") {
+      throw new Error("应挂起审批项");
+    }
+    render(<ApprovalModal item={item} />);
+    expect(screen.getByText("改动预览")).toBeInTheDocument();
+    const diff = screen.getByLabelText("行级差异");
+    expect(diff).toHaveTextContent("const a = 1;");
+    expect(diff).toHaveTextContent("const a = 2;");
+  });
+
+  it("形状不认识的工具回落 key=value 摘要", () => {
+    seedWith({
+      toolCallId: "call-other",
+      title: "web_fetch example.com",
+      _meta: { chrys: { tool_name: "web_fetch", tool_kind: "fetch" } },
+      rawInput: { url: "https://example.com" },
+    });
+    const item = useApprovalStore.getState().pending[0];
+    if (item === undefined || item.kind !== "permission") {
+      throw new Error("应挂起审批项");
+    }
+    render(<ApprovalModal item={item} />);
+    expect(screen.getByText("工具输入")).toBeInTheDocument();
+    expect(screen.getByText(/url=/)).toBeInTheDocument();
+    expect(screen.queryByText("改动预览")).not.toBeInTheDocument();
   });
 });

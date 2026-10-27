@@ -31,6 +31,33 @@ export const themeOptions: readonly {
   { value: "warm", label: "暖白" },
 ];
 
+/**
+ * 会话内容宽度（消息流 / 输入卡 / 停靠坞共用，保持对齐）：
+ * standard 保证正文可读行宽（默认）；wide 给表格 / diff 等宽内容更多
+ * 空间；full 铺满（等宽内容最优，正文行宽换可读性）。
+ */
+export type ChatWidth = "standard" | "wide" | "full";
+
+export const chatWidthOptions: readonly {
+  readonly value: ChatWidth;
+  readonly label: string;
+}[] = [
+  { value: "standard", label: "标准" },
+  { value: "wide", label: "宽" },
+  { value: "full", label: "全宽" },
+];
+
+/** 宽度档 → 内容列 max-w class（三处消费点共用，保证对齐）。 */
+export function chatWidthClassOf(width: ChatWidth): string {
+  if (width === "wide") {
+    return "max-w-6xl";
+  }
+  if (width === "full") {
+    return "max-w-none";
+  }
+  return "max-w-4xl";
+}
+
 const logger = createLogger("settings");
 
 /**
@@ -81,6 +108,9 @@ export const defaultSkillsSourceDir =
 const defaultLanguage: Language = "zh-CN";
 const defaultApprovalMode: ApprovalMode = "ask";
 const defaultTheme: ThemePreference = "dark";
+/** 问答自动应答默认关闭：自动选择有误操作风险，开启是显式决定。 */
+const defaultAutoAnswerQuestions = false;
+const defaultChatWidth: ChatWidth = "standard";
 
 /** 需要持久化的设置子集（连接测试状态属于运行时，不落盘）。 */
 interface PersistedSettings {
@@ -89,6 +119,10 @@ interface PersistedSettings {
   readonly language: Language;
   readonly skillsSourceDir: string;
   readonly theme: ThemePreference;
+  /** 结构化提问挂起 60s 无交互自动提交首个选项（M5，默认关）。 */
+  readonly autoAnswerQuestions: boolean;
+  /** 会话内容宽度档（消息流 / 输入卡 / 停靠坞共用）。 */
+  readonly chatWidth: ChatWidth;
 }
 
 const defaultSettings: PersistedSettings = {
@@ -97,6 +131,8 @@ const defaultSettings: PersistedSettings = {
   language: defaultLanguage,
   skillsSourceDir: defaultSkillsSourceDir,
   theme: defaultTheme,
+  autoAnswerQuestions: defaultAutoAnswerQuestions,
+  chatWidth: defaultChatWidth,
 };
 
 const storageKey = "aaw-desktop.settings.v1";
@@ -111,6 +147,10 @@ function isLanguage(value: unknown): value is Language {
 
 function isTheme(value: unknown): value is ThemePreference {
   return value === "dark" || value === "warm";
+}
+
+function isChatWidth(value: unknown): value is ChatWidth {
+  return value === "standard" || value === "wide" || value === "full";
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -154,6 +194,13 @@ function loadPersistedSettings(): PersistedSettings {
         ? record["skillsSourceDir"]
         : defaultSettings.skillsSourceDir,
       theme: isTheme(record["theme"]) ? record["theme"] : defaultSettings.theme,
+      autoAnswerQuestions:
+        typeof record["autoAnswerQuestions"] === "boolean"
+          ? record["autoAnswerQuestions"]
+          : defaultSettings.autoAnswerQuestions,
+      chatWidth: isChatWidth(record["chatWidth"])
+        ? record["chatWidth"]
+        : defaultSettings.chatWidth,
     };
   } catch (error) {
     logger.warn("读取持久化设置失败，使用默认值", {
@@ -251,6 +298,8 @@ interface SettingsStoreState {
   readonly language: Language;
   readonly skillsSourceDir: string;
   readonly theme: ThemePreference;
+  readonly autoAnswerQuestions: boolean;
+  readonly chatWidth: ChatWidth;
   readonly connection: ConnectionStatus;
   /** chrys 路径自动探测进行中（启动时路径为空才触发一次）。 */
   readonly isProbingChrysPath: boolean;
@@ -259,6 +308,8 @@ interface SettingsStoreState {
   setLanguage: (language: Language) => void;
   setSkillsSourceDir: (dir: string) => void;
   setTheme: (theme: ThemePreference) => void;
+  setAutoAnswerQuestions: (enabled: boolean) => void;
+  setChatWidth: (width: ChatWidth) => void;
   /** 执行 `<chrysPath> --version` 验证路径可用性。 */
   testConnection: () => Promise<void>;
   /** 路径为空时的启动探测（PATH 与常见安装位置；只探一次）。 */
@@ -305,6 +356,8 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
       language: next.language,
       skillsSourceDir: next.skillsSourceDir,
       theme: next.theme,
+      autoAnswerQuestions: next.autoAnswerQuestions,
+      chatWidth: next.chatWidth,
     });
   }
 
@@ -341,6 +394,14 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
     setTheme: (theme) => {
       applySettings({ theme });
       logger.info("界面主题已更新", { theme });
+    },
+    setAutoAnswerQuestions: (enabled) => {
+      applySettings({ autoAnswerQuestions: enabled });
+      logger.info("问答自动应答已更新", { enabled });
+    },
+    setChatWidth: (width) => {
+      applySettings({ chatWidth: width });
+      logger.info("会话内容宽度已更新", { width });
     },
     testConnection: async () => {
       const program = get().chrysPath;

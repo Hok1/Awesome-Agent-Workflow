@@ -22,6 +22,8 @@ import { create } from "zustand";
 import { createLogger } from "../core/logger.ts";
 import type { AcpSession, AcpSessionEvent } from "../acp/session.ts";
 import type {
+  ModelInfo,
+  PlanEntry,
   PromptResult,
   StopReason,
   ToolCallStatus,
@@ -45,6 +47,8 @@ export interface AssistantMessageItem {
   readonly id: string;
   readonly text: string;
   readonly isStreaming: boolean;
+  /** 落笔时刻（ISO 8601；旧快照恢复的条目为空串，hover 时间戳不显示）。 */
+  readonly createdAt: string;
 }
 
 /** 思考过程（agent_thought_chunk），默认折叠呈现。 */
@@ -72,6 +76,10 @@ export interface ToolCallItem {
   readonly inputSummary: string;
   /** 结果的一行摘要（toolResultSummary 计算）。 */
   readonly resultSummary: string;
+  /** 首次落笔时刻（耗时起点；随快照持久化，恢复的历史卡仍能显示总耗时）。 */
+  readonly startedAt: number | null;
+  /** 终态（completed/failed）落笔时刻；运行中 / 旧快照缺省为 null。 */
+  readonly endedAt: number | null;
 }
 
 export type SystemNoticeLevel = "info" | "warn" | "error";
@@ -83,11 +91,22 @@ export interface SystemNoticeItem {
   readonly text: string;
 }
 
+/**
+ * 步骤清单（ACP plan 事件，来自 todo_write 整表替换）：流内条目——
+ * 与 ZCode 同款呈现为会话记录的一部分，随消息滚动，不占停靠坞。
+ */
+export interface PlanItem {
+  readonly kind: "plan";
+  readonly id: string;
+  readonly entries: readonly PlanEntry[];
+}
+
 export type SessionItem =
   | UserMessageItem
   | AssistantMessageItem
   | ThoughtItem
   | ToolCallItem
+  | PlanItem
   | SystemNoticeItem;
 
 /** 一轮 prompt 的结局（响应或失败）。 */
@@ -117,6 +136,10 @@ export interface SessionSummary {
 export interface SessionBinding {
   prompt(text: string): Promise<PromptResult>;
   cancel(): void;
+  /** 可选能力：列出可用模型（会话建立时的 SessionModelState）。 */
+  listModels?(): Promise<readonly ModelInfo[]>;
+  /** 可选能力：切换会话模型（session/set_model；成功后 runtime 更新回推）。 */
+  setModel?(modelId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,14 +261,27 @@ export function toolResultSummary(rawOutput: unknown): string {
 // ---------------------------------------------------------------------------
 
 interface SessionStoreState {
-  /** 会话条目（含流式中的条目）。 */
+  /** 会话条目（含流式中的条目；plan 步骤清单也是流内条目之一）。 */
   readonly items: readonly SessionItem[];
   /** agent 是否正在处理一轮 prompt。 */
   readonly isAgentRunning: boolean;
+  /**
+   * 运行中「稍后发送」的排队消息（内存态，不进快照，切换会话即清）。
+   * 出队策略（评审确认）：轮次**正常**结束自动发下一条；**取消 / 出错**
+   * 结束则挂起（queuePaused=true），等用户在队列面板放行——按了停止就
+   * 是要停，不能它自己又跑起来。
+   */
+  readonly queuedPrompts: readonly string[];
+  /** 队列是否被挂起（取消/出错后）：true 时等待用户 resumeQueue。 */
+  readonly queuePaused: boolean;
   /** 最近一轮的 stopReason（请求失败时为 null）。 */
   readonly lastStopReason: StopReason | null;
   /** 当前模型标识（chrys runtime 的 modelProfileId / 会话元信息）。 */
   readonly modelLabel: string | null;
+  /** 可用模型清单（会话建立时 chrys 下发的 SessionModelState）。 */
+  readonly availableModels: readonly ModelInfo[];
+  /** 当前模型 id（输入行模型切换器的选中态；未知为 null）。 */
+  readonly currentModelId: string | null;
   /** 当前审批模式。 */
   readonly approvalMode: { readonly id: string; readonly name: string } | null;
   /** 是否已绑定下行通道。 */
@@ -333,8 +369,23 @@ interface SessionStoreState {
   readonly endOpenSession: (id: string) => void;
   /** 关闭当前会话聚焦：清空 activeSessionId（不销毁条目流）。 */
   readonly dismissSession: () => void;
+  /** 会话建立后灌入模型清单与当前选中（attachSession 调用）。 */
+  readonly setSessionModels: (
+    models: readonly ModelInfo[],
+    currentModelId: string | null,
+  ) => void;
+  /** 切换会话模型（session/set_model；乐观更新，失败回滚并提示）。 */
+  readonly switchModel: (modelId: string) => void;
   /** 发送一轮用户消息（无绑定时如实提示，不伪造轮次）。 */
   readonly sendPrompt: (text: string) => void;
+  /** 运行中把消息加入队列（空闲时的防御路径直接发送）。 */
+  readonly enqueuePrompt: (text: string) => void;
+  /** 放行挂起的队列：立即发下一条并恢复正常自动出队。 */
+  readonly resumeQueue: () => void;
+  /** 清空队列并解除挂起。 */
+  readonly clearQueue: () => void;
+  /** 删除指定下标的排队消息（队列空了顺便解除挂起）。 */
+  readonly removeQueuedPrompt: (index: number) => void;
   /** 请求取消当前轮（session/cancel）。 */
   readonly requestCancel: () => void;
   /**
@@ -483,7 +534,14 @@ function sanitizeRestoredItem(raw: unknown): SessionItem | null {
           typeof record["createdAt"] === "string" ? record["createdAt"] : "",
       };
     case "assistant":
-      return { kind: "assistant", id, text, isStreaming: false };
+      return {
+        kind: "assistant",
+        id,
+        text,
+        isStreaming: false,
+        createdAt:
+          typeof record["createdAt"] === "string" ? record["createdAt"] : "",
+      };
     case "thought":
       return {
         kind: "thought",
@@ -512,7 +570,43 @@ function sanitizeRestoredItem(raw: unknown): SessionItem | null {
           typeof record["resultSummary"] === "string"
             ? record["resultSummary"]
             : "",
+        startedAt: typeof record["startedAt"] === "number" ? record["startedAt"] : null,
+        endedAt: typeof record["endedAt"] === "number" ? record["endedAt"] : null,
       };
+    case "plan": {
+      const rawEntries = Array.isArray(record["entries"])
+        ? record["entries"]
+        : [];
+      const entries: PlanEntry[] = [];
+      for (const raw of rawEntries) {
+        if (typeof raw !== "object" || raw === null) {
+          continue;
+        }
+        const entry = raw as Readonly<Record<string, unknown>>;
+        const content = entry["content"];
+        const status = entry["status"];
+        if (typeof content !== "string" || content.length === 0) {
+          continue;
+        }
+        if (typeof status !== "string") {
+          continue;
+        }
+        entries.push({
+          content,
+          status:
+            pickWhitelisted(status, ["pending", "in_progress", "completed"]) ??
+            "pending",
+          priority:
+            typeof entry["priority"] === "string"
+              ? (entry["priority"] as PlanEntry["priority"])
+              : "medium",
+        });
+      }
+      if (entries.length === 0) {
+        return null;
+      }
+      return { kind: "plan", id, entries };
+    }
     case "system":
       // 历史版本的快照曾把即时反馈（错误/警告/取消）一并存入——
       // 恢复时一律丢弃，避免过期报错随会话反复出现
@@ -742,8 +836,32 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       isAgentRunning: false,
       lastStopReason: outcome.stopReason,
     });
+    // 队列出队：正常结束自动发下一条；取消/出错挂起等放行。
+    // 挂起不是粘性锁——之后任何一轮正常结束都会恢复自动出队。
+    if (get().queuedPrompts.length > 0) {
+      const failed = outcome.errorMessage !== undefined;
+      const cancelled = outcome.stopReason === "cancelled";
+      if (failed || cancelled) {
+        set({ queuePaused: true });
+      } else {
+        drainNextQueued();
+      }
+    }
     // 轮次收尾即时落盘（增量部分已按节流写入，这里保证结局不丢）
     flushSessionLogNow();
+  };
+
+  /** 出队下一条排队消息（不检查挂起——调用方负责）。 */
+  const drainNextQueued = (): void => {
+    const next = get().queuedPrompts[0];
+    if (next === undefined) {
+      return;
+    }
+    set({
+      queuedPrompts: get().queuedPrompts.slice(1),
+      queuePaused: false,
+    });
+    get().sendPrompt(next);
   };
 
   /** chunk 增量拼接：无落笔条目时新建（并封口另一种流式条目）。 */
@@ -777,7 +895,13 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
           startedAt: Date.now(),
           endedAt: null,
         }
-      : { kind: "assistant", id, text, isStreaming: true };
+      : {
+          kind: "assistant",
+          id,
+          text,
+          isStreaming: true,
+          createdAt: new Date().toISOString(),
+        };
     set({ items: [...closed, item] });
   };
 
@@ -794,6 +918,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     );
     if (index === -1) {
       const title = event.title ?? event.toolCallId;
+      const status = event.status ?? null;
+      const isTerminal = status === "completed" || status === "failed";
       set({
         items: [
           ...items,
@@ -803,7 +929,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
             toolCallId: event.toolCallId,
             title,
             toolKind: event.kind ?? null,
-            status: event.status ?? null,
+            status,
             rawInput: event.rawInput,
             rawOutput: event.rawOutput,
             inputSummary: toolInputSummary(event.rawInput, title),
@@ -811,6 +937,9 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
               event.rawOutput === undefined
                 ? ""
                 : toolResultSummary(event.rawOutput),
+            // 落笔即带终态（chrys 偶发不送 in_progress 中间态）：起止同刻，耗时 0
+            startedAt: Date.now(),
+            endedAt: isTerminal ? Date.now() : null,
           },
         ],
       });
@@ -824,11 +953,18 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     const title = event.title ?? existing.title;
     const rawInput = event.rawInput ?? existing.rawInput;
     const rawOutput = event.rawOutput ?? existing.rawOutput;
+    const status = event.status ?? existing.status;
+    // 首次进入终态时定格耗时；之后（重跑等）不覆盖已定格的 endedAt
+    const wasTerminal =
+      existing.status === "completed" || existing.status === "failed";
+    const isTerminal = status === "completed" || status === "failed";
+    const endedAt =
+      !wasTerminal && isTerminal ? Date.now() : existing.endedAt;
     const merged: ToolCallItem = {
       ...existing,
       title,
       toolKind: event.kind ?? existing.toolKind,
-      status: event.status ?? existing.status,
+      status,
       rawInput,
       rawOutput,
       inputSummary:
@@ -839,6 +975,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
         event.rawOutput !== undefined
           ? toolResultSummary(rawOutput)
           : existing.resultSummary,
+      startedAt: existing.startedAt,
+      endedAt,
     };
     set({
       items: items.map((item, position) =>
@@ -849,9 +987,13 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
 
   return {
     items: [],
+    queuedPrompts: [],
+    queuePaused: false,
     isAgentRunning: false,
     lastStopReason: null,
     modelLabel: null,
+    availableModels: [],
+    currentModelId: null,
     approvalMode: null,
     isBound: false,
     sessions: [],
@@ -890,6 +1032,46 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
         case "user_message_chunk":
           // chrys 不回显用户消息，忽略（见文件头注释）
           return;
+        case "plan": {
+          // todo_write 整表替换（bridge.plan_update_for_todos）。流内呈现：
+          // 更新最后一张未完结的清单卡；上一张已全部完成而新清单有活干，
+          // 说明 agent 开了新任务——落一张新卡，不改写历史。
+          if (event.entries.length === 0) {
+            return;
+          }
+          const items = closeStreamingItems(get().items);
+          const lastIndex = (() => {
+            for (let index = items.length - 1; index >= 0; index -= 1) {
+              if (items[index]?.kind === "plan") {
+                return index;
+              }
+            }
+            return -1;
+          })();
+          const last = lastIndex >= 0 ? items[lastIndex] : undefined;
+          const lastAllDone =
+            last !== undefined &&
+            last.kind === "plan" &&
+            last.entries.every((entry) => entry.status === "completed");
+          if (last !== undefined && last.kind === "plan" && !lastAllDone) {
+            set({
+              items: items.map((item, position) =>
+                position === lastIndex
+                  ? { ...item, entries: event.entries }
+                  : item,
+              ),
+            });
+          } else {
+            set({
+              items: [
+                ...items,
+                { kind: "plan", id: nextItemId("plan"), entries: event.entries },
+              ],
+            });
+          }
+          scheduleSessionLogFlush();
+          return;
+        }
         case "current_mode_update": {
           const name = approvalModeNames[event.modeId] ?? event.modeId;
           set({ approvalMode: { id: event.modeId, name } });
@@ -914,7 +1096,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
           scheduleSessionLogFlush();
           return;
         default:
-          // plan / usage / 扩展通知：聊天流不消费，诊断页（logStore）可见
+          // usage / 扩展通知：聊天流不消费，诊断页（logStore）可见
           return;
       }
     },
@@ -1074,6 +1256,70 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       );
     },
 
+    setSessionModels: (models, currentModelId) => {
+      set({ availableModels: models, currentModelId });
+    },
+
+    switchModel: (modelId) => {
+      const binding = activeBinding;
+      if (binding === null || binding.setModel === undefined) {
+        pushSystemItem("warn", "当前会话不支持切换模型");
+        return;
+      }
+      const previous = get().currentModelId;
+      set({ currentModelId: modelId });
+      logger.info("切换会话模型", { modelId });
+      void binding.setModel(modelId).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn("模型切换失败，回滚", { modelId, reason: message });
+        set({ currentModelId: previous });
+        pushSystemItem("error", `模型切换失败：${message}`);
+      });
+    },
+
+    enqueuePrompt: (text) => {
+      const trimmed = text.trim();
+      if (trimmed.length === 0) {
+        return;
+      }
+      if (!get().isAgentRunning) {
+        // 空闲态不该走到这（UI 只在运行中入队）：按直接发送兜底
+        get().sendPrompt(trimmed);
+        return;
+      }
+      set({ queuedPrompts: [...get().queuedPrompts, trimmed] });
+      logger.info("消息已加入队列", { depth: get().queuedPrompts.length });
+    },
+
+    resumeQueue: () => {
+      if (get().queuedPrompts.length === 0) {
+        set({ queuePaused: false });
+        return;
+      }
+      if (get().isAgentRunning) {
+        // 正在跑：只解除挂起，本轮结束由 endTurn 自动出队
+        set({ queuePaused: false });
+        return;
+      }
+      drainNextQueued();
+    },
+
+    clearQueue: () => {
+      set({ queuedPrompts: [], queuePaused: false });
+    },
+
+    removeQueuedPrompt: (index) => {
+      const current = get().queuedPrompts;
+      if (index < 0 || index >= current.length) {
+        return;
+      }
+      const next = current.filter((_, position) => position !== index);
+      set({
+        queuedPrompts: next,
+        queuePaused: next.length === 0 ? false : get().queuePaused,
+      });
+    },
+
     requestCancel: () => {
       if (!get().isAgentRunning) {
         return;
@@ -1099,6 +1345,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       }
       set({
         items: [],
+            queuedPrompts: [],
+        queuePaused: false,
         isAgentRunning: false,
         lastStopReason: null,
         lastError: null,
@@ -1111,6 +1359,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       openThoughtId = null;
       set({
         items: snapshotItems(items),
+            queuedPrompts: [],
+        queuePaused: false,
         isAgentRunning: false,
         lastStopReason: null,
       });
@@ -1161,7 +1411,16 @@ export function attachSession(acp: AcpSession): () => void {
   useSessionStore.getState().bindSession({
     prompt: (text) => acp.prompt(text),
     cancel: () => acp.cancel(),
+    listModels: () => Promise.resolve(acp.models?.availableModels ?? []),
+    setModel: (modelId) => acp.setModel(modelId),
   });
+  // 会话建立时的模型清单与当前选中一并灌入（输入行切换器数据源）
+  useSessionStore
+    .getState()
+    .setSessionModels(
+      acp.models?.availableModels ?? [],
+      acp.models?.currentModelId ?? null,
+    );
   logger.info("会话视图已挂接 ACP 会话");
   return () => {
     unsubscribe();

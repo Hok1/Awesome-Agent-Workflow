@@ -64,6 +64,8 @@ export interface PendingPermission {
   readonly reason: string | null;
   /** rawInput 的 key=value 摘要（对齐 Python 参考实现的 tool_input_summary）。 */
   readonly inputSummary: string;
+  /** 原始入参（审批弹窗按工具类型渲染 diff / 命令预览；形状不认识回落摘要）。 */
+  readonly rawInput: unknown;
   readonly options: readonly PermissionOption[];
   /** 挂起项列表标题（定型于此，组件直接渲染）。 */
   readonly inboxTitle: string;
@@ -209,6 +211,7 @@ export const useApprovalStore = create<ApprovalStoreState>((set, get) => {
         title,
         reason: asString(toolCall["rawOutput"]),
         inputSummary: summarizeRawInput(toolCall["rawInput"], title),
+        rawInput: toolCall["rawInput"],
         options,
         inboxTitle: title || toolName || toolCallId,
         createdAt: new Date().toISOString(),

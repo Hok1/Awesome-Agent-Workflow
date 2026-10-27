@@ -4,7 +4,7 @@
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "../../../src/ui/session/ChatInput.tsx";
 import { useSessionStore } from "../../../src/stores/sessionStore.ts";
@@ -12,20 +12,28 @@ import { useRuntimeStatusStore } from "../../../src/stores/runtimeStatusStore.ts
 
 function setup(options: { isAgentRunning?: boolean } = {}) {
   const onSend = vi.fn();
+  const onEnqueue = vi.fn();
   const onCancel = vi.fn();
-  render(
+  const view = render(
     <ChatInput
       isAgentRunning={options.isAgentRunning ?? false}
       onSend={onSend}
+      onEnqueue={onEnqueue}
       onCancel={onCancel}
     />,
   );
-  return { onSend, onCancel };
+  return { onSend, onEnqueue, onCancel, unmount: view.unmount };
 }
 
 function getTextarea(): HTMLTextAreaElement {
   return screen.getByLabelText("消息输入框");
 }
+
+// 草稿/输入历史现在按（工作区 × 会话）持久化到 localStorage：
+// 不清仓会让前一个用例的草稿被下一个用例恢复，破坏 @ 触发等前置条件
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 describe("ChatInput", () => {
   it("Enter 发送并清空草稿", async () => {
@@ -60,15 +68,22 @@ describe("ChatInput", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("运行中主按钮变「停止」，点击触发取消；Enter 不发送", async () => {
-    const { onSend, onCancel } = setup({ isAgentRunning: true });
+  it("运行中：无草稿=停止钮；有草稿=发送（入队）钮，Enter 入队不发送", async () => {
+    const { onSend, onEnqueue, onCancel } = setup({ isAgentRunning: true });
+    // 无草稿：停止钮（发送钮不出现）
     expect(screen.getByRole("button", { name: "停止" })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "发送" }),
+      screen.queryByRole("button", { name: "加入队列" }),
     ).not.toBeInTheDocument();
+
+    // 打字后：切换为「加入队列」发送钮，Enter 入队（不直接发送）
     await userEvent.type(getTextarea(), "排队消息{Enter}");
+    expect(onEnqueue).toHaveBeenCalledWith("排队消息");
     expect(onSend).not.toHaveBeenCalled();
-    expect(getTextarea()).toHaveValue("排队消息");
+    expect(getTextarea()).toHaveValue("");
+
+    // 草稿清空后回到停止钮，点击触发取消
+    expect(screen.getByRole("button", { name: "停止" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "停止" }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
@@ -86,7 +101,7 @@ describe("ChatInput 悬浮形态", () => {
       modelLabel: "0123456789abcdef0123456789abcdef",
     });
     const { rerender } = render(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     // runtime 无模型信息：回落 sessionStore 的 modelLabel（裸 hash 截 12 位）
     expect(screen.getByTitle(/0123456789abcdef/)).toHaveTextContent(
@@ -105,7 +120,7 @@ describe("ChatInput 悬浮形态", () => {
       },
     });
     rerender(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(screen.getByTitle(/glm-5/)).toHaveTextContent("glm-5.3-flash");
 
@@ -113,7 +128,7 @@ describe("ChatInput 悬浮形态", () => {
     useSessionStore.setState({ modelLabel: null });
     useRuntimeStatusStore.getState().reset();
     rerender(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(screen.getByText("—")).toBeInTheDocument();
   });
@@ -123,7 +138,7 @@ describe("ChatInput 悬浮形态", () => {
       approvalMode: { id: "manual", name: "手动审批" },
     });
     render(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(screen.getByTitle("审批模式")).toHaveTextContent("手动审批");
   });
@@ -131,7 +146,7 @@ describe("ChatInput 悬浮形态", () => {
   it("发送为圆形主钮：空输入禁用、填写后可用并发出", async () => {
     const onSend = vi.fn();
     render(
-      <ChatInput isAgentRunning={false} onSend={onSend} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={false} onSend={onSend} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     const sendButton = screen.getByRole("button", { name: "发送" });
     expect(sendButton).toHaveClass("rounded-full");
@@ -144,7 +159,7 @@ describe("ChatInput 悬浮形态", () => {
 
   it("运行中停止钮为圆形危险钮", () => {
     render(
-      <ChatInput isAgentRunning={true} onSend={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={true} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(screen.getByRole("button", { name: "停止" })).toHaveClass(
       "rounded-full",
@@ -153,7 +168,7 @@ describe("ChatInput 悬浮形态", () => {
 
   it("附件占位已移除：功能接入前不留可点却无动作的图标", () => {
     render(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(screen.queryByLabelText(/附件/)).not.toBeInTheDocument();
     expect(screen.queryByTitle(/附件/)).not.toBeInTheDocument();
@@ -250,3 +265,44 @@ describe("ChatInput @ 文件提及", () => {
     expect(options[0]).toHaveAttribute("aria-selected", "true");
   });
 });
+
+// ---------------------------------------------------------------- 草稿持久化（M1）
+describe("ChatInput 草稿按（工作区 × 会话）持久化", () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({ activePath: "D:/dev/demo" });
+    useSessionStore.setState({ activeSessionId: "s-1" });
+  });
+
+  it("草稿落盘；重挂载恢复；发送后存稿清空", async () => {
+    const first = setup();
+    await userEvent.type(getTextarea(), "写到一半的");
+    first.unmount();
+
+    const second = setup();
+    expect(getTextarea()).toHaveValue("写到一半的");
+    await userEvent.type(getTextarea(), "{Enter}");
+    expect(second.onSend).toHaveBeenCalledWith("写到一半的");
+    expect(getTextarea()).toHaveValue("");
+    second.unmount();
+
+    // 发送即清存稿：再挂载不再恢复
+    setup();
+    expect(getTextarea()).toHaveValue("");
+  });
+
+  it("切换会话档位：各会话草稿互不串档", async () => {
+    const first = setup();
+    await userEvent.type(getTextarea(), "会话一草稿");
+    first.unmount();
+
+    useSessionStore.setState({ activeSessionId: "s-2" });
+    const second = setup();
+    expect(getTextarea()).toHaveValue("");
+    second.unmount();
+
+    useSessionStore.setState({ activeSessionId: "s-1" });
+    setup();
+    expect(getTextarea()).toHaveValue("会话一草稿");
+  });
+});
+

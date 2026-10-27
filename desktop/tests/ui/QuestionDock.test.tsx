@@ -155,3 +155,67 @@ describe("QuestionDock", () => {
     expect(useApprovalStore.getState().pending).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------- 自动应答倒计时（M5）
+import { act, fireEvent } from "@testing-library/react";
+import { vi } from "vitest";
+import { useSettingsStore } from "../../src/stores/settingsStore";
+
+describe("QuestionDock 自动应答倒计时", () => {
+  beforeEach(() => {
+    useSettingsStore.setState({ autoAnswerQuestions: false });
+  });
+
+  it("默认关闭：无倒计时提示；开启后显示剩余秒数与将选的首项", () => {
+    seedQuestions();
+    render(<QuestionDock />);
+    expect(
+      document.querySelector("[data-auto-answer-countdown]"),
+    ).toBeNull();
+
+    act(() => {
+      useSettingsStore.setState({ autoAnswerQuestions: true });
+    });
+    expect(
+      document.querySelector("[data-auto-answer-countdown]"),
+    ).toHaveTextContent(/60s 后自动选「标准」/);
+  });
+
+  it("到点自动提交每题首个选项", async () => {
+    vi.useFakeTimers();
+    try {
+      useSettingsStore.setState({ autoAnswerQuestions: true });
+      const { result } = seedQuestions();
+      render(<QuestionDock />);
+      await act(() =>
+        Promise.resolve(vi.advanceTimersByTime(60_000)),
+      );
+      expect(result.value).toEqual({
+        answers: [{ values: ["标准"] }, { values: ["完整 diff"] }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("面板内交互即取消本次倒计时（不自动提交）", () => {
+    vi.useFakeTimers();
+    try {
+      useSettingsStore.setState({ autoAnswerQuestions: true });
+      const { result } = seedQuestions();
+      render(<QuestionDock />);
+      const option = screen.getByText("标准").closest("button");
+      if (option === null) throw new Error("选项按钮不存在");
+      fireEvent.pointerDown(option);
+      act(() => {
+        vi.advanceTimersByTime(120_000);
+      });
+      expect(result.value).toBeUndefined();
+      expect(
+        document.querySelector("[data-auto-answer-countdown]"),
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

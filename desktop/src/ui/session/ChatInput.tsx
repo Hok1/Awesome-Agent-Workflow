@@ -12,7 +12,7 @@
  *   关闭；插入为 `@相对路径` 纯文本，agent 自行读取；
  * - 预填通道：外部（再次发送 / 推荐入口）经 composerPrefill 把文本
  *   送进草稿并聚焦，不自动发送；
- * - 下行（border-t 分隔）：左侧 skills/mcp 徽标 + 审批模式；右侧模型标识
+ * - 下行（border-t 分隔）：左侧「+」skills 菜单 + 审批模式与策略切换；右侧模型标识
  *   + 上下文用量圆环 + 圆形发送 / 停止钮。轮次相位（思考中 / 工具运行中 /
  *   生成中）不在这里——它长在对话流末尾（SessionView 的 TurnStatusRow）。
  */
@@ -25,13 +25,29 @@ import {
 } from "react";
 
 import { useSessionStore } from "../../stores/sessionStore.ts";
+import {
+  approvalModeOptions,
+  chatWidthClassOf,
+  useSettingsStore,
+  type ApprovalMode,
+} from "../../stores/settingsStore.ts";
+import {
+  MenuItemButton,
+  MenuSectionLabel,
+  StatusChipMenu,
+} from "./StatusChipMenu.tsx";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { listWorkspaceFiles } from "../../aaw/fileListing.ts";
 import { focusVisibleRing } from "../controls.tsx";
 import { InputStatusLeft, InputStatusRight } from "./InputStatusBar.tsx";
 import { onComposerPrefill } from "./composerPrefill.ts";
 import { detectMentionTrigger, filterMentionFiles } from "./mention.ts";
-import { getPromptHistory, recordPrompt } from "./promptHistory.ts";
+import {
+  getPromptHistory,
+  recordPrompt,
+  setPromptHistoryScope,
+} from "./promptHistory.ts";
+import { draftScopeKey, readDraft, writeDraft } from "./draftStore.ts";
 
 /** 自动增长的高度上限（px）：超过后转入内部滚动。 */
 const MAX_HEIGHT_PX = 192;
@@ -42,6 +58,17 @@ const modeBadgeClasses: Readonly<Record<string, string>> = {
   auto: "border-info-line bg-info-bg/50 text-info-ink",
   bypass: "border-danger-line bg-danger-bg/50 text-danger-ink",
 };
+
+/** 审批默认模式的芯片短词（完整语义在菜单项里）。 */
+function policyLabelOf(mode: ApprovalMode): string {
+  if (mode === "auto-allow") {
+    return "审批·自动放行";
+  }
+  if (mode === "auto-reject") {
+    return "审批·自动拒绝";
+  }
+  return "审批·每次询问";
+}
 
 /** arrow-up：发送（圆形主钮内的箭头）。 */
 function ArrowUpIcon() {
@@ -81,6 +108,8 @@ export interface ChatInputProps {
   /** ACP 连接建立中：输入与发送一并禁用（无会话可发）。 */
   readonly disabled?: boolean;
   readonly onSend: (text: string) => void;
+  /** 运行中提交：消息加入队列（轮次结束后按序发出）。 */
+  readonly onEnqueue: (text: string) => void;
   readonly onCancel: () => void;
 }
 
@@ -88,13 +117,43 @@ export function ChatInput({
   isAgentRunning,
   disabled = false,
   onSend,
+  onEnqueue,
   onCancel,
 }: ChatInputProps) {
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // 审批模式随会话事件更新（模型/上下文/skills/mcp 在 InputStatusCluster 自取）
   const approvalMode = useSessionStore((state) => state.approvalMode);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  // 审批默认模式（ask / auto-allow / auto-reject）：客户端对权限请求的
+  // 缺省应答策略，即时切换（与设置页同一字段）
+  const approvalPolicy = useSettingsStore((state) => state.approvalMode);
+  const setApprovalPolicy = useSettingsStore((state) => state.setApprovalMode);
+  // 输入卡宽度与消息流同档（对齐）
+  const widthClass = chatWidthClassOf(useSettingsStore((state) => state.chatWidth));
   const activePath = useWorkspaceStore((state) => state.activePath);
+
+  // ---- 草稿 / 输入历史的持久化（见 draftStore / promptHistory 文件头）----
+  // 历史 ↑/↓ 按工作区分档；草稿按（工作区 × 会话）分档：
+  // 切走时先把当前草稿落回旧 scope，再载入新 scope 的存稿
+  const draftKey =
+    activePath === null ? null : draftScopeKey(activePath, activeSessionId);
+  const draftKeyRef = useRef<string | null>(null);
+  const draftTextRef = useRef("");
+  // 草稿镜像（渲染外维护）：scope 切换 effect 落旧盘时取最新草稿。
+  // 声明在切换 effect 之前——同一 commit 内先镜像后切换，读到的总是新值
+  useEffect(() => {
+    draftTextRef.current = draft;
+  }, [draft]);
+  // 写穿透：草稿一变即落盘（含预填通道送进来的文本）
+  useEffect(() => {
+    if (draftKeyRef.current !== null) {
+      writeDraft(draftKeyRef.current, draft);
+    }
+  }, [draft]);
+  useEffect(() => {
+    setPromptHistoryScope(activePath);
+  }, [activePath]);
 
   // @ 提及：触发态（query + 选中下标）+ 当前工作区的文件清单
   const [mention, setMention] = useState<{
@@ -111,6 +170,20 @@ export function ChatInput({
   // 输入历史浏览（命令式索引，不进渲染态）
   const historyIndexRef = useRef<number | null>(null);
   const historyDraftRef = useRef("");
+
+  // 草稿 scope 切换（工作区 × 会话变化）：旧 scope 先落盘，新 scope 载入存稿
+  useEffect(() => {
+    const previousKey = draftKeyRef.current;
+    draftKeyRef.current = draftKey;
+    if (draftKey === null || previousKey === draftKey) {
+      return;
+    }
+    if (previousKey !== null) {
+      writeDraft(previousKey, draftTextRef.current);
+    }
+    setDraft(readDraft(draftKey));
+    historyIndexRef.current = null;
+  }, [draftKey]);
 
   // 预填通道（事件总线）：外部送来的文本落进草稿并聚焦
   useEffect(() => {
@@ -184,12 +257,21 @@ export function ChatInput({
 
   const submit = (): void => {
     const trimmed = draft.trim();
-    if (trimmed.length === 0 || isAgentRunning || disabled) {
+    if (trimmed.length === 0 || disabled) {
       return;
     }
     recordPrompt(trimmed);
     historyIndexRef.current = null;
-    onSend(trimmed);
+    if (isAgentRunning) {
+      // 运行中提交 = 加入队列（轮次结束后按序发出）
+      onEnqueue(trimmed);
+    } else {
+      onSend(trimmed);
+    }
+    // 发送/入队即清存稿（写穿透会因 setDraft("") 再补一次删键，这里先删是保序）
+    if (draftKeyRef.current !== null) {
+      writeDraft(draftKeyRef.current, "");
+    }
     setDraft("");
     setMention(null);
   };
@@ -232,6 +314,8 @@ export function ChatInput({
         }
       }
       if (event.key === "Escape") {
+        // 关面板即消费掉 Esc：SessionView 的全局 Esc 停止按 defaultPrevented 让位
+        event.preventDefault();
         setMention(null);
         return;
       }
@@ -302,7 +386,7 @@ export function ChatInput({
           <div
             role="listbox"
             aria-label="文件候选"
-            className="mx-auto max-h-60 max-w-4xl overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-elev-2"
+            className={`mx-auto max-h-60 overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-elev-2 ${widthClass}`}
           >
             {mentionOptions.length === 0 ? (
               <p className="px-3 py-2 text-xs text-ink-faint">
@@ -336,7 +420,7 @@ export function ChatInput({
           </div>
         </div>
       ) : null}
-      <div className="composer-card mx-auto w-full max-w-4xl overflow-hidden rounded-2xl border border-line bg-surface shadow-elev-2">
+      <div className={`composer-card mx-auto w-full overflow-hidden rounded-2xl border border-line bg-surface shadow-elev-2 ${widthClass}`}>
         {/* 上行：透明无边框的多行输入 */}
         <div className="px-4 pb-1 pt-3">
           <textarea
@@ -355,14 +439,14 @@ export function ChatInput({
             disabled={disabled}
             placeholder={
               isAgentRunning
-                ? "agent 正在处理，可先编辑下一条消息…"
+                ? "agent 正在处理，输入内容 Enter 加入队列…"
                 : "输入消息，Enter 发送，Shift+Enter 换行，@ 引用文件"
             }
             rows={1}
             className={`max-h-48 min-h-[2.5rem] w-full resize-none overflow-y-auto rounded bg-transparent text-sm leading-6 text-ink placeholder:text-ink-ghost disabled:cursor-not-allowed disabled:opacity-60 ${focusVisibleRing}`}
           />
         </div>
-        {/* 下行：左=skills/mcp + 审批模式；右=模型 + 上下文圆环 + 发送/停止 */}
+        {/* 下行：左=skills/mcp + 审批模式 + 自动应答开关；右=模型 + 上下文圆环 + 发送/停止 */}
         <div className="mt-1 flex items-center gap-1.5 border-t border-line px-2 py-1.5">
           <InputStatusLeft />
           {approvalMode !== null ? (
@@ -376,27 +460,53 @@ export function ChatInput({
               {approvalMode.name}
             </span>
           ) : null}
+          <StatusChipMenu
+            title={`审批默认模式：客户端对权限请求的缺省应答（当前「${policyLabelOf(approvalPolicy)}」）`}
+            menuLabel="审批默认模式"
+            tone={approvalPolicy === "auto-reject" ? "warn" : "neutral"}
+            label={policyLabelOf(approvalPolicy)}
+          >
+            <MenuSectionLabel text="审批默认模式" />
+            <div className="py-1">
+              {approvalModeOptions.map((option) => (
+                <MenuItemButton
+                  key={option.value}
+                  selected={option.value === approvalPolicy}
+                  danger={option.value === "auto-reject"}
+                  onClick={() => {
+                    setApprovalPolicy(option.value);
+                  }}
+                >
+                  {option.label}
+                </MenuItemButton>
+              ))}
+            </div>
+          </StatusChipMenu>
           <span aria-hidden={true} className="flex-1" />
           <InputStatusRight />
-          {isAgentRunning ? (
+          {/* 按钮形态（评审确认）：运行中「有草稿=发送（入队），无草稿=停止」；
+              空闲时恒为发送。Esc 仍可全局停止（SessionView）。 */}
+          {isAgentRunning && draft.trim().length === 0 ? (
             /* 停止：圆形危险钮（同 btnDanger 植面，形状为圆形） */
             <button
               type="button"
               onClick={onCancel}
               aria-label="停止"
-              title="停止"
+              title="停止（Esc）"
               className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-danger-line bg-danger-bg/40 text-danger-ink transition-colors hover:bg-danger-bg/70"
             >
               <StopIcon />
             </button>
           ) : (
-            /* 发送：圆形主钮（同 btnPrimary 植面，形状为圆形） */
+            /* 发送：圆形主钮（运行中即「加入队列」） */
             <button
               type="button"
               onClick={submit}
               disabled={disabled || draft.trim().length === 0}
-              aria-label="发送"
-              title="发送"
+              aria-label={isAgentRunning ? "加入队列" : "发送"}
+              title={
+                isAgentRunning ? "加入队列，当前轮结束后按序发出" : "发送"
+              }
               className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowUpIcon />

@@ -3,6 +3,7 @@
  */
 import type { AssistantMessageItem } from "../../stores/sessionStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
+import { formatClock } from "./clock.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 
 export function AssistantMessage({
@@ -18,7 +19,13 @@ export function AssistantMessage({
     >
       <div className="flex w-full items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-ink-mute">Agent</span>
+          <span
+            className="text-xs font-medium text-ink-mute"
+            // hover 时间戳：消息落笔时刻；旧快照无时刻则不显示
+            title={formatClock(item.createdAt) ?? undefined}
+          >
+            Agent
+          </span>
           {item.isStreaming ? (
             <span
               className="flex items-center gap-1 text-xs text-accent-ink"
