@@ -3,8 +3,6 @@
  * 丢弃的会话能力信息放到用户视线落点。
  *
  * 布局分工（状态行的左右两簇）：
- * - 左簇（InputStatusLeft）：「+」二级菜单（ZCode 式）——skills 清单
- *   收进弹出菜单，状态行只留一枚 + 芯片；
  * - 右簇（InputStatusRight）：上下文用量**圆环**（最近一次调用占当前模型
  *   窗口的百分比，环色按 70/90 阈值换档，悬停给 token 明细）+ 模型标识
  *   （模型名优先，回落 profile id）——「现在用什么模型、窗口还剩多少」
@@ -24,7 +22,6 @@ import {
   useRuntimeStatusStore,
 } from "../../stores/runtimeStatusStore.ts";
 import {
-  MenuInfoRow,
   MenuItemButton,
   MenuSectionLabel,
   StatusChipMenu,
@@ -125,45 +122,6 @@ export function ContextRing(): React.JSX.Element | null {
   );
 }
 
-/** skill 计数徽标：优先顶层 skillNames，缺失时按来源计数求和。 */
-/**
- * 「+」二级菜单（ZCode 式）：skills 清单收进弹出菜单，状态行只留一枚
- * + 芯片——这里也是将来附件 / 命令入口的家。只放 skills（评审确认）；
- * MCP 属 agent 侧能力细节，入口在诊断页。
- */
-function PlusMenu(): React.JSX.Element {
-  const runtime = useRuntimeStatusStore((state) => state.runtime);
-  const skillCount =
-    runtime.skillNames.length > 0
-      ? runtime.skillNames.length
-      : runtime.skillSources.reduce((total, entry) => total + entry.count, 0);
-  return (
-    <StatusChipMenu
-      label="+"
-      title="会话已加载的 skills 清单"
-      menuLabel="会话 skills"
-    >
-      <MenuSectionLabel text={`Skills · ${skillCount}`} />
-      <div className="max-h-56 overflow-y-auto py-1">
-        {skillCount === 0 ? (
-          <MenuInfoRow text="无已加载 skill" />
-        ) : runtime.skillNames.length > 0 ? (
-          runtime.skillNames.map((name) => (
-            <MenuInfoRow key={name} text={name} />
-          ))
-        ) : (
-          runtime.skillSources.map((entry) => (
-            <MenuInfoRow
-              key={entry.source}
-              text={`${entry.source} · ${entry.count} 个`}
-            />
-          ))
-        )}
-      </div>
-    </StatusChipMenu>
-  );
-}
-
 /**
  * 模型标识 + 切换器：有可用模型清单（会话建立时 chrys 下发）时点开即换
  * （session/set_model，chrys 随后回推 runtime 更新刷新标识）；无清单回落
@@ -180,9 +138,9 @@ export function ModelTag(): React.JSX.Element {
   const effectiveCurrentId =
     currentModelId ??
     (label !== null
-      ? (availableModels.find(
+      ? availableModels.find(
           (model) => model.modelId === label || model.name === label,
-        )?.modelId ?? null)
+        )?.modelId ?? null
       : null);
   if (availableModels.length === 0) {
     return (
@@ -238,15 +196,6 @@ export function ModelTag(): React.JSX.Element {
         ))}
       </div>
     </StatusChipMenu>
-  );
-}
-
-/** 左簇：skills · mcp（能力面信息，无数据的项目自动让位）。 */
-export function InputStatusLeft(): React.JSX.Element {
-  return (
-    <Fragment>
-      <PlusMenu />
-    </Fragment>
   );
 }
 

@@ -166,10 +166,6 @@ describe("SettingsPage（侧边 Tab 版）", () => {
     expect(autoAllow).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(/自动放行 —/)).toBeInTheDocument();
 
-    // 自动拒绝：琥珀警示态 + 风险说明
-    await userEvent.click(screen.getByRole("button", { name: "自动拒绝" }));
-    expect(useSettingsStore.getState().approvalMode).toBe("auto-reject");
-    expect(screen.getByText(/自动拒绝 —/)).toBeInTheDocument();
   });
 
   it("通用分片：切换主题写入 store 并持久化，分段按钮呈按下态", async () => {

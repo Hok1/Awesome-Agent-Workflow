@@ -66,7 +66,7 @@ const logger = createLogger("settings");
  * RequestPermissionRequestParams；选项 kind 见 chrys server.py
  * _request_permission，当前只提供 allow_once / reject_once）。
  */
-export type ApprovalMode = "ask" | "auto-allow" | "auto-reject";
+export type ApprovalMode = "ask" | "auto-allow";
 
 /** 审批模式选单（顺序即展示顺序）。 */
 export const approvalModeOptions: readonly {
@@ -75,7 +75,6 @@ export const approvalModeOptions: readonly {
 }[] = [
   { value: "ask", label: "每次询问（弹出审批对话框）" },
   { value: "auto-allow", label: "自动放行（默认允许工具调用）" },
-  { value: "auto-reject", label: "自动拒绝（默认拒绝工具调用）" },
 ];
 
 /**
@@ -137,7 +136,8 @@ const defaultSettings: PersistedSettings = {
 const storageKey = "aaw-desktop.settings.v1";
 
 function isApprovalMode(value: unknown): value is ApprovalMode {
-  return value === "ask" || value === "auto-allow" || value === "auto-reject";
+  // 旧值 "auto-reject"（自动拒绝，已下线的危险选项）一律按未设置回落 ask
+  return value === "ask" || value === "auto-allow";
 }
 
 function isLanguage(value: unknown): value is Language {

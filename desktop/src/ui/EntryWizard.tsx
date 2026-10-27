@@ -57,6 +57,8 @@ interface EntryWizardProps {
   readonly hasActiveSession?: boolean;
   /** 摘要条上的「查看」：切到会话视图（未提供则不渲染该按钮）。 */
   readonly onViewSession?: () => void;
+  /** 初始入口（slash 命令定位用）：非空时向导直接从该入口的表单开始。 */
+  readonly initialEntry?: AawEntryId;
 }
 
 /** 表单草稿（允许中间空值，提交前由 validateEntryInput 把关）。 */
@@ -104,9 +106,11 @@ function EntryWizard({
   onSubmitPrompt,
   hasActiveSession = true,
   onViewSession,
+  initialEntry,
 }: EntryWizardProps) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [entryId, setEntryId] = useState<AawEntryId | null>(null);
+  // slash 命令（/sr /ar /dev）定位：直接开到对应入口的变量表单
+  const [step, setStep] = useState<1 | 2 | 3>(initialEntry !== undefined ? 2 : 1);
+  const [entryId, setEntryId] = useState<AawEntryId | null>(initialEntry ?? null);
   const [draft, setDraft] = useState<WizardDraft>(EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
   /** 发送失败的用户可见原因（连接失败 / 发送被拒；role=alert 展示）。 */

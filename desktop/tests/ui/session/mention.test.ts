@@ -64,3 +64,36 @@ describe("filterMentionFiles", () => {
     expect(filterMentionFiles(many, "mod")).toHaveLength(8);
   });
 });
+
+// ---------------------------------------------------------------- 多源候选（M6）
+import {
+  filterMentionOptions,
+  skillMentionInsert,
+} from "../../../src/ui/session/mention.ts";
+
+describe("filterMentionOptions 多源（文件 + skills）", () => {
+  it("文件组在前插 @路径，skills 组在后插提示文本", () => {
+    const options = filterMentionOptions(
+      ["src/app.ts", "README.md"],
+      ["aaw-workflow", "code-check"],
+      "",
+    );
+    expect(options[0]).toMatchObject({ kind: "file", label: "src/app.ts" });
+    expect(options[0]?.insert).toBe("@src/app.ts ");
+    const skill = options.find((option) => option.kind === "skill");
+    expect(skill?.label).toBe("aaw-workflow");
+    expect(skill?.insert).toBe(skillMentionInsert("aaw-workflow"));
+  });
+
+  it("query 同时过滤两组：文件与 skill 同口径模糊", () => {
+    const options = filterMentionOptions(
+      ["src/aaw-config.ts", "docs/x.md"],
+      ["aaw-workflow", "other"],
+      "aaw",
+    );
+    expect(options.some((o) => o.label === "src/aaw-config.ts")).toBe(true);
+    expect(options.some((o) => o.label === "aaw-workflow")).toBe(true);
+    expect(options.some((o) => o.label === "docs/x.md")).toBe(false);
+    expect(options.some((o) => o.label === "other")).toBe(false);
+  });
+});

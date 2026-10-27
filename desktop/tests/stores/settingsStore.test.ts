@@ -74,14 +74,27 @@ describe("useSettingsStore", () => {
     expect(connection.message).toContain("路径已变更");
   });
 
-  it("持久化数据在模块重新加载时读回", async () => {
+  it("持久化数据在模块重新加载时读回；已下线的 auto-reject 旧值迁移回 ask", async () => {
     useSettingsStore.getState().setChrysPath("X:/tools/chrys.exe");
-    useSettingsStore.getState().setApprovalMode("auto-reject");
+    useSettingsStore.getState().setApprovalMode("auto-allow");
+    // 直接写入旧持久化值模拟历史版本升级（setter 已无 auto-reject 可设）
+    window.localStorage.setItem(
+      "aaw-desktop.settings.v1",
+      JSON.stringify({
+        chrysPath: "X:/tools/chrys.exe",
+        approvalMode: "auto-reject",
+        language: "zh-CN",
+        skillsSourceDir: "X:/repo/skills",
+        theme: "dark",
+        autoAnswerQuestions: false,
+        chatWidth: "standard",
+      }),
+    );
     vi.resetModules();
     const { useSettingsStore: freshStore } =
       await import("../../src/stores/settingsStore");
     expect(freshStore.getState().chrysPath).toBe("X:/tools/chrys.exe");
-    expect(freshStore.getState().approvalMode).toBe("auto-reject");
+    expect(freshStore.getState().approvalMode).toBe("ask");
   });
 
   it("损坏或越界的持久化数据逐项回落默认", async () => {

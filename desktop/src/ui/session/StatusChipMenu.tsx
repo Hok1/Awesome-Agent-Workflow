@@ -12,6 +12,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 export function StatusChipMenu({
   label,
@@ -27,7 +28,7 @@ export function StatusChipMenu({
   readonly title: string;
   /** 菜单面板的可访问名称。 */
   readonly menuLabel: string;
-  /** neutral=中性描边；warn=琥珀警示（自动拒绝等危险态）。 */
+  /** neutral=中性描边；warn=琥珀警示（如审批「自动放行」激活态）。 */
   readonly tone?: "neutral" | "warn";
   /** 无内容可选时呈纯展示芯片（如无模型清单）。 */
   readonly disabled?: boolean;
@@ -35,14 +36,23 @@ export function StatusChipMenu({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // 弹层经 Portal 渲染到 body：触发芯片在 overflow-hidden 的输入卡内，
+  // 原地绝对定位会被卡片上缘裁掉（只露出下半截）
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(
+    null,
+  );
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
     function handlePointerDown(event: PointerEvent): void {
-      const root = rootRef.current;
-      if (root !== null && !root.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        rootRef.current?.contains(target) !== true &&
+        panelRef.current?.contains(target) !== true
+      ) {
         setIsOpen(false);
       }
     }
@@ -85,7 +95,13 @@ export function StatusChipMenu({
         aria-expanded={isOpen}
         aria-label={menuLabel}
         title={title}
-        onClick={() => {
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          // 视口右缘保护（面板宽 256px）
+          setAnchor({
+            left: Math.min(rect.left, window.innerWidth - 264),
+            top: rect.top,
+          });
           setIsOpen((current) => !current);
         }}
         onKeyDown={handleKeyDown}
@@ -95,19 +111,34 @@ export function StatusChipMenu({
       >
         {label}
       </button>
-      {isOpen ? (
-        <div
-          role="menu"
-          aria-label={menuLabel}
-          // 面板内任何点击（选中某项）都收起菜单
-          onClickCapture={() => {
-            setIsOpen(false);
-          }}
-          className="absolute bottom-full left-0 z-30 mb-1.5 w-64 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-elev-2"
-        >
-          {children}
-        </div>
-      ) : null}
+      {isOpen && anchor !== null
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="menu"
+              aria-label={menuLabel}
+              // 面板内任何点击都收起菜单。必须用冒泡阶段的 onClick：菜单项
+              // 的选中（目标阶段）先于面板收起执行；若在捕获阶段关菜单，
+              // 同一次点击会先把 Portal 子树连同菜单项的处理器一起卸载，
+              // 选中永远不触发（真实浏览器可复现，jsdom 时序掩盖了它）。
+              // translateY(-100%) 使面板底边贴在触发芯片上缘（留 6px 间距）
+              onClick={() => {
+                setIsOpen(false);
+              }}
+              style={{
+                position: "fixed",
+                left: anchor.left,
+                top: anchor.top,
+                transform: "translateY(-100%)",
+                marginTop: "-6px",
+              }}
+              className="z-50 w-64 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-elev-2"
+            >
+              {children}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

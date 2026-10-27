@@ -216,7 +216,7 @@ export async function openRealWorkspace(
         },
       }),
       // 审批请求的默认应答按设置的「审批默认模式」分派：ask 走人工弹窗，
-      // auto-allow / auto-reject 按 kind 白名单自动应答（见 permissionPolicy），
+      // auto-allow 按 kind 白名单自动应答（见 permissionPolicy），
       // 白名单落空一律回退弹窗（安全默认，绝不静默取消）
       onPermissionRequest: (sessionId, toolCall, options) => {
         const mode = useSettingsStore.getState().approvalMode;

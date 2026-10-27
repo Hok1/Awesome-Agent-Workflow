@@ -7,9 +7,13 @@
  *   （上限后内部滚动），不暴露原生 resize 手柄；
  * - ↑/↓ 输入历史：空输入或浏览态下按 ↑ 回溯已发送的 prompt（再按 ↓
  *   前进 / 回到编辑中的草稿）——终端同款手感；
- * - @ 文件提及：输入 `@` + 关键字在输入区上方弹候选面板（工作区文件，
- *   跳过依赖目录，见 aaw/fileListing），↑/↓ 选择、Enter/Tab 插入、Esc
- *   关闭；插入为 `@相对路径` 纯文本，agent 自行读取；
+ * - / 命令面板：行首 `/`（顿号 `、` 归一）弹命令面板——内置命令
+ *   （clear / diagnostics / retry，选中即执行）、工作流入口（/sr /ar /dev
+ *   打开 AAW 面板并定位向导表单）、skills（插入使用提示文本）；
+ *   ↑/↓ 选择、Enter/Tab 选中、Esc 关闭；
+ * - @ 提及：输入 `@` + 关键字弹多源候选（工作区文件见 aaw/fileListing
+ *   + 会话已加载 skills），↑/↓ 选择、Enter/Tab 插入、Esc 关闭；
+ *   文件插 `@相对路径` 纯文本、skill 插自然语言提示（agent 自行加载）；
  * - 预填通道：外部（再次发送 / 推荐入口）经 composerPrefill 把文本
  *   送进草稿并聚焦，不自动发送；
  * - 下行（border-t 分隔）：左侧「+」skills 菜单 + 审批模式与策略切换；右侧模型标识
@@ -25,6 +29,8 @@ import {
 } from "react";
 
 import { useSessionStore } from "../../stores/sessionStore.ts";
+import { useWorkbenchUiStore } from "../../stores/workbenchUiStore.ts";
+import { useRuntimeStatusStore } from "../../stores/runtimeStatusStore.ts";
 import {
   approvalModeOptions,
   chatWidthClassOf,
@@ -39,15 +45,27 @@ import {
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { listWorkspaceFiles } from "../../aaw/fileListing.ts";
 import { focusVisibleRing } from "../controls.tsx";
-import { InputStatusLeft, InputStatusRight } from "./InputStatusBar.tsx";
+import { InputStatusRight } from "./InputStatusBar.tsx";
 import { onComposerPrefill } from "./composerPrefill.ts";
-import { detectMentionTrigger, filterMentionFiles } from "./mention.ts";
+import {
+  detectMentionTrigger,
+  filterMentionOptions,
+  type MentionOption,
+} from "./mention.ts";
+import {
+  buildSlashItems,
+  detectSlashTrigger,
+  filterSlashItems,
+  replaceSlashToken,
+  type SlashItem,
+} from "./slash.ts";
 import {
   getPromptHistory,
   recordPrompt,
   setPromptHistoryScope,
 } from "./promptHistory.ts";
 import { draftScopeKey, readDraft, writeDraft } from "./draftStore.ts";
+import { skillNamesFromSources } from "./skillCatalog.ts";
 
 /** 自动增长的高度上限（px）：超过后转入内部滚动。 */
 const MAX_HEIGHT_PX = 192;
@@ -61,13 +79,7 @@ const modeBadgeClasses: Readonly<Record<string, string>> = {
 
 /** 审批默认模式的芯片短词（完整语义在菜单项里）。 */
 function policyLabelOf(mode: ApprovalMode): string {
-  if (mode === "auto-allow") {
-    return "审批·自动放行";
-  }
-  if (mode === "auto-reject") {
-    return "审批·自动拒绝";
-  }
-  return "审批·每次询问";
+  return mode === "auto-allow" ? "审批·自动放行" : "审批·每次询问";
 }
 
 /** arrow-up：发送（圆形主钮内的箭头）。 */
@@ -126,8 +138,8 @@ export function ChatInput({
   const approvalMode = useSessionStore((state) => state.approvalMode);
   const turnState = useSessionStore((state) => state.turnState);
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
-  // 审批默认模式（ask / auto-allow / auto-reject）：客户端对权限请求的
-  // 缺省应答策略，即时切换（与设置页同一字段）
+  // 审批默认模式（ask / auto-allow）：客户端对权限请求的缺省应答策略，
+  // 即时切换（与设置页同一字段）；「自动拒绝」已下线（误触后全拒，危险）
   const approvalPolicy = useSettingsStore((state) => state.approvalMode);
   const setApprovalPolicy = useSettingsStore((state) => state.setApprovalMode);
   // 输入卡宽度与消息流同档（对齐）
@@ -163,6 +175,24 @@ export function ChatInput({
     readonly query: string;
     readonly index: number;
   } | null>(null);
+  // / 命令面板：行首触发，目录 = 内置命令 + 工作流入口 + skills
+  const [slash, setSlash] = useState<{
+    readonly query: string;
+    readonly index: number;
+  } | null>(null);
+  // skills 候选数据源：wire 的 skillNames（权威）为空时从 skillSources
+  // 目录枚举兜底（chrys 懒加载配置下 wire 名单为空）
+  const runtimeSkillNames = useRuntimeStatusStore(
+    (state) => state.runtime.skillNames,
+  );
+  const skillSources = useRuntimeStatusStore(
+    (state) => state.runtime.skillSources,
+  );
+  // 兜底名录是纯内存推导（source 路径末段），渲染期直接算，无需状态
+  const skillNames =
+    runtimeSkillNames.length > 0
+      ? runtimeSkillNames
+      : skillNamesFromSources(skillSources);
   // 文件清单加载态：for = 已就绪的工作区路径（null = 还没加载过）
   const [filesState, setFilesState] = useState<{
     readonly for: string | null;
@@ -217,8 +247,66 @@ export function ChatInput({
     if (mention === null || filesState.for !== activePath) {
       return [];
     }
-    return filterMentionFiles(filesState.paths, mention.query);
-  }, [mention, filesState, activePath]);
+    return filterMentionOptions(filesState.paths, skillNames, mention.query);
+  }, [mention, filesState, activePath, skillNames]);
+
+  const slashOptions = useMemo(
+    () =>
+      slash === null
+        ? []
+        : filterSlashItems(buildSlashItems(skillNames), slash.query),
+    [slash, skillNames],
+  );
+
+  /** 面板渲染行：分组变化处带一行组头（与前一项比较，无渲染中可变量）。 */
+  const slashRows = useMemo(
+    () =>
+      slashOptions.map((item, index) => ({
+        key: item.id,
+        header:
+          index === 0 || slashOptions[index - 1]?.group !== item.group
+            ? item.group
+            : null,
+        item,
+        index,
+      })),
+    [slashOptions],
+  );
+
+  // 键盘导航时选中项跟随滚动（长列表里 ↓ 到视口外时拉回可见）
+  useEffect(() => {
+    if (slash === null) {
+      return;
+    }
+    document
+      .querySelector('[aria-label="命令面板"] [aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [slash]);
+
+  useEffect(() => {
+    if (mention === null) {
+      return;
+    }
+    document
+      .querySelector('[aria-label="提及候选"] [aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [mention]);
+
+  const mentionRows = useMemo(
+    () =>
+      mentionOptions.map((option, index) => ({
+        key: `${option.kind}:${option.label}`,
+        header:
+          index === 0 || mentionOptions[index - 1]?.kind !== option.kind
+            ? option.kind === "file"
+              ? "文件"
+              : "Skills"
+            : null,
+        option,
+        index,
+      })),
+    [mentionOptions],
+  );
 
   const ensureWorkspaceFiles = (): void => {
     if (
@@ -235,20 +323,66 @@ export function ChatInput({
     });
   };
 
-  const insertMention = (path: string): void => {
+  /** slash 动作执行（选中即做的 UI 行为，不进消息流）。 */
+  const runSlashAction = (
+    actionId: NonNullable<SlashItem["actionId"]>,
+  ): void => {
+    if (actionId === "clear") {
+      useSessionStore.getState().clear();
+    } else if (actionId === "diagnostics") {
+      useWorkbenchUiStore.getState().toggleOverlay("diagnostics");
+    } else if (actionId === "retry") {
+      useSessionStore.getState().retryLastPrompt();
+    } else if (actionId === "wizard-sr") {
+      useWorkbenchUiStore.getState().openAawWizard("sr");
+    } else if (actionId === "wizard-ar") {
+      useWorkbenchUiStore.getState().openAawWizard("ar");
+    } else if (actionId === "wizard-dev") {
+      useWorkbenchUiStore.getState().openAawWizard("dev");
+    }
+  };
+
+  /** 选中 slash 条目：action 类移除 /token 并执行；insert 类替换为插入文本。 */
+  const selectSlashItem = (item: SlashItem): void => {
+    const element = textareaRef.current;
+    const caret = element?.selectionStart ?? draft.length;
+    const query = slash?.query ?? "";
+    const replacement =
+      item.kind === "insert" ? `${item.insertText ?? ""} ` : "";
+    const result = replaceSlashToken(draft, caret, query, replacement);
+    setDraft(result.text);
+    setSlash(null);
+    if (item.kind === "action" && item.actionId !== undefined) {
+      runSlashAction(item.actionId);
+    }
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (node !== null) {
+        node.focus();
+        node.setSelectionRange(result.caret, result.caret);
+      }
+    });
+  };
+
+  /** 选中 @ 候选：文件插 `@路径`，skill 插自然语言提示（agent 自行加载）。 */
+  const insertMention = (option: MentionOption): void => {
     const element = textareaRef.current;
     const token = mention?.query ?? "";
     const caret = element?.selectionStart ?? draft.length;
     // @ 起点在 caret - token.length - 1；校验仍是 @（ IME/粘贴等边缘）
     const atIndex = caret - token.length - 1;
+    const insert = option.insert;
+    let nextText: string;
+    let caretAfter: number;
     if (atIndex < 0 || draft[atIndex] !== "@") {
-      setDraft(`${draft}${draft.length > 0 ? " " : ""}@${path} `);
+      nextText = `${draft}${draft.length > 0 ? " " : ""}${insert}`;
+      caretAfter = nextText.length;
     } else {
-      setDraft(`${draft.slice(0, atIndex)}@${path} ${draft.slice(caret)}`);
+      nextText = `${draft.slice(0, atIndex)}${insert}${draft.slice(caret)}`;
+      caretAfter = atIndex + insert.length;
     }
+    setDraft(nextText);
     setMention(null);
-    const caretAfter =
-      atIndex >= 0 ? atIndex + path.length + 2 : draft.length + path.length + 3;
     requestAnimationFrame(() => {
       const node = textareaRef.current;
       if (node !== null) {
@@ -277,12 +411,52 @@ export function ChatInput({
     }
     setDraft("");
     setMention(null);
+    setSlash(null);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     // 输入法组词中的按键一律放行给 IME（导航键也不抢）
     if (event.nativeEvent.isComposing) {
       return;
+    }
+    // slash 命令面板开着的导航优先
+    if (slash !== null) {
+      if (slashOptions.length > 0) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setSlash((current) =>
+            current === null
+              ? current
+              : {
+                  ...current,
+                  index: Math.min(slashOptions.length - 1, current.index + 1),
+                },
+          );
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setSlash((current) =>
+            current === null
+              ? current
+              : { ...current, index: Math.max(0, current.index - 1) },
+          );
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          const item = slashOptions[slash.index] ?? slashOptions[0];
+          if (item !== undefined) {
+            selectSlashItem(item);
+          }
+          return;
+        }
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlash(null);
+        return;
+      }
     }
     // 提及面板开着的导航优先
     if (mention !== null) {
@@ -310,9 +484,10 @@ export function ChatInput({
         }
         if (event.key === "Enter" || event.key === "Tab") {
           event.preventDefault();
-          insertMention(
-            mentionOptions[mention.index] ?? mentionOptions[0] ?? "",
-          );
+          const option = mentionOptions[mention.index] ?? mentionOptions[0];
+          if (option !== undefined) {
+            insertMention(option);
+          }
           return;
         }
       }
@@ -364,7 +539,24 @@ export function ChatInput({
 
   const handleChange = (value: string, caret: number): void => {
     setDraft(value);
-    const trigger = detectMentionTrigger(value.slice(0, caret));
+    const before = value.slice(0, caret);
+    // 行首 / 命令面板（顿号归一）；与 @ 提及互斥
+    const slashTrigger = detectSlashTrigger(before);
+    if (slashTrigger !== null) {
+      if (mention !== null) {
+        setMention(null);
+      }
+      setSlash((current) =>
+        current !== null && current.query === slashTrigger
+          ? current
+          : { query: slashTrigger, index: 0 },
+      );
+      return;
+    }
+    if (slash !== null) {
+      setSlash(null);
+    }
+    const trigger = detectMentionTrigger(before);
     if (trigger === null) {
       if (mention !== null) {
         setMention(null);
@@ -384,40 +576,96 @@ export function ChatInput({
        relative 承载提及面板（弹在整卡上方，盖住消息流底部而不被卡片的
        overflow-hidden 裁掉） */
     <div className="relative shrink-0" style={{ padding: "0 20px 16px" }}>
+      {slash !== null ? (
+        <div className="absolute inset-x-5 bottom-full mb-1 z-30">
+          <div
+            role="listbox"
+            aria-label="命令面板"
+            className={`mx-auto max-h-72 overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-elev-2 ${widthClass}`}
+          >
+            {slashOptions.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-ink-faint">
+                没有匹配的命令
+              </p>
+            ) : (
+              slashRows.map(({ key, header, item, index }) => (
+                <div key={key}>
+                  {header !== null ? (
+                    <p className="border-b border-line/60 px-3 py-1 text-2xs tracking-wide text-ink-ghost">
+                      {header}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={index === slash.index}
+                    // mousedown 先于焦点跳转：面板点击不丢输入焦点
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      selectSlashItem(item);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+                      index === slash.index
+                        ? "bg-raised text-ink"
+                        : "text-ink-soft hover:bg-raised/60"
+                    }`}
+                  >
+                    <span className="shrink-0 font-mono text-xs">
+                      /{item.label}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-2xs text-ink-faint">
+                      {item.description}
+                    </span>
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
       {mention !== null ? (
         <div className="absolute inset-x-5 bottom-full mb-1 z-30">
           <div
             role="listbox"
-            aria-label="文件候选"
+            aria-label="提及候选"
             className={`mx-auto max-h-60 overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-elev-2 ${widthClass}`}
           >
             {mentionOptions.length === 0 ? (
               <p className="px-3 py-2 text-xs text-ink-faint">
                 {filesState.for === activePath
-                  ? "没有匹配的文件"
+                  ? "没有匹配的文件或 skill"
                   : "正在读取文件列表…"}
               </p>
             ) : (
-              mentionOptions.map((path, index) => (
-                <button
-                  key={path}
-                  type="button"
-                  role="option"
-                  aria-selected={index === mention.index}
-                  // mousedown 先于焦点跳转：面板点击不丢输入焦点
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    insertMention(path);
-                  }}
-                  className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left font-mono text-xs transition-colors ${
-                    index === mention.index
-                      ? "bg-raised text-ink"
-                      : "text-ink-soft hover:bg-raised/60"
-                  }`}
-                >
-                  <span className="shrink-0 text-ink-faint">@</span>
-                  <span className="min-w-0 flex-1 truncate">{path}</span>
-                </button>
+              mentionRows.map(({ key, header, option, index }) => (
+                <div key={key}>
+                  {header !== null ? (
+                    <p className="border-b border-line/60 px-3 py-1 text-2xs tracking-wide text-ink-ghost">
+                      {header}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={index === mention.index}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      insertMention(option);
+                    }}
+                    className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left font-mono text-xs transition-colors ${
+                      index === mention.index
+                        ? "bg-raised text-ink"
+                        : "text-ink-soft hover:bg-raised/60"
+                    }`}
+                  >
+                    <span className="shrink-0 text-ink-faint">
+                      {option.kind === "file" ? "@" : "✦"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {option.label}
+                    </span>
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -445,7 +693,7 @@ export function ChatInput({
             placeholder={
               isAgentRunning
                 ? "agent 正在处理，输入内容 Enter 加入队列…"
-                : "输入消息，Enter 发送，Shift+Enter 换行，@ 引用文件"
+                : "输入消息，Enter 发送，Shift+Enter 换行，/ 命令，@ 引用"
             }
             rows={1}
             className={`max-h-48 min-h-[2.5rem] w-full resize-none overflow-y-auto rounded bg-transparent text-sm leading-6 text-ink placeholder:text-ink-ghost disabled:cursor-not-allowed disabled:opacity-60 ${focusVisibleRing}`}
@@ -453,7 +701,6 @@ export function ChatInput({
         </div>
         {/* 下行：左=skills/mcp + 审批模式 + 自动应答开关；右=模型 + 上下文圆环 + 发送/停止 */}
         <div className="mt-1 flex items-center gap-1.5 border-t border-line px-2 py-1.5">
-          <InputStatusLeft />
           {approvalMode !== null ? (
             <span
               className={`shrink-0 rounded border px-1.5 py-0.5 text-2xs ${
@@ -468,7 +715,8 @@ export function ChatInput({
           <StatusChipMenu
             title={`审批默认模式：客户端对权限请求的缺省应答（当前「${policyLabelOf(approvalPolicy)}」）`}
             menuLabel="审批默认模式"
-            tone={approvalPolicy === "auto-reject" ? "warn" : "neutral"}
+            // 自动放行=放权给客户端自动应答，用琥珀警示色与每次询问区分
+            tone={approvalPolicy === "auto-allow" ? "warn" : "neutral"}
             label={policyLabelOf(approvalPolicy)}
           >
             <MenuSectionLabel text="审批默认模式" />
@@ -477,12 +725,15 @@ export function ChatInput({
                 <MenuItemButton
                   key={option.value}
                   selected={option.value === approvalPolicy}
-                  danger={option.value === "auto-reject"}
                   onClick={() => {
                     setApprovalPolicy(option.value);
                   }}
                 >
-                  {option.label}
+                  {option.value === "auto-allow" ? (
+                    <span className="text-warn-ink">{option.label}</span>
+                  ) : (
+                    option.label
+                  )}
                 </MenuItemButton>
               ))}
             </div>

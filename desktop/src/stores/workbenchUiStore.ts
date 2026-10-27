@@ -96,6 +96,11 @@ interface WorkbenchUiState {
    * 默认收起：会话以对话为主，AAW 信息按需拉出来看（不持久化）。
    */
   readonly isAawOpen: boolean;
+  /**
+   * 待定位的向导入口（/sr /ar /dev 命令选中后写入）：AAW 面板据此把
+   * EntryWizard 直接开到对应入口的变量表单；null = 默认从入口选择起。
+   */
+  readonly aawWizardEntry: "sr" | "ar" | "dev" | null;
   /** 会话顶部 AAW 流程时间线的收起态（布局偏好，持久化）。 */
   readonly isTimelineCollapsed: boolean;
   /** 关闭守卫确认弹窗（Rust CloseRequested 转交，agent 运行中时弹出）。 */
@@ -117,6 +122,8 @@ interface WorkbenchUiState {
   }) => void;
   /** 开 / 关会话内的 AAW 增强面板。 */
   readonly toggleAaw: () => void;
+  /** 打开 AAW 面板并把向导定位到指定入口（slash 命令 /sr /ar /dev 用）。 */
+  readonly openAawWizard: (entry: "sr" | "ar" | "dev") => void;
   readonly toggleTimeline: () => void;
   /** 功能页开关：再点同一页取消覆盖（回到树选中视图）。 */
   readonly toggleOverlay: (view: OverlayView) => void;
@@ -156,6 +163,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   isTimelineCollapsed: restoreTimelineCollapsed(),
   isAddPanelOpen: false,
   isAawOpen: false,
+  aawWizardEntry: null,
   isCloseGuardOpen: false,
 
   setCloseGuardOpen: (open) => {
@@ -169,6 +177,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
       overlay: null,
       isAddPanelOpen: false,
       isAawOpen: false,
+      aawWizardEntry: null,
     });
     logger.debug("内容区切换到项目总览", { path });
   },
@@ -180,6 +189,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
       overlay: null,
       isAddPanelOpen: false,
       isAawOpen: false,
+      aawWizardEntry: null,
     });
     logger.debug("内容区切换到会话视图", { path });
   },
@@ -187,6 +197,11 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   restoreContextView: (view) => {
     set({ treeView: view.treeView, contextPath: view.contextPath });
     logger.debug("内容区回滚到点击前的视图", view);
+  },
+
+  openAawWizard: (entry) => {
+    set({ isAawOpen: true, aawWizardEntry: entry });
+    logger.debug("AAW 面板已开并定位向导入口", { entry });
   },
 
   toggleAaw: () => {

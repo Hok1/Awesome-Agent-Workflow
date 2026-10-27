@@ -10,7 +10,7 @@
  * - P0-1：早退 / spawn 失败一律解除「连接中」并回填连接失败态（UI 横幅
  *   / 徽标数据源），成功连接清除失败态；
  * - P0-4：权限请求按设置的「审批默认模式」分派（ask 弹窗 / auto-allow
- *   放行 / auto-reject 拒绝，白名单落空回退弹窗）；
+ *   放行，白名单落空回退弹窗）；
  * - P1-8：恢复历史会话后内容区自动切到会话视图，全新会话保持总览。
  *
  * 替身说明：AcpSession 以脚本化 fake 替换（tests/fixtures/fakeAcpSession.ts），
@@ -466,14 +466,6 @@ describe("openRealWorkspace：审批默认模式分派（P0-4）", () => {
     expect(useApprovalStore.getState().pending).toHaveLength(0);
   });
 
-  it("auto-reject：自动回 reject_once 选项（不弹窗）", async () => {
-    useSettingsStore.getState().setApprovalMode("auto-reject");
-    const responder = await openAndGetResponder();
-
-    const outcome = await responder("s1", TOOL_CALL, CHRYS_PERMISSION_OPTIONS);
-    expect(outcome).toEqual({ outcome: "selected", optionId: "reject" });
-    expect(useApprovalStore.getState().pending).toHaveLength(0);
-  });
 
   it("白名单落空（只有未知 kind 选项）：回退人工弹窗，绝不静默取消", async () => {
     useSettingsStore.getState().setApprovalMode("auto-allow");

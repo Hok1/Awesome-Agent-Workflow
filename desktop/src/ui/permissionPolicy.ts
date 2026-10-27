@@ -5,8 +5,8 @@
  * realRuntime 对 `session/request_permission` 反向请求的默认应答——
  * - ask（手动）：交人工弹窗（返回 null，由调用方走 offerPermission）；
  * - auto-allow（自动放行）：按 allow_once → allow_always 的 kind 白名单
- *   顺序选第一个可放行选项，自动应答 selected；
- * - auto-reject（自动拒绝）：按 reject_once → reject_always 顺序自动拒绝。
+ *   顺序选第一个可放行选项，自动应答 selected。
+ *   （「自动拒绝」选项已下线：误触后所有工具调用被拒，弊大于利。）
  *
  * 安全默认：kind 白名单匹配不到（比如 agent 只给了未知语义的选项）一律
  * 返回 null 回退人工弹窗——绝不静默取消，更不会把未知选项当成放行。
@@ -27,7 +27,6 @@ const AUTO_KINDS: Readonly<
   Record<Exclude<ApprovalMode, "ask">, readonly PermissionOptionKind[]>
 > = {
   "auto-allow": ["allow_once", "allow_always"],
-  "auto-reject": ["reject_once", "reject_always"],
 };
 
 /**

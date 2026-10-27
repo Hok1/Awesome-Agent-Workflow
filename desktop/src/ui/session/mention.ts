@@ -1,5 +1,5 @@
 /**
- * @ 文件提及的纯逻辑（触发检测 + 候选过滤），与渲染解耦便于单测。
+ * @ 提及的纯逻辑（触发检测 + 多源候选过滤），与渲染解耦便于单测。
  *
  * 触发规则：光标前的文本以 `@` 起一段不含空白的结尾（`@` 前是行首或
  * 空白/常见开括号），如 `看一下 @src/app` / `(@aaw` 。命中返回 `@` 后的
@@ -7,7 +7,10 @@
  *
  * 过滤规则：先大小写不敏感的子串匹配（分隔符不敏感：`/` `\` `.` 互相
  * 等价，输入 `aaw workflow` 能命中 `aaw-workflow` 这类），子串位置越靠
- * 前越靠前；子串落空的候选再做宽松子序列匹配兜底。上限 8 条。
+ * 前越靠前；子串落空的候选再做宽松子序列匹配兜底。文件上限 8 条。
+ *
+ * 多源（M6）：文件 + skills 两组共用同一模糊口径；skill 项选中插入
+ * 自然语言提示（chrys 无用户侧触发语法，agent 读到提示自行 load_skill）。
  */
 const TRIGGER_PATTERN = /(?:^|[\s([（【{,，、])@([^\s@]*)$/;
 
@@ -66,4 +69,44 @@ function isSubsequence(target: string, query: string): boolean {
     }
   }
   return cursor === query.length;
+}
+
+/** @ 候选条目（文件引用 / skill 提示两种插入语义）。 */
+export interface MentionOption {
+  readonly kind: "file" | "skill";
+  /** 显示名：文件相对路径 / skill 名。 */
+  readonly label: string;
+  /** 选中后的插入文本（含尾随空格）。 */
+  readonly insert: string;
+}
+
+/** skill 项的插入文本（与 slash.ts 的口径一致）。 */
+export function skillMentionInsert(name: string): string {
+  return `请使用 skill「${name}」来处理这次任务 `;
+}
+
+/**
+ * 多源过滤：文件沿用 filterMentionFiles 口径（≤6 条），skills 同口径
+ * 模糊（≤4 条）；文件组在前、skills 组在后，各自组内按命中排序。
+ */
+export function filterMentionOptions(
+  paths: readonly string[],
+  skillNames: readonly string[],
+  query: string,
+): MentionOption[] {
+  const files = filterMentionFiles(paths, query, 6).map(
+    (path): MentionOption => ({
+      kind: "file",
+      label: path,
+      insert: `@${path} `,
+    }),
+  );
+  const skills = filterMentionFiles(skillNames, query, 4).map(
+    (name): MentionOption => ({
+      kind: "skill",
+      label: name,
+      insert: skillMentionInsert(name),
+    }),
+  );
+  return [...files, ...skills];
 }

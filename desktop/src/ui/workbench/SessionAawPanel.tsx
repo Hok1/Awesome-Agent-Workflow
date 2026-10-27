@@ -14,6 +14,7 @@
  */
 import { useState } from "react";
 import { useSessionStore } from "../../stores/sessionStore.ts";
+import { useWorkbenchUiStore } from "../../stores/workbenchUiStore.ts";
 import {
   focusVisibleRing,
   tabActiveClass,
@@ -39,6 +40,8 @@ export function SessionAawPanel({
   onSubmitAawPrompt,
   onClose,
 }: SessionAawPanelProps) {
+  // slash 定位入口（/sr /ar /dev）：null = 默认从入口选择起
+  const wizardEntry = useWorkbenchUiStore((state) => state.aawWizardEntry);
   const [segment, setSegment] = useState<AawSegment>("progress");
   // 命令类动作（done / 放行）在会话侧执行的入口：直接发一条 prompt，
   // 由 agent 读取并执行，用户不必手动复制粘贴
@@ -95,9 +98,12 @@ export function SessionAawPanel({
         {segment === "progress" ? (
           <AawStatusPanel onRunCommand={sendCommand} />
         ) : (
+          // key 随 slash 定位入口变化重挂：/sr→/ar 切换时表单重开到新入口
           <EntryWizard
+            key={wizardEntry ?? "default"}
             hasActiveSession={true}
             onSubmitPrompt={onSubmitAawPrompt}
+            initialEntry={wizardEntry ?? undefined}
           />
         )}
       </div>

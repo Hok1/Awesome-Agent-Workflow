@@ -8,7 +8,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  InputStatusLeft,
   InputStatusRight,
   TurnStatusRow,
 } from "../../../src/ui/session/InputStatusBar.tsx";
@@ -95,23 +94,6 @@ describe("InputStatusBar", () => {
     expect(meter).toHaveAttribute("title", expect.stringContaining("8k"));
   });
 
-  it("「+」二级菜单只收纳 skills 清单（评审确认），不含 MCP", async () => {
-    seedRuntime();
-    render(<InputStatusLeft />);
-    // 状态行只留一枚 + 芯片，旧计数徽标不再出现
-    expect(screen.getByRole("button", { name: "会话 skills" })).toBeInTheDocument();
-    expect(screen.queryByText(/skills \d/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/mcp \d/)).not.toBeInTheDocument();
-
-    // 点开：只有 skills 清单；MCP 不进菜单
-    await userEvent.click(screen.getByRole("button", { name: "会话 skills" }));
-    const menu = screen.getByRole("menu", { name: "会话 skills" });
-    expect(menu).toHaveTextContent("Skills · 2");
-    expect(menu).toHaveTextContent("aaw-workflow");
-    expect(menu).not.toHaveTextContent("MCP");
-    expect(menu).not.toHaveTextContent("server-a");
-  });
-
   it("模型切换器：无清单时纯展示；有清单时菜单可换（经 store switchModel）", async () => {
     seedRuntime();
     const { rerender } = render(<InputStatusRight />);
@@ -139,13 +121,14 @@ describe("InputStatusBar", () => {
     expect(switchModel).toHaveBeenCalledWith("deepseek-v4");
   });
 
-  it("无 usage 时不渲染圆环；无 skills 时「+」菜单呈空态（模型占位仍在）", async () => {
-    render(<InputStatusLeft />);
+  it("无 usage 时不渲染圆环；无模型清单时模型为纯展示占位", () => {
+    // 上一用例灌入的清单清理（store 跨用例共享）
+    useSessionStore.setState({ availableModels: [], currentModelId: null });
     render(<InputStatusRight />);
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "会话 skills" }));
-    const menu = screen.getByRole("menu", { name: "会话 skills" });
-    expect(menu).toHaveTextContent("无已加载 skill");
+    expect(
+      screen.queryByRole("button", { name: "模型选择" }),
+    ).not.toBeInTheDocument();
   });
 
   it("轮次相位行：轮次内相位可见，轮次外不渲染", () => {

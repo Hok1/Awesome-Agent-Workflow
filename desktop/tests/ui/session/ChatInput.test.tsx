@@ -230,7 +230,7 @@ describe("ChatInput @ 文件提及", () => {
     await userEvent.type(textarea, "{Enter}");
     expect(textarea).toHaveValue("看 @README.md ");
     expect(
-      screen.queryByRole("listbox", { name: "文件候选" }),
+      screen.queryByRole("listbox", { name: "提及候选" }),
     ).not.toBeInTheDocument();
   });
 
@@ -240,7 +240,9 @@ describe("ChatInput @ 文件提及", () => {
     setup();
     const textarea = getTextarea();
     await userEvent.type(textarea, "@zzz");
-    expect(await screen.findByText("没有匹配的文件")).toBeInTheDocument();
+    expect(
+      await screen.findByText("没有匹配的文件或 skill"),
+    ).toBeInTheDocument();
     await userEvent.type(textarea, "{Escape}");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
@@ -303,5 +305,149 @@ describe("ChatInput 草稿按（工作区 × 会话）持久化", () => {
     useSessionStore.setState({ activeSessionId: "s-1" });
     setup();
     expect(getTextarea()).toHaveValue("会话一草稿");
+  });
+});
+
+// ---------------------------------------------------------------- Slash 命令面板（M6）
+import { useWorkbenchUiStore } from "../../../src/stores/workbenchUiStore.ts";
+
+describe("ChatInput slash 命令面板", () => {
+  beforeEach(() => {
+    useSessionStore.getState().clear();
+    useWorkbenchUiStore.setState({
+      overlay: null,
+      isAawOpen: false,
+      aawWizardEntry: null,
+    });
+    useRuntimeStatusStore.getState().reset();
+  });
+
+  it("行首 / 弹面板（命令/工作流入口分组）；Enter 执行 /diagnostics 并移除 token", async () => {
+    useRuntimeStatusStore.setState({
+      runtime: {
+        ...useRuntimeStatusStore.getState().runtime,
+        skillNames: ["aaw-workflow"],
+      },
+    });
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "/");
+    // 空查询：三个分组齐全
+    const panel = await screen.findByRole("listbox", { name: "命令面板" });
+    expect(panel.textContent).toContain("命令");
+    expect(panel.textContent).toContain("工作流入口");
+    expect(panel.textContent).toContain("Skills");
+    // 过滤到 diagnostics
+    await userEvent.type(textarea, "dia");
+    expect(panel).toHaveTextContent("/diagnostics");
+
+    await userEvent.type(textarea, "{Enter}");
+    expect(useWorkbenchUiStore.getState().overlay).toBe("diagnostics");
+    // action 执行后 /token 从草稿移除
+    expect(textarea).toHaveValue("");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("行中 / 不触发；顿号行首归一触发", async () => {
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "看 /cl");
+    expect(screen.queryByRole("listbox", { name: "命令面板" })).not.toBeInTheDocument();
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, "、");
+    expect(
+      await screen.findByRole("listbox", { name: "命令面板" }),
+    ).toBeInTheDocument();
+  });
+
+  it("/sr 打开 AAW 面板并定位向导入口；Esc 关面板不误执行", async () => {
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "/sr{Enter}");
+    const ui = useWorkbenchUiStore.getState();
+    expect(ui.isAawOpen).toBe(true);
+    expect(ui.aawWizardEntry).toBe("sr");
+    expect(textarea).toHaveValue("");
+
+    // Esc 只关面板
+    await userEvent.type(textarea, "/ar");
+    expect(
+      await screen.findByRole("listbox", { name: "命令面板" }),
+    ).toBeInTheDocument();
+    await userEvent.type(textarea, "{Escape}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(useWorkbenchUiStore.getState().aawWizardEntry).toBe("sr");
+  });
+
+  it("/clear 清空会话条目", async () => {
+    useSessionStore.getState().beginTurn("待清空的消息");
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "/clear{Enter}");
+    expect(useSessionStore.getState().items).toHaveLength(0);
+  });
+
+  it("skill 项过滤命中并插入提示文本（insert 类）", async () => {
+    useRuntimeStatusStore.setState({
+      runtime: {
+        ...useRuntimeStatusStore.getState().runtime,
+        skillNames: ["aaw-workflow"],
+      },
+    });
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "/aaw");
+    const panel = await screen.findByRole("listbox", { name: "命令面板" });
+    expect(panel).toHaveTextContent("Skills");
+    expect(panel).toHaveTextContent("aaw-workflow");
+    // 选中 skill 项：面板首项此时应为 skill（aaw 无静态命令命中）
+    await userEvent.type(textarea, "{Enter}");
+    expect(textarea.value).toContain("请使用 skill「aaw-workflow」");
+  });
+
+  it("@ 多源：skill 名与文件同面板分组出现", async () => {
+    useWorkspaceStore.setState({ activePath: "D:/dev/demo" });
+    useRuntimeStatusStore.setState({
+      runtime: {
+        ...useRuntimeStatusStore.getState().runtime,
+        skillNames: ["aaw-workflow"],
+      },
+    });
+    vi.mocked(listWorkspaceFiles).mockResolvedValue(["aaw-config.ts"]);
+    setup();
+    const textarea = getTextarea();
+    await userEvent.type(textarea, "@aaw");
+    const options = await screen.findAllByRole("option");
+    const labels = options.map((option) => option.textContent ?? "");
+    expect(labels.some((l) => l.includes("aaw-config.ts"))).toBe(true);
+    expect(labels.some((l) => l.includes("aaw-workflow"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------- 审批默认模式切换器（重构后）
+import { useSettingsStore } from "../../../src/stores/settingsStore.ts";
+
+describe("ChatInput 审批默认模式切换器", () => {
+  beforeEach(() => {
+    useSettingsStore.setState({ approvalMode: "ask" });
+  });
+
+  it("芯片显示当前策略；菜单两项（无自动拒绝）即时切换", async () => {
+    setup();
+    expect(
+      screen.getByRole("button", { name: "审批默认模式" }),
+    ).toHaveTextContent("审批·每次询问");
+    await userEvent.click(screen.getByRole("button", { name: "审批默认模式" }));
+    const menu = screen.getByRole("menu", { name: "审批默认模式" });
+    expect(menu).toHaveTextContent("每次询问（弹出审批对话框）");
+    expect(menu).toHaveTextContent("自动放行（默认允许工具调用）");
+    // 「自动拒绝」已下线：菜单不再出现
+    expect(menu).not.toHaveTextContent("自动拒绝");
+
+    await userEvent.click(screen.getByRole("menuitem", { name: /自动放行/ }));
+    expect(useSettingsStore.getState().approvalMode).toBe("auto-allow");
+    expect(
+      screen.getByRole("button", { name: "审批默认模式" }),
+    ).toHaveTextContent("审批·自动放行");
   });
 });

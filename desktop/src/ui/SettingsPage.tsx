@@ -249,15 +249,12 @@ const TABS: readonly {
 const APPROVAL_SEGMENTS = [
   { value: "ask" as const, label: "手动确认" },
   { value: "auto-allow" as const, label: "自动放行" },
-  { value: "auto-reject" as const, label: "自动拒绝" },
 ];
 
 /** 审批模式选中项的说明行（含风险提示）。 */
 const APPROVAL_DESCRIPTIONS: Readonly<Record<ApprovalMode, string>> = {
   ask: "手动确认 — 每个敏感工具调用都弹出审批，由你逐条决定。",
   "auto-allow": "自动放行 — 白名单内的读写与查询自动执行，仅高危操作询问。",
-  "auto-reject":
-    "自动拒绝 — 白名单外的工具调用一律拒绝。可能打断工作流，慎用。",
 };
 
 function SettingsPage() {
@@ -561,7 +558,6 @@ function SettingsPage() {
                   value={approvalMode}
                   options={APPROVAL_SEGMENTS}
                   onChange={setApprovalMode}
-                  warnValue="auto-reject"
                 />
               </SettingRow>
               <SettingRow
