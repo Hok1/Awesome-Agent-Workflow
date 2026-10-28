@@ -30,10 +30,15 @@ const logger = createLogger("app");
 
 /** 打开 / 新建会话共用的串行队列（sessionStart 也从这里过）。 */
 let openQueue: Promise<void> = Promise.resolve();
+let openGeneration = 0;
 
 /** 把一次连接编排追加到队列尾部；前一次失败不阻塞后一次。 */
-export function enqueueSessionOpen<T>(task: () => Promise<T>): Promise<T> {
-  const run = openQueue.then(task, task);
+export function enqueueSessionOpen<T>(
+  task: (isLatest: () => boolean) => Promise<T>,
+): Promise<T> {
+  const generation = ++openGeneration;
+  const execute = (): Promise<T> => task(() => generation === openGeneration);
+  const run = openQueue.then(execute, execute);
   openQueue = run.then(
     () => undefined,
     () => undefined,
@@ -47,6 +52,7 @@ export function enqueueSessionOpen<T>(task: () => Promise<T>): Promise<T> {
  */
 export function resetSessionOpenQueueForTests(): void {
   openQueue = Promise.resolve();
+  openGeneration = 0;
 }
 
 /** 拍平后的一条最近会话：所属项目路径 + 会话摘要。 */

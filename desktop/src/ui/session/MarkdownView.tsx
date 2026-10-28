@@ -6,9 +6,13 @@
  * 与代码块内的高亮 span 分别处理样式。
  */
 import React, { memo, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import { CopyButton } from "./CopyButton.tsx";
+import { resolveFileReference } from "../../core/panelPaths.ts";
 
 /** 从 pre 的 children（code 元素树）里提取语言与纯文本。 */
 function inspectCodeChildren(children: ReactNode): {
@@ -135,7 +139,58 @@ const markdownComponents: Components = {
   ),
 };
 
-function MarkdownViewBase({ text }: { readonly text: string }) {
+function MarkdownViewBase({
+  text,
+  fileRoot,
+  fileBase,
+  onOpenFile,
+  renderLocalImage,
+}: {
+  readonly text: string;
+  readonly fileRoot?: string;
+  readonly fileBase?: string;
+  readonly onOpenFile?: (path: string, line?: number) => void;
+  readonly renderLocalImage?: (src: string, alt: string) => ReactNode;
+}) {
+  const components: Components = fileRoot
+    ? {
+        ...markdownComponents,
+        a: ({ children, href }) => {
+          const reference = href
+            ? resolveFileReference(fileRoot, href, fileBase)
+            : null;
+          return reference && onOpenFile ? (
+            <button
+              className="break-all text-accent-ink underline"
+              title={reference.path}
+              onClick={() => onOpenFile(reference.path, reference.line)}
+            >
+              {children}
+            </button>
+          ) : (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent-ink underline"
+            >
+              {children}
+            </a>
+          );
+        },
+        ...(renderLocalImage
+          ? {
+              img: ({ src, alt }: { src?: string; alt?: string }) =>
+                typeof src === "string" &&
+                resolveFileReference(fileRoot, src, fileBase) ? (
+                  renderLocalImage(src, alt ?? "")
+                ) : (
+                  <img src={src} alt={alt ?? ""} className="max-w-full" />
+                ),
+            }
+          : {}),
+      }
+    : markdownComponents;
   return (
     // break-words：Windows 绝对路径 / URL 这类超长不可断 token 按字符折行，
     // 不把消息流撑出横向滚动（代码块自身的横向滚动不受影响：pre 的
@@ -143,7 +198,12 @@ function MarkdownViewBase({ text }: { readonly text: string }) {
     <div className="text-sm break-words text-ink">
       <ReactMarkdown
         rehypePlugins={[rehypeHighlight]}
-        components={markdownComponents}
+        components={components}
+        urlTransform={(url) =>
+          fileRoot && resolveFileReference(fileRoot, url, fileBase)
+            ? url
+            : defaultUrlTransform(url)
+        }
       >
         {text}
       </ReactMarkdown>
@@ -152,7 +212,7 @@ function MarkdownViewBase({ text }: { readonly text: string }) {
 }
 
 /**
- * memo（按 text 浅比较）：文本不变则跳过整棵 Markdown 重解析——
+ * memo（按 props 浅比较）：内容和文件链接处理不变时跳过整棵 Markdown 重解析——
  * react-markdown + rehype-highlight 是消息流里最贵的渲染路径，
  * 配合条目级引用稳定，历史消息在流式期间零重渲。
  */

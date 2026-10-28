@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import type { DiffResult, EditPayload } from "./editDiff.ts";
 import { buildDiffRows, previewLines } from "./editDiff.ts";
+import { FilePathButton } from "../right-panel/FilePathButton.tsx";
 
 /** diff 行的底色：增=ok 系，删=danger 系（与全局语义色一致）。 */
 const rowClasses: Readonly<Record<string, string>> = {
@@ -19,9 +20,7 @@ const rowClasses: Readonly<Record<string, string>> = {
 
 function DiffRowsView({ diff }: { readonly diff: DiffResult }) {
   if (diff.rows.length === 0) {
-    return (
-      <p className="px-2.5 py-1.5 text-xs text-ink-faint">（无差异行）</p>
-    );
+    return <p className="px-2.5 py-1.5 text-xs text-ink-faint">（无差异行）</p>;
   }
   return (
     <div
@@ -106,9 +105,7 @@ function EditCard({
   return (
     <div className="space-y-1">
       <div className="flex min-w-0 items-center gap-2 font-mono text-2xs">
-        <span className="truncate text-ink-soft" title={path}>
-          {path}
-        </span>
+        <FilePathButton path={path} />
         <span className="shrink-0">
           <span className="text-ok-ink">+{diff.added}</span>{" "}
           <span className="text-danger-ink">−{diff.removed}</span>
@@ -129,9 +126,7 @@ function WriteCard({
   return (
     <div className="space-y-1">
       <div className="flex min-w-0 items-center gap-2 font-mono text-2xs">
-        <span className="truncate text-ink-soft" title={path}>
-          {path}
-        </span>
+        <FilePathButton path={path} />
         <span className="shrink-0 text-ink-faint">新文件</span>
       </div>
       <WritePreview content={content} />

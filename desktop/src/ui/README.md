@@ -53,23 +53,20 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
     （agent 标识 + 待办下拉）；空态下只渲染全局区；
   - `ContentArea.tsx`：内容区视图容器（项目总览 / 会话 / 设置 / 诊断，
     状态在 `stores/workbenchUiStore`）；
-  - `SessionAawPanel.tsx`：会话内 AAW 增强面板（右栏抽屉，默认收起）：
-    「进度」分段渲染 AawStatusPanel（注入 onRunCommand，放行给一个按
-    人话说的动作），「启动」分段渲染 EntryWizard；由上下文条的 AAW 面板
-    开关拉起；
   - `ProjectOverview.tsx`：项目总览（健康检查不随进页自动发起——首次
     检查发生在添加项目那一刻，之后靠页内手动「重新检查」；组件层从设置
     store 组装工具路径成 pathsOverride，不阻塞 UI；健康摘要 chip 可开合
     明细，有警告 / 失败时自动展开；主行动按钮
     不点名具体 agent——始终是「新建会话」（会话入口在树上，总览不放
     「进入会话」）；项目没有 .sdd/ 时工作流面板收成一行说明）；
-  - `wizardSubmit.ts`：AAW 入口向导首条 prompt 的发送（挂在会话的
-    项目上下文上，未连接先连接再发送）；
   - `ColumnResizer.tsx` / `columnWidths.ts`：左栏拖宽与持久化；
   - `ModalShell.tsx`：模态外壳（问答表单等复用）。
+- `right-panel/`：项目共享的右栏，首次收起，窄窗覆盖、宽窗并排。`RightPanel` 持有稳定布局和内容标签；`FileTree` 逐层列目录，`FilePreview` 有界只读预览，`GitPanel` 展示项目范围的状态和统一差异。目录/Git 合并文件监听、窗口焦点和 agent 完成事件；文件预览不自动刷新。
+  - `AawPanel` 复用进度和入口向导；总览选择执行会话，`aawTarget` 在连接前后校验项目与会话，遵循已有暂停队列语义。
+  - 规则和验收见 `desktop/docs/right-panel-v1.md`。旧 `SessionAawPanel` / `wizardSubmit` 保留兼容测试，工作台不再使用。
 - `EntryWizard.tsx`：AAW 入口启动向导（三入口选择 → 按入口收集变量 →
   首条中文 prompt 预览 → 交给会话发送；领域逻辑在 `src/aaw/entryWizard.ts`）。
-  出现在会话内 AAW 面板的「启动」分段，是「从 AAW 入口启动」的显式动作，
+  出现在项目右栏 AAW 面板的「启动」分段，是「从 AAW 入口启动」的显式动作，
   不是新建会话的必经步骤。
 - `AawStatusPanel.tsx`：工作流状态面板，`aaw status / next --peek --json`
   的只读渲染（当前 SR、阶段步骤条、门禁徽标、工作单摘要、待放行提示）。

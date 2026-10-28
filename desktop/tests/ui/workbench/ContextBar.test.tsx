@@ -18,6 +18,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useRightPanelStore } from "../../../src/stores/rightPanelStore.ts";
+import { pathKey } from "../../../src/core/panelPaths.ts";
 import ContentArea from "../../../src/ui/workbench/ContentArea.tsx";
 import { useAawStatusStore } from "../../../src/stores/aawStatusStore.ts";
 import { useSessionStore } from "../../../src/stores/sessionStore.ts";
@@ -82,6 +84,7 @@ const DEMO_STATUS = {
 
 function resetAll(): void {
   window.localStorage.clear();
+  useRightPanelStore.setState({ projects: {} });
   useWorkbenchUiStore.setState({
     treeView: "project-overview",
     contextPath: null,
@@ -163,7 +166,9 @@ describe("ContextBar 会话态", () => {
     const ui = useWorkbenchUiStore.getState();
     expect(ui.treeView).toBe("session");
     expect(ui.contextPath).toBe(PATH);
-    expect(ui.isAawOpen).toBe(true);
+    expect(useRightPanelStore.getState().projects[pathKey(PATH)]?.open).toBe(
+      true,
+    );
     expect(screen.getByLabelText("AAW 面板")).toBeInTheDocument();
     expect(screen.getByText("工作流状态")).toBeInTheDocument();
   });
@@ -173,13 +178,17 @@ describe("ContextBar 会话态", () => {
     render(<ContentArea />);
 
     expect(screen.queryByLabelText("AAW 面板")).not.toBeInTheDocument();
-    const toggle = screen.getByRole("button", { name: "AAW" });
+    const toggle = screen.getByRole("button", { name: "打开AAW面板" });
     await userEvent.click(toggle);
-    expect(useWorkbenchUiStore.getState().isAawOpen).toBe(true);
+    expect(useRightPanelStore.getState().projects[pathKey(PATH)]?.open).toBe(
+      true,
+    );
     expect(screen.getByLabelText("AAW 面板")).toBeInTheDocument();
 
     await userEvent.click(toggle);
-    expect(useWorkbenchUiStore.getState().isAawOpen).toBe(false);
+    expect(useRightPanelStore.getState().projects[pathKey(PATH)]?.open).toBe(
+      false,
+    );
     expect(screen.queryByLabelText("AAW 面板")).not.toBeInTheDocument();
   });
 

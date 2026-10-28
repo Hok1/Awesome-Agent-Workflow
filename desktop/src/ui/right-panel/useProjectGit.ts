@@ -1,0 +1,25 @@
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { getProjectGitQuery } from "../../core/projectGitQuery.ts";
+import { useAgentRevision } from "./useAgentRevision.ts";
+import type { ProjectGitState } from "../../core/projectGitQuery.ts";
+
+const empty: ProjectGitState = { loading: false };
+const disabledQuery = {
+  getSnapshot: () => empty,
+  subscribe: () => () => {},
+  refresh: () => {},
+  invalidate: () => {},
+};
+
+export function useProjectGit(project: string | null) {
+  const query = useMemo(
+    () => (project ? getProjectGitQuery(project) : disabledQuery),
+    [project],
+  );
+  const state = useSyncExternalStore(query.subscribe, query.getSnapshot);
+  const revision = useAgentRevision(project ?? "", project !== null);
+  useEffect(() => {
+    if (revision > 0) query.invalidate();
+  }, [query, revision]);
+  return { ...state, refresh: query.refresh };
+}

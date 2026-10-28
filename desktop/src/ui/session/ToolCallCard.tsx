@@ -17,6 +17,7 @@ import { formatClock, formatDuration } from "./clock.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { extractEditPayload } from "./editDiff.ts";
 import { EditDiffView } from "./EditDiffView.tsx";
+import { FilePathButton } from "../right-panel/FilePathButton.tsx";
 import { TerminalOutput } from "./TerminalOutput.tsx";
 
 const statusBadges: Readonly<
@@ -159,6 +160,13 @@ function ToolCallCardBase({ item }: { readonly item: ToolCallItem }) {
     () => (item.toolKind === "edit" ? extractEditPayload(item.rawInput) : null),
     [item.toolKind, item.rawInput],
   );
+  const input = item.rawInput;
+  const filePath =
+    input && typeof input === "object" && !Array.isArray(input)
+      ? ["path", "file_path", "filePath"]
+          .map((key) => (input as Record<string, unknown>)[key])
+          .find((value): value is string => typeof value === "string")
+      : undefined;
   return (
     <div
       className="w-full overflow-hidden rounded-lg border border-line bg-surface/40"
@@ -234,6 +242,11 @@ function ToolCallCardBase({ item }: { readonly item: ToolCallItem }) {
                   revealOnHover={true}
                 />
               </div>
+              {filePath && item.toolKind === "read" && (
+                <div className="mb-2 text-xs">
+                  <FilePathButton path={filePath} />
+                </div>
+              )}
               <pre className="max-h-72 overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-ink-soft">
                 {formatPayload(item.rawInput)}
               </pre>

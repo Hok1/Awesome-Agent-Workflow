@@ -60,6 +60,61 @@ beforeEach(() => {
 });
 
 describe("事件折叠：消息与思考", () => {
+  it("封口与回放提问保留已完成历史条目引用，同时提交缓冲并补齐思考结束时间", () => {
+    const closedAssistant: SessionItem = {
+      kind: "assistant",
+      id: "closed-answer",
+      text: "已完成",
+      isStreaming: false,
+      createdAt: "",
+    };
+    const closedThought: SessionItem = {
+      kind: "thought",
+      id: "closed-thought",
+      text: "已结束",
+      isStreaming: false,
+      startedAt: 1,
+      endedAt: 2,
+    };
+    const missingEnd: SessionItem = {
+      kind: "thought",
+      id: "missing-end",
+      text: "补结束时间",
+      isStreaming: false,
+      startedAt: 1,
+      endedAt: null,
+    };
+    useSessionStore.setState({
+      items: [closedAssistant, closedThought, missingEnd],
+    });
+    feed([chunk("首段"), chunk("缓冲段")]);
+    let items = useSessionStore.getState().items;
+    expect(items[0]).toBe(closedAssistant);
+    expect(items[1]).toBe(closedThought);
+    expect(items[2]).toMatchObject({ isStreaming: false });
+    const repairedThought = items[2];
+    expect(repairedThought?.kind).toBe("thought");
+    if (repairedThought?.kind !== "thought") throw new Error("缺少思考条目");
+    expect(typeof repairedThought.endedAt).toBe("number");
+    expect(items[2]).not.toBe(missingEnd);
+    const sealedThought = items[2];
+    useSessionStore.getState().sealStreamingItems();
+    items = useSessionStore.getState().items;
+    expect(items[0]).toBe(closedAssistant);
+    expect(items[1]).toBe(closedThought);
+    expect(items[2]).toBe(sealedThought);
+    expect(items[3]).toMatchObject({ text: "首段缓冲段", isStreaming: false });
+    const sealedAnswer = items[3];
+    useSessionStore.getState().setHistoryReplaySession("s1");
+    feed([{ type: "user_message_chunk", sessionId: "s1", text: "历史提问" }]);
+    items = useSessionStore.getState().items;
+    expect(items[0]).toBe(closedAssistant);
+    expect(items[1]).toBe(closedThought);
+    expect(items[2]).toBe(sealedThought);
+    expect(items[3]).toBe(sealedAnswer);
+    expect(items[4]).toMatchObject({ kind: "user", text: "历史提问" });
+    useSessionStore.getState().setHistoryReplaySession(null);
+  });
   it("sealStreamingItems：结构化提问打断时流式消息落定（生成中…不再空挂）", () => {
     feed([chunk("请核对："), chunk("上面回显的原文是否一致？")]);
     const before = useSessionStore.getState().items;
@@ -116,6 +171,111 @@ describe("事件折叠：消息与思考", () => {
     const items = useSessionStore.getState().items;
     expect(items.map((item) => item.kind)).toEqual(["thought", "assistant"]);
     expect(items[0]).toMatchObject({ isStreaming: false });
+  });
+});
+
+describe("历史回放：用户提问", () => {
+  it("回放只接纳目标会话，缺少 messageId 的相邻通知分别生成消息，并封口助手回复", () => {
+    const store = useSessionStore.getState();
+    store.setHistoryReplaySession("s1");
+    feed([
+      chunk("之前的回复"),
+      { type: "user_message_chunk", sessionId: "s2", text: "其他会话" },
+      { type: "user_message_chunk", sessionId: "s1", text: "第一个问题" },
+      { type: "user_message_chunk", sessionId: "s1", text: "第二个问题" },
+      chunk("后一轮回复"),
+    ]);
+    const items = useSessionStore.getState().items;
+    expect(items.map((item) => item.kind)).toEqual([
+      "assistant",
+      "user",
+      "user",
+      "assistant",
+    ]);
+    expect(items[0]).toMatchObject({ text: "之前的回复", isStreaming: false });
+    expect(items[1]).toMatchObject({ text: "第一个问题", createdAt: "" });
+    expect(items[2]).toMatchObject({ text: "第二个问题", createdAt: "" });
+    expect(items[3]).toMatchObject({ text: "后一轮回复" });
+  });
+
+  it("只拼接同一 messageId 的连续分片；异类事件或目标切换会封口", () => {
+    const store = useSessionStore.getState();
+    store.setHistoryReplaySession("s1");
+    feed([
+      {
+        type: "user_message_chunk",
+        sessionId: "s1",
+        messageId: "m1",
+        text: "相同",
+      },
+      {
+        type: "user_message_chunk",
+        sessionId: "s1",
+        messageId: "m1",
+        text: "消息",
+      },
+      {
+        type: "usage_update",
+        sessionId: "s1",
+        contextSize: null,
+        contextUsed: null,
+      },
+      {
+        type: "user_message_chunk",
+        sessionId: "s1",
+        messageId: "m1",
+        text: "新的消息",
+      },
+      {
+        type: "user_message_chunk",
+        sessionId: "s1",
+        messageId: "m2",
+        text: "另一个消息",
+      },
+    ]);
+    expect(
+      useSessionStore
+        .getState()
+        .items.map((item) => (item.kind === "user" ? item.text : "")),
+    ).toEqual(["相同消息", "新的消息", "另一个消息"]);
+    store.setHistoryReplaySession(null);
+    feed([
+      {
+        type: "user_message_chunk",
+        sessionId: "s1",
+        messageId: "m2",
+        text: "实时回显",
+      },
+    ]);
+    expect(useSessionStore.getState().items).toHaveLength(3);
+    store.setHistoryReplaySession("s2");
+    feed([
+      { type: "user_message_chunk", sessionId: "s1", text: "旧会话" },
+      { type: "user_message_chunk", sessionId: "s2", text: "新会话" },
+    ]);
+    expect(useSessionStore.getState().items.at(-1)).toMatchObject({
+      kind: "user",
+      text: "新会话",
+    });
+  });
+
+  it("清空或恢复快照会结束回放；正常发送的实时回显仍不双写", () => {
+    const store = useSessionStore.getState();
+    store.setHistoryReplaySession("s1");
+    store.clear();
+    feed([{ type: "user_message_chunk", sessionId: "s1", text: "迟到的回放" }]);
+    expect(useSessionStore.getState().items).toHaveLength(0);
+    store.setHistoryReplaySession("s1");
+    store.restoreItems([]);
+    feed([{ type: "user_message_chunk", sessionId: "s1", text: "迟到的回放" }]);
+    expect(useSessionStore.getState().items).toHaveLength(0);
+    store.beginTurn("手动发送");
+    feed([{ type: "user_message_chunk", sessionId: "s1", text: "手动发送" }]);
+    expect(useSessionStore.getState().items).toHaveLength(1);
+    expect(useSessionStore.getState().items[0]).toMatchObject({
+      kind: "user",
+      text: "手动发送",
+    });
   });
 });
 
@@ -789,7 +949,9 @@ describe("条目时间字段（M1：耗时与时间戳）", () => {
     return item;
   }
 
-  function assistantWhere(predicate: (entry: AssistantEntry) => boolean): AssistantEntry {
+  function assistantWhere(
+    predicate: (entry: AssistantEntry) => boolean,
+  ): AssistantEntry {
     const found = useSessionStore
       .getState()
       .items.find(
@@ -921,7 +1083,7 @@ describe("条目时间字段（M1：耗时与时间戳）", () => {
 describe("plan 步骤清单（流内条目，ACP plan 事件归约）", () => {
   const planEvent = (
     entries: readonly { content: string; status: string }[],
-  ): AcpSessionEvent => ({
+  ): Extract<AcpSessionEvent, { type: "plan" }> => ({
     type: "plan",
     sessionId: "s1",
     entries: entries.map((entry) => ({
@@ -1006,9 +1168,25 @@ describe("plan 步骤清单（流内条目，ACP plan 事件归约）", () => {
     useSessionStore.getState().restoreSessionLog(WORKSPACE);
     const restored = planItems();
     expect(restored).toHaveLength(1);
+    expect(restored[0]?.sourceSessionId).toBe("s1");
     expect(restored[0]?.entries.map((entry) => entry.status)).toEqual([
       "completed",
       "in_progress",
     ]);
+  });
+
+  it("不同会话的 plan 不能覆盖上一会话的未完成历史卡", () => {
+    feed([planEvent([{ content: "旧会话计划", status: "pending" }])]);
+    feed([
+      {
+        ...planEvent([{ content: "新会话计划", status: "in_progress" }]),
+        sessionId: "s2",
+      },
+    ]);
+    expect(planItems().map((item) => item.sourceSessionId)).toEqual([
+      "s1",
+      "s2",
+    ]);
+    expect(planItems()[0]?.entries[0]?.content).toBe("旧会话计划");
   });
 });

@@ -1,16 +1,32 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod acp_process;
 mod commands;
+mod panel_files;
+mod panel_git;
 
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(panel_files::PanelWatchers::default())
+        .on_page_load(|webview, payload| {
+            // WebView 刷新不会保证 React 清理；原生监听随页面代次一并释放。
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<panel_files::PanelWatchers>().clear();
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         // 工作区目录选择（@tauri-apps/plugin-dialog）
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            panel_files::panel_stat,
+            panel_files::panel_directory,
+            panel_files::panel_preview,
+            panel_files::panel_watch,
+            panel_files::panel_unwatch,
+            panel_git::panel_git_status,
+            panel_git::panel_git_diff,
             commands::run_command,
             commands::path_exists,
             commands::list_dir_names,

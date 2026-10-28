@@ -16,7 +16,7 @@
  *   （「更换」可点回第一步）；
  * - 发送成功后整体折叠为一条横向摘要条（「查看」切到会话视图）。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AAW_ENTRY_DEFINITIONS,
   buildEntryPrompt,
@@ -39,6 +39,8 @@ import {
 const REQUIREMENT_TEXTAREA_ROWS = 6;
 
 interface EntryWizardProps {
+  /** 仅进程内保留项目草稿；不写 localStorage，不在重启后恢复。 */
+  readonly draftKey?: string;
   /**
    * 首条 prompt 已生成，交给会话发送。失败形态：显式 false（含 Promise
    * resolve 为 false）或 `{ ok:false, reason }`（reason 为用户可读原因，
@@ -82,6 +84,14 @@ const EMPTY_DRAFT: WizardDraft = {
   devRequirement: "",
 };
 
+interface WizardMemory {
+  step: 1 | 2 | 3;
+  entryId: AawEntryId | null;
+  draft: WizardDraft;
+  sentSr: string | null;
+}
+const wizardMemory = new Map<string, WizardMemory>();
+
 const inputClassName = `w-full rounded-md border border-line-strong bg-base px-3 py-2 text-sm text-ink placeholder:text-ink-ghost focus:border-ink-faint ${focusVisibleRing}`;
 
 /** 步骤圆圈三态：完成 = accent 实底白勾；当前 = accent 描边高亮；
@@ -103,22 +113,33 @@ function connectorClass(state: "done" | "upcoming"): string {
 }
 
 function EntryWizard({
+  draftKey,
   onSubmitPrompt,
   hasActiveSession = true,
   onViewSession,
   initialEntry,
 }: EntryWizardProps) {
-  // slash 命令（/sr /ar /dev）定位：直接开到对应入口的变量表单
-  const [step, setStep] = useState<1 | 2 | 3>(initialEntry !== undefined ? 2 : 1);
-  const [entryId, setEntryId] = useState<AawEntryId | null>(initialEntry ?? null);
-  const [draft, setDraft] = useState<WizardDraft>(EMPTY_DRAFT);
+  const saved = draftKey ? wizardMemory.get(draftKey) : undefined;
+  // 显式斜杠入口优先于项目上次选择；草稿字段仍可恢复。
+  const [step, setStep] = useState<1 | 2 | 3>(
+    initialEntry !== undefined ? 2 : (saved?.step ?? 1),
+  );
+  const [entryId, setEntryId] = useState<AawEntryId | null>(
+    initialEntry ?? saved?.entryId ?? null,
+  );
+  const [draft, setDraft] = useState<WizardDraft>(saved?.draft ?? EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
   /** 发送失败的用户可见原因（连接失败 / 发送被拒；role=alert 展示）。 */
   const [submitError, setSubmitError] = useState<string | null>(null);
   /** 连接 / 发送进行中：禁用发送按钮防重复提交。 */
   const [isSubmitting, setIsSubmitting] = useState(false);
   /** 发送成功后的折叠摘要（SR 编号）；非 null 时向导整体折叠为摘要条。 */
-  const [sentSr, setSentSr] = useState<string | null>(null);
+  const [sentSr, setSentSr] = useState<string | null>(
+    initialEntry !== undefined ? null : (saved?.sentSr ?? null),
+  );
+  useEffect(() => {
+    if (draftKey) wizardMemory.set(draftKey, { step, entryId, draft, sentSr });
+  }, [draftKey, step, entryId, draft, sentSr]);
 
   function patch(fields: Partial<WizardDraft>): void {
     setDraft((prev) => ({ ...prev, ...fields }));

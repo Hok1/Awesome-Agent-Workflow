@@ -282,6 +282,61 @@ describe("openRealWorkspace：会话恢复装配", () => {
     ).toBe(false);
   });
 
+  it("恢复历史时接收用户提问并保留顺序，回放结束后不重复处理实时回显", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    fakeSessionControl.replayOnLoad = [
+      {
+        type: "user_message_chunk",
+        sessionId: "sess-latest",
+        text: "第一个问题",
+      },
+      {
+        type: "agent_message_chunk",
+        sessionId: "sess-latest",
+        text: "第一条",
+      },
+      {
+        type: "agent_message_chunk",
+        sessionId: "sess-latest",
+        text: "回复",
+      },
+      {
+        type: "user_message_chunk",
+        sessionId: "sess-latest",
+        text: "第二个问题",
+      },
+      {
+        type: "agent_message_chunk",
+        sessionId: "sess-latest",
+        text: "第二条回复",
+      },
+    ];
+    await openRealWorkspace(WORKSPACE);
+    expect(useSessionStore.getState().items.map((item) => item.kind)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(useSessionStore.getState().items[3]).toMatchObject({
+      isStreaming: false,
+    });
+    expect(
+      useSessionStore
+        .getState()
+        .items.map((item) => ("text" in item ? item.text : null)),
+    ).toEqual(["第一个问题", "第一条回复", "第二个问题", "第二条回复"]);
+    expect(useSessionStore.getState().sessions[0]?.title).toBe(
+      "会话 · 第一个问题",
+    );
+    fakeSessionControl.lastInstance?.emit({
+      type: "user_message_chunk",
+      sessionId: "sess-latest",
+      text: "实时回显",
+    });
+    expect(useSessionStore.getState().items).toHaveLength(4);
+  });
+
   it("非 Tauri 环境：不启动会话，store 保持空", async () => {
     delete (window as unknown as MutableWindow).__TAURI_INTERNALS__;
     await openRealWorkspace(WORKSPACE);
@@ -340,6 +395,36 @@ describe("openRealWorkspace：新建会话语义（forceNew）", () => {
 });
 
 describe("switchRealSession：左栏点击历史会话的切换", () => {
+  it("切换历史会话时恢复用户提问，失败和成功后都退出回放模式", async () => {
+    fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
+    await openRealWorkspace(WORKSPACE);
+    fakeSessionControl.loadShouldFail = true;
+    expect(await switchRealSession("sess-failed")).toBe(false);
+    fakeSessionControl.lastInstance?.emit({
+      type: "user_message_chunk",
+      sessionId: "sess-failed",
+      text: "失败后的回显",
+    });
+    expect(useSessionStore.getState().items).toHaveLength(0);
+    fakeSessionControl.loadShouldFail = false;
+    fakeSessionControl.replayOnLoad = [
+      { type: "user_message_chunk", sessionId: "sess-2", text: "旧会话提问" },
+      { type: "agent_message_chunk", sessionId: "sess-2", text: "旧会话回复" },
+      { type: "user_message_chunk", sessionId: "sess-2", text: "后续提问" },
+    ];
+    expect(await switchRealSession("sess-2")).toBe(true);
+    expect(useSessionStore.getState().items.map((item) => item.kind)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+    fakeSessionControl.lastInstance?.emit({
+      type: "user_message_chunk",
+      sessionId: "sess-2",
+      text: "实时回显",
+    });
+    expect(useSessionStore.getState().items).toHaveLength(3);
+  });
   it("轮次未确认结束时拒绝切换，保留当前消息与运行态", async () => {
     fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
     await openRealWorkspace(WORKSPACE);
@@ -489,7 +574,6 @@ describe("openRealWorkspace：审批默认模式分派（P0-4）", () => {
     expect(outcome).toEqual({ outcome: "selected", optionId: "allow" });
     expect(useApprovalStore.getState().pending).toHaveLength(0);
   });
-
 
   it("白名单落空（只有未知 kind 选项）：回退人工弹窗，绝不静默取消", async () => {
     useSettingsStore.getState().setApprovalMode("auto-allow");
