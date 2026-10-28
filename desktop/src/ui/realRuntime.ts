@@ -50,6 +50,23 @@ interface RealRuntime {
 /** 当前活跃的真实运行（模块级单例；至多一个真实会话）。 */
 let activeRuntime: RealRuntime | null = null;
 
+/** 回放期间接收用户消息；实时轮次仍由客户端落笔，避免 agent 回显重复。 */
+async function loadSessionWithHistoryReplay(
+  session: AcpSession,
+  sessionId: string,
+  workspacePath: string,
+): Promise<void> {
+  const store = useSessionStore.getState();
+  store.setHistoryReplaySession(sessionId);
+  try {
+    await session.loadSession(sessionId, workspacePath);
+    // 历史回放已结束，末尾的助手文本不应保持“生成中”。
+    store.sealStreamingItems();
+  } finally {
+    store.setHistoryReplaySession(null);
+  }
+}
+
 /** ISO 时间 → 列表标题用 HH:MM（本地时区）。 */
 function hhmmOf(iso: string): string {
   const time = Date.parse(iso);
@@ -265,12 +282,11 @@ export async function openRealWorkspace(
     // 源，chrys 的列表可能滞后（异常退出/被强杀后索引未刷新），拿它当
     // 白名单会把点开的会话偷换成「最近一个」。点名 load 失败回落新建
     // （带公告），绝不静默换一条；未点名才恢复「最近一个」（重启回上次）。
-    const fallbackLatest =
-      listed.length > 0 ? pickLatestSession(listed) : null;
+    const fallbackLatest = listed.length > 0 ? pickLatestSession(listed) : null;
     const targetId = preferredSessionId ?? fallbackLatest?.sessionId ?? null;
     if (!forceNew && targetId !== null) {
       try {
-        await session.loadSession(targetId, workspacePath);
+        await loadSessionWithHistoryReplay(session, targetId, workspacePath);
         restoredId = targetId;
         restoredHistoric = true;
         logger.info("已恢复历史会话", {
@@ -300,10 +316,12 @@ export async function openRealWorkspace(
     // 模型清单灌入（输入行切换器数据源）：attachSessionViews 在会话建立
     // 之前挂接（要接住 load 回放），那时 acp.models 还是 null——统一在
     // newSession / loadSession 落定后补灌。
-    useSessionStore.getState().setSessionModels(
-      session.models?.availableModels ?? [],
-      session.models?.currentModelId ?? null,
-    );
+    useSessionStore
+      .getState()
+      .setSessionModels(
+        session.models?.availableModels ?? [],
+        session.models?.currentModelId ?? null,
+      );
 
     // UI 消息历史：loadSession 已回放的视图不覆盖；视图为空（新建会话 /
     // 回放为空）时灌回本地快照兜底。随后把当前视图同步进快照。
@@ -407,11 +425,17 @@ export async function switchRealSession(sessionId: string): Promise<boolean> {
   const previousItems = store.items;
   store.clear();
   try {
-    await runtime.session.loadSession(sessionId, runtime.workspacePath);
-    useSessionStore.getState().setSessionModels(
-      runtime.session.models?.availableModels ?? [],
-      runtime.session.models?.currentModelId ?? null,
+    await loadSessionWithHistoryReplay(
+      runtime.session,
+      sessionId,
+      runtime.workspacePath,
     );
+    useSessionStore
+      .getState()
+      .setSessionModels(
+        runtime.session.models?.availableModels ?? [],
+        runtime.session.models?.currentModelId ?? null,
+      );
   } catch (error) {
     logger.warn("切换会话失败（保留当前会话视图）", {
       sessionId,

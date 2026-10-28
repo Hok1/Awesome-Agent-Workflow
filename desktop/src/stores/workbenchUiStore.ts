@@ -23,6 +23,7 @@
 import { create } from "zustand";
 
 import { createLogger } from "../core/logger.ts";
+import { pathKey } from "../core/panelPaths.ts";
 
 /** 树选中驱动的基底视图。 */
 export type ContentView = "project-overview" | "session";
@@ -106,6 +107,13 @@ interface WorkbenchUiState {
    * EntryWizard 直接开到对应入口的变量表单；null = 默认从入口选择起。
    */
   readonly aawWizardEntry: "sr" | "ar" | "dev" | null;
+  /** 一次绑定项目的斜杠入口请求；处理后保留标识，避免重挂向导丢草稿。 */
+  readonly aawWizardRequest: {
+    readonly id: number;
+    readonly project: string;
+    readonly entry: "sr" | "ar" | "dev";
+    readonly handled: boolean;
+  } | null;
   /** 会话顶部 AAW 流程时间线的收起态（布局偏好，持久化）。 */
   readonly isTimelineCollapsed: boolean;
   /** 关闭守卫确认弹窗（Rust CloseRequested 转交，agent 运行中时弹出）。 */
@@ -129,6 +137,7 @@ interface WorkbenchUiState {
   readonly toggleAaw: () => void;
   /** 打开 AAW 面板并把向导定位到指定入口（slash 命令 /sr /ar /dev 用）。 */
   readonly openAawWizard: (entry: "sr" | "ar" | "dev") => void;
+  readonly finishAawWizardRequest: (id: number) => void;
   readonly toggleTimeline: () => void;
   /** 功能页开关：再点同一页取消覆盖（回到树选中视图）。 */
   readonly toggleOverlay: (view: OverlayView) => void;
@@ -163,6 +172,8 @@ const logger = createLogger("ui");
 /** 会话子节点每项目的默认呈现条数，也是「加载更多」的步长。 */
 export const SESSION_LIST_PAGE_SIZE = 5;
 
+let aawWizardRequestId = 0;
+
 export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   treeView: "project-overview",
   contextPath: null,
@@ -175,6 +186,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   isAddPanelOpen: false,
   isAawOpen: false,
   aawWizardEntry: null,
+  aawWizardRequest: null,
   isCloseGuardOpen: false,
 
   setCloseGuardOpen: (open) => {
@@ -182,6 +194,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   },
 
   openProjectOverview: (path) => {
+    const request = get().aawWizardRequest;
     set({
       treeView: "project-overview",
       contextPath: path,
@@ -189,11 +202,14 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
       isAddPanelOpen: false,
       isAawOpen: false,
       aawWizardEntry: null,
+      aawWizardRequest:
+        request && pathKey(request.project) === pathKey(path) ? request : null,
     });
     logger.debug("内容区切换到项目总览", { path });
   },
 
   openSessionView: (path) => {
+    const request = get().aawWizardRequest;
     set({
       treeView: "session",
       contextPath: path,
@@ -201,18 +217,43 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
       isAddPanelOpen: false,
       isAawOpen: false,
       aawWizardEntry: null,
+      aawWizardRequest:
+        request && pathKey(request.project) === pathKey(path) ? request : null,
     });
     logger.debug("内容区切换到会话视图", { path });
   },
 
   restoreContextView: (view) => {
-    set({ treeView: view.treeView, contextPath: view.contextPath });
+    const request = get().aawWizardRequest;
+    set({
+      treeView: view.treeView,
+      contextPath: view.contextPath,
+      aawWizardRequest:
+        request &&
+        view.contextPath &&
+        pathKey(request.project) === pathKey(view.contextPath)
+          ? request
+          : null,
+    });
     logger.debug("内容区回滚到点击前的视图", view);
   },
 
   openAawWizard: (entry) => {
-    set({ isAawOpen: true, aawWizardEntry: entry });
+    const project = get().contextPath;
+    set({
+      isAawOpen: true,
+      aawWizardEntry: entry,
+      aawWizardRequest: project
+        ? { id: ++aawWizardRequestId, project, entry, handled: false }
+        : null,
+    });
     logger.debug("AAW 面板已开并定位向导入口", { entry });
+  },
+
+  finishAawWizardRequest: (id) => {
+    const request = get().aawWizardRequest;
+    if (request?.id === id && !request.handled)
+      set({ aawWizardRequest: { ...request, handled: true } });
   },
 
   toggleAaw: () => {
@@ -262,7 +303,12 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
     if (get().contextPath !== path) {
       return;
     }
-    set({ treeView: "project-overview", contextPath: null, isAawOpen: false });
+    set({
+      treeView: "project-overview",
+      contextPath: null,
+      isAawOpen: false,
+      aawWizardRequest: null,
+    });
     logger.debug("项目已移出列表，内容区回落空态", { path });
   },
 

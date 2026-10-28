@@ -39,6 +39,12 @@ import { basenameOf } from "../workspaces/workspaceText.ts";
 import { XIcon } from "../icons.tsx";
 import { ConnectionBadge } from "./ConnectionBadge.tsx";
 import { WindowControls } from "./WindowControls.tsx";
+import {
+  emptyPanel,
+  useRightPanelStore,
+} from "../../stores/rightPanelStore.ts";
+import { pathKey } from "../../core/panelPaths.ts";
+import { PanelButtons } from "../right-panel/RightPanel.tsx";
 
 /** 上下文条固定高度（px），对齐仿真的 44px 内容区顶栏。 */
 const CONTEXT_BAR_HEIGHT_PX = 44;
@@ -132,8 +138,15 @@ function SessionBar({ path }: { readonly path: string }) {
   const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
   const closeWorkspace = useWorkspaceStore((state) => state.closeWorkspace);
   const srStepLabel = useSrStepLabel();
-  const isAawOpen = useWorkbenchUiStore((state) => state.isAawOpen);
-  const toggleAaw = useWorkbenchUiStore((state) => state.toggleAaw);
+  const panel = useRightPanelStore(
+    (state) => state.projects[pathKey(path)] ?? emptyPanel,
+  );
+  const isAawOpen = panel.open && panel.active === "aaw";
+  const toggleAaw = (): void => {
+    const store = useRightPanelStore.getState();
+    if (isAawOpen) store.collapse(path);
+    else store.tool(path, "aaw");
+  };
   // 关闭会话的行内确认（✕ 误触即断开的防呆）
   const [confirmingClose, setConfirmingClose] = useState(false);
   const title =
@@ -156,37 +169,39 @@ function SessionBar({ path }: { readonly path: string }) {
       {/* AAW 面板开关（会话态常驻）：有工作流数据时标签就是「SR-xxx ·
           步骤 n」，没有就是「AAW」。一个开关，不并列两个——点开就地看
           进度，不再跳页；AAW 是增强，不该把人从对话里拽走 */}
-      <button
-        type="button"
-        aria-pressed={isAawOpen}
-        title={isAawOpen ? "收起 AAW 面板" : "展开 AAW 面板"}
-        onClick={toggleAaw}
-        className={`flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
-          isAawOpen
-            ? "border-info-line bg-info-bg text-info-ink"
-            : "border-line-strong text-ink-mute hover:bg-raised hover:text-ink"
-        }`}
-      >
-        {srStepLabel !== null ? (
-          /* git-branch：对齐仿真的工作流徽标图形 */
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden={true}
-            className="h-3 w-3"
-          >
-            <line x1="6" y1="3" x2="6" y2="15" />
-            <circle cx="18" cy="6" r="3" />
-            <circle cx="6" cy="18" r="3" />
-            <path d="M18 9a9 9 0 0 1-9 9" />
-          </svg>
-        ) : null}
-        {srStepLabel ?? "AAW"}
-      </button>
+      {srStepLabel !== null && (
+        <button
+          type="button"
+          aria-pressed={isAawOpen}
+          title={isAawOpen ? "收起 AAW 面板" : "展开 AAW 面板"}
+          onClick={toggleAaw}
+          className={`flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+            isAawOpen
+              ? "border-info-line bg-info-bg text-info-ink"
+              : "border-line-strong text-ink-mute hover:bg-raised hover:text-ink"
+          }`}
+        >
+          {srStepLabel !== null ? (
+            /* git-branch：对齐仿真的工作流徽标图形 */
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden={true}
+              className="h-3 w-3"
+            >
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+          ) : null}
+          {srStepLabel ?? "AAW"}
+        </button>
+      )}
       {confirmingClose ? (
         <CloseSessionConfirm
           onConfirm={() => {
@@ -382,6 +397,9 @@ export function ContextBar() {
           <OverviewBar path={contextPath} />
         ) : (
           <span aria-hidden={true} className="flex-1" />
+        )}
+        {overlay === null && contextPath !== null && (
+          <PanelButtons project={contextPath} />
         )}
         <WindowControls />
       </div>

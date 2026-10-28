@@ -29,8 +29,8 @@
     「这个项目没有会话」。
 - `workbenchUiStore.ts`：工作台界面状态 store。内容区视图（项目总览 /
   会话的基底视图 + 设置 / 诊断的功能页覆盖层）、左栏树的展开态覆盖值，
-  以及会话内 AAW 增强面板的开合（`isAawOpen` / `toggleAaw`，随视图与
-  上下文切换自动收回）；纯 UI 状态，不持业务数据。
+  纯 UI 状态，不持业务数据；旧 `isAawOpen` / `toggleAaw` 仅保留兼容，工作台右栏由独立 store 持有。
+- `rightPanelStore.ts`：按归一化项目路径隔离右栏开合、宽度和内容标签，持久化引用；不保存文件正文、ACP 连接或 AAW 草稿。
 - `aawStatusStore.ts`：AAW 工作流状态 store。`aaw status / next --peek`
   的只读视图状态（数据源经 `bindLoader` 注入，解析走 `src/aaw` 领域
   解析器）；提供 `handleSessionEvent` 供会话层接入事件流做节流自动

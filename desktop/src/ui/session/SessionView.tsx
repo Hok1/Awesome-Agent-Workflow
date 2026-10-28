@@ -1,5 +1,5 @@
 /**
- * 会话视图：上下文条 + 中央聊天流 + 悬浮输入区（+ 可选的 AAW 侧栏）。
+ * 会话视图：上下文条 + 中央聊天流 + 悬浮输入区（项目右栏由外层工作台持有）。
  *
  * - 顶部：上下文条（ContextBar：会话标题 / 项目名 / 连接徽标 / SR 快捷
  *   / 关闭会话，模型与审批模式元信息移至输入区下行）；
@@ -8,9 +8,6 @@
  *   前插不把视口顶飞）；**跟随状态机**：贴底时新内容自动滚入，用户上翻
  *   即解除跟随并浮出「回到底部」按钮（带未读新消息计数），回底即恢复
  *   跟随——长会话回看与追新互不打架；
- * - 右侧：AAW 增强面板（workbenchUiStore.isAawOpen）——默认收起，由上下文
- *   条的 SR 按钮或会话头「AAW」入口拉起；AAW 是增强，不是会话的前置条件，
- *   所以它按需出现、看完收起，对话始终占满主区；
  * - 底部：ChatInput（Enter 发送，运行中变圆形「停止」钮；↑/↓ 历史、
  *   @ 文件提及、预填通道见其文件头）；
  * - 空会话：给出常用入口 chips（点击预填输入框，过目后自己发送）；
@@ -18,7 +15,14 @@
  *
  * 组件只订阅 sessionStore 的选择器；数据折叠全部在 store 层完成。
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   useSessionStore,
   type SessionItem,
@@ -51,9 +55,7 @@ import { SessionDock } from "./SessionDock.tsx";
 import { TurnStatusRow } from "./InputStatusBar.tsx";
 import { Spinner } from "../controls.tsx";
 import { openRealWorkspace } from "../realRuntime.ts";
-import { SessionAawPanel } from "../workbench/SessionAawPanel.tsx";
 import { AawTimeline } from "../workbench/timeline/AawTimeline.tsx";
-import type { WizardSubmitResult } from "../workbench/wizardSubmit.ts";
 import { prefillComposer } from "./composerPrefill.ts";
 import { SystemNotice } from "./SystemNotice.tsx";
 import { ThoughtBlock } from "./ThoughtBlock.tsx";
@@ -67,16 +69,13 @@ import {
   WINDOW_CHUNK,
 } from "./sessionWindow.ts";
 import { UserMessage } from "./UserMessage.tsx";
-
-export interface SessionViewProps {
-  /** AAW 面板内「启动」分段的首条 prompt 发送通路（组装层注入）。 */
-  readonly onSubmitAawPrompt?: (
-    prompt: string,
-  ) => Promise<WizardSubmitResult> | WizardSubmitResult;
-}
-
-/** 无发送通路时向导提交的兜底提示（孤立渲染场景，如实失败不静默）。 */
-const NO_SUBMIT_PATH = "当前会话没有可用的发送通道，请重新打开项目后重试";
+import { SessionStatusOverlay } from "./SessionStatusOverlay.tsx";
+import { ConversationNavigator } from "./ConversationNavigator.tsx";
+import {
+  activeQueryAt,
+  createQueryNavigationBuilder,
+  type QueryNavigationItem,
+} from "./conversationNavigation.ts";
 
 function SessionItemView({ item }: { readonly item: SessionItem }) {
   switch (item.kind) {
@@ -173,7 +172,7 @@ function EmptyPrompts({ currentSr }: { readonly currentSr: string | null }) {
   );
 }
 
-export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
+export function SessionView() {
   const items = useSessionStore((state) => state.items);
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
   const sendPrompt = useSessionStore((state) => state.sendPrompt);
@@ -192,8 +191,6 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   // 项目已关闭（activePath 落空）时的空态改为「重新打开项目」入口
   const openWorkspace = useWorkspaceStore((state) => state.openWorkspace);
   const contextPath = useWorkbenchUiStore((state) => state.contextPath);
-  const isAawOpen = useWorkbenchUiStore((state) => state.isAawOpen);
-  const toggleAaw = useWorkbenchUiStore((state) => state.toggleAaw);
   const currentSr = useAawStatusStore((state) => state.currentSr);
   // 内容宽度档：消息流 / 输入卡 / 停靠坞共用（对齐），就地三档循环
   const chatWidth = useSettingsStore((state) => state.chatWidth);
@@ -207,6 +204,26 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
 
   // ---- 消息流窗口化 + 跟随状态机 ----
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const messageColumnRef = useRef<HTMLDivElement | null>(null);
+  const navigationPausedRef = useRef(false);
+  const jumpTargetRef = useRef<string | null>(null);
+  const [jumpRevision, setJumpRevision] = useState(0);
+  const [activeQueryId, setActiveQueryId] = useState<string | null>(null);
+  const footerRef = useRef<HTMLDivElement | null>(null);
+  // 消息流的原生滚动条占位也同步给底部，标准/宽/全宽均沿同一边界居中。
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    const footer = footerRef.current;
+    if (!scroll || !footer) return;
+    const align = (): void => {
+      footer.style.paddingRight = `${scroll.offsetWidth - scroll.clientWidth}px`;
+    };
+    align();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(align);
+    observer?.observe(scroll);
+    return () => observer?.disconnect();
+  }, []);
   const [visibleCount, setVisibleCount] = useState(WINDOW_CHUNK);
   const [isFollowing, setIsFollowing] = useState(true);
   const [unseenCount, setUnseenCount] = useState(0);
@@ -224,6 +241,86 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
     () => groupTurnWork(visibleItems),
     [visibleItems],
   );
+
+  // 项目或会话变化时创建新目录，避免同名或复用条目引用跨会话串缓存。
+  const queryBuilder = useMemo(
+    () => createQueryNavigationBuilder(),
+    // 缓存必须随会话范围失效，依赖用于隔离而非工厂计算。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeSessionId, contextPath],
+  );
+  const queries = useMemo(
+    () => queryBuilder.build(items, isAgentRunning),
+    [queryBuilder, items, isAgentRunning],
+  );
+  // 只让内部内容列留位，主滚动视口始终延伸到悬浮卡右边。
+  const columnInsetClass = `pr-[var(--session-card-inset,0px)] ${queries.length >= 2 ? "@min-[864px]/conversation:pl-7" : ""}`;
+  const syncActiveQuery = useCallback((): void => {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    const positions = Array.from(
+      scroll.querySelectorAll<HTMLElement>("[data-query-id]"),
+    ).map((node) => ({ id: node.dataset.queryId ?? "", top: node.offsetTop }));
+    setActiveQueryId(
+      activeQueryAt(
+        queries,
+        positions,
+        scroll.scrollTop,
+        Math.max(0, items.length - visibleCount),
+      ),
+    );
+  }, [queries, items.length, visibleCount]);
+  const scope = JSON.stringify([activeSessionId, contextPath]);
+  const [viewScope, setViewScope] = useState(scope);
+  if (viewScope !== scope) {
+    setViewScope(scope);
+    setVisibleCount(WINDOW_CHUNK);
+    setIsFollowing(true);
+    setUnseenCount(0);
+    setOpenGroups(new Set());
+  }
+  useLayoutEffect(() => {
+    navigationPausedRef.current = false;
+    prependAnchorRef.current = null;
+    lastLengthRef.current = 0;
+    jumpTargetRef.current = null;
+  }, [scope]);
+  useLayoutEffect(() => {
+    syncActiveQuery();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(syncActiveQuery);
+    if (messageColumnRef.current) observer?.observe(messageColumnRef.current);
+    return () => observer?.disconnect();
+  }, [syncActiveQuery, visibleUnits]);
+  const jumpToQuery = (query: QueryNavigationItem): void => {
+    navigationPausedRef.current = true;
+    prependAnchorRef.current = null;
+    setIsFollowing(false);
+    setVisibleCount((count) => Math.max(count, items.length - query.itemIndex));
+    jumpTargetRef.current = query.id;
+    setJumpRevision((revision) => revision + 1);
+  };
+  useLayoutEffect(() => {
+    const jumpTarget = jumpTargetRef.current;
+    if (!jumpTarget) return;
+    const scroll = scrollRef.current;
+    const node = Array.from(
+      scroll?.querySelectorAll<HTMLElement>("[data-query-id]") ?? [],
+    ).find((element) => element.dataset.queryId === jumpTarget);
+    if (scroll && node) {
+      const top = Math.max(0, node.offsetTop - 20);
+      const reduced = window.matchMedia?.(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      if (typeof scroll.scrollTo === "function")
+        scroll.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
+      else scroll.scrollTop = top;
+      setActiveQueryId(jumpTarget);
+    }
+    jumpTargetRef.current = null;
+  }, [jumpRevision, visibleCount]);
 
   // ---- Esc 全局停止：agent 运行中按 Esc 直接取消当前轮 ----
   // 让位规则（不误停）：IME 组词中；mention 面板 / 审批弹窗 / 提问面板 /
@@ -259,7 +356,7 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
     };
   }, [isAgentRunning, requestCancel]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = lastLengthRef.current;
     lastLengthRef.current = items.length;
     if (items.length < previous) {
@@ -272,6 +369,10 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
     }
     if (items.length > previous && !isFollowing) {
       setUnseenCount((count) => count + (items.length - previous));
+      // 阅读旧消息时固定窗口起点，新增条目不能把正在看的历史从窗口头部挤掉。
+      setVisibleCount((count) =>
+        Math.min(items.length, count + items.length - previous),
+      );
     }
     if (isFollowing) {
       const element = scrollRef.current;
@@ -297,6 +398,9 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
     if (element === null) {
       return;
     }
+    syncActiveQuery();
+    // 导航动画和后续流式输出不解除阅读锁；只有用户主动滚动或回到底部才恢复。
+    if (navigationPausedRef.current) return;
     const nearBottom = isNearBottom(
       element.scrollTop,
       element.scrollHeight,
@@ -320,6 +424,8 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
   };
 
   const backToBottom = (): void => {
+    navigationPausedRef.current = false;
+    jumpTargetRef.current = null;
     const element = scrollRef.current;
     if (element !== null) {
       if (typeof element.scrollTo === "function") {
@@ -380,22 +486,107 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
         {/* 消息流：窗口化渲染（最近 WINDOW_CHUNK 条，贴顶补载）+ 跟随
             状态机（贴底自动滚入；上翻解除并给回底按钮）；relative 承载
             回底按钮 */}
-        <div className="relative min-h-0 flex-1">
-          {/* 宽度切换：右上角图标按钮三档循环（标准 / 宽 / 全宽），档位持久化 */}
+        <SessionStatusOverlay
+          project={contextPath}
+          enabled={!!activeSessionId && items.length > 0 && !isConnecting}
+          footer={
+            <div ref={footerRef} className="shrink-0">
+              <div className={columnInsetClass}>
+                {turnError !== null && !isAgentRunning ? (
+                  <div className="px-5">
+                    <div
+                      role="alert"
+                      className={`mx-auto mb-2 flex w-full flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-danger-ink ${widthClass}`}
+                    >
+                      <span className="font-medium">
+                        {turnError.category === "auth"
+                          ? "模型或密钥配置异常"
+                          : turnError.category === "timeout"
+                            ? "请求超时"
+                            : "请求失败"}
+                      </span>
+                      <span
+                        className="min-w-0 flex-1 truncate text-xs text-ink-mute"
+                        title={turnError.message}
+                      >
+                        {turnError.message}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={retryLastPrompt}
+                        className={
+                          "rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-ink hover:border-ink-faint hover:bg-raised"
+                        }
+                      >
+                        重试
+                      </button>
+                      {turnError.category === "auth" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            useWorkbenchUiStore
+                              .getState()
+                              .toggleOverlay("settings");
+                          }}
+                          className="rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-ink hover:border-ink-faint hover:bg-raised"
+                        >
+                          打开设置
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-label="关闭错误提示"
+                        onClick={clearTurnError}
+                        className="rounded p-1.5 text-ink-faint hover:text-ink"
+                      >
+                        <XIcon className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {/* 会话停靠坞：问答 > 队列——队列永远紧挨输入框；任务步骤在
+            消息流内（PlanCard），不占停靠坞 */}
+                <SessionDock>
+                  {/* 结构化问答：不弹窗、不遮会话——回答所需上下文就在上方 */}
+                  <QuestionDock />
+                  {/* 排队消息：运行中「稍后发送」，取消/出错后挂起等放行 */}
+                  <QueueDock />
+                </SessionDock>
+                <ChatInput
+                  isAgentRunning={isAgentRunning}
+                  disabled={isConnecting}
+                  onSend={sendPrompt}
+                  onEnqueue={enqueuePrompt}
+                  onCancel={requestCancel}
+                />
+              </div>
+            </div>
+          }
+        >
+          <ConversationNavigator
+            key={`${contextPath}:${activeSessionId}`}
+            items={queries}
+            activeId={activeQueryId}
+            onJump={jumpToQuery}
+          />
+          {/* 宽度切换：左上角图标按钮三档循环（标准 / 宽 / 全宽），档位持久化 */}
           <button
             type="button"
             aria-label={`内容宽度：${
-              chatWidthOptions.find((option) => option.value === chatWidth)?.label ?? "标准"
+              chatWidthOptions.find((option) => option.value === chatWidth)
+                ?.label ?? "标准"
             }`}
             title={`内容宽度：${
-              chatWidthOptions.find((option) => option.value === chatWidth)?.label ?? "标准"
+              chatWidthOptions.find((option) => option.value === chatWidth)
+                ?.label ?? "标准"
             }（点击切换为${
-              chatWidthOptions.find((option) => option.value === nextWidth)?.label ?? "标准"
+              chatWidthOptions.find((option) => option.value === nextWidth)
+                ?.label ?? "标准"
             }）`}
             onClick={() => {
               setChatWidth(nextWidth);
             }}
-            className="absolute right-3 top-2 z-10 rounded-md border border-line bg-surface/80 p-1 text-ink-faint backdrop-blur transition-colors hover:border-ink-faint hover:text-ink-soft"
+            className="absolute left-3 top-2 z-10 rounded-md border border-line bg-surface/80 p-1 text-ink-faint backdrop-blur transition-colors hover:border-ink-faint hover:text-ink-soft"
           >
             {chatWidth === "wide" ? (
               <WidthWideIcon className="h-3.5 w-3.5" />
@@ -408,87 +599,129 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
           <div
             ref={scrollRef}
             onScroll={handleScroll}
+            onWheelCapture={() => {
+              navigationPausedRef.current = false;
+            }}
+            onTouchMoveCapture={() => {
+              navigationPausedRef.current = false;
+            }}
+            onKeyDownCapture={(event) => {
+              if (
+                [
+                  "ArrowUp",
+                  "ArrowDown",
+                  "PageUp",
+                  "PageDown",
+                  "Home",
+                  "End",
+                  " ",
+                ].includes(event.key)
+              )
+                navigationPausedRef.current = false;
+            }}
+            onPointerDownCapture={(event) => {
+              const scroll = event.currentTarget;
+              if (
+                event.clientX >=
+                scroll.getBoundingClientRect().right -
+                  (scroll.offsetWidth - scroll.clientWidth)
+              )
+                navigationPausedRef.current = false;
+            }}
+            tabIndex={0}
             role="log"
             aria-live="polite"
             aria-label="消息流"
-            className="h-full overflow-x-hidden overflow-y-auto px-6 py-5"
+            className="conversation-scroll relative h-full overflow-x-hidden overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]"
           >
-            <ScopedErrorBoundary
-              scope="消息流"
-              resetKey={activeSessionId ?? "none"}
+            <div
+              ref={messageColumnRef}
+              className={`min-h-full [overflow-anchor:none] ${columnInsetClass}`}
             >
-              {items.length === 0 && isConnecting ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-mute">
-                  <Spinner className="h-6 w-6 text-sky-400" />
-                  <span>正在连接 agent 并恢复会话上下文…</span>
-                  <span className="text-xs text-ink-ghost">
-                    首次启动与恢复通常需要数秒，请稍候
-                  </span>
-                </div>
-              ) : items.length === 0 &&
-                activePath === null &&
-                contextPath !== null ? (
-                /* 项目已关闭（无 activePath）：给「重新打开项目」的可行出口，
+              <ScopedErrorBoundary
+                scope="消息流"
+                resetKey={activeSessionId ?? "none"}
+              >
+                {items.length === 0 && isConnecting ? (
+                  <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-mute">
+                    <Spinner className="h-6 w-6 text-sky-400" />
+                    <span>正在连接 agent 并恢复会话上下文…</span>
+                    <span className="text-xs text-ink-ghost">
+                      首次启动与恢复通常需要数秒，请稍候
+                    </span>
+                  </div>
+                ) : items.length === 0 &&
+                  activePath === null &&
+                  contextPath !== null ? (
+                  /* 项目已关闭（无 activePath）：给「重新打开项目」的可行出口，
                    替代指路不通的「连接 agent」文案 */
-                <div className="flex flex-col items-center gap-3 py-16 text-center">
-                  <p className="text-sm text-ink-mute">项目已关闭</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      openWorkspace(contextPath);
-                    }}
-                    className={`${btnPrimary} px-3 py-1.5 text-sm`}
-                  >
-                    重新打开项目
-                  </button>
-                  <p className="text-xs text-ink-ghost">
-                    将重新连接 agent 并恢复该项目的会话。
-                  </p>
-                </div>
-              ) : items.length === 0 ? (
-                pendingCount > 0 ? (
-                  <p className="py-16 text-center text-sm leading-relaxed text-ink-faint">
-                    会话暂无消息，当前有 {pendingCount}{" "}
-                    项审批/提问待处理——请回应弹窗或停靠面板中的提问。
-                  </p>
+                  <div className="flex flex-col items-center gap-3 py-16 text-center">
+                    <p className="text-sm text-ink-mute">项目已关闭</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openWorkspace(contextPath);
+                      }}
+                      className={`${btnPrimary} px-3 py-1.5 text-sm`}
+                    >
+                      重新打开项目
+                    </button>
+                    <p className="text-xs text-ink-ghost">
+                      将重新连接 agent 并恢复该项目的会话。
+                    </p>
+                  </div>
+                ) : items.length === 0 ? (
+                  pendingCount > 0 ? (
+                    <p className="py-16 text-center text-sm leading-relaxed text-ink-faint">
+                      会话暂无消息，当前有 {pendingCount}{" "}
+                      项审批/提问待处理——请回应弹窗或停靠面板中的提问。
+                    </p>
+                  ) : (
+                    <EmptyPrompts currentSr={currentSr} />
+                  )
                 ) : (
-                  <EmptyPrompts currentSr={currentSr} />
-                )
-              ) : (
-                <ol className={`mx-auto flex list-none flex-col gap-5 p-0 ${widthClass}`}>
-                  {visibleUnits.map((unit) =>
-                    unit.kind === "item" ? (
-                      <li key={unit.id}>
-                        <SessionItemView item={unit.item} />
-                      </li>
-                    ) : (
-                      <li key={unit.id}>
-                        <WorkGroupCard
-                          unit={unit}
-                          expanded={openGroups.has(unit.id)}
-                          onToggle={() => {
-                            setOpenGroups((current) => {
-                              const next = new Set(current);
-                              if (next.has(unit.id)) {
-                                next.delete(unit.id);
-                              } else {
-                                next.add(unit.id);
-                              }
-                              return next;
-                            });
-                          }}
-                          renderItem={(item) => (
-                            <SessionItemView item={item} />
-                          )}
-                        />
-                      </li>
-                    ),
-                  )}
-                  {/* 轮次相位行长在消息流末尾：思考中 / 工具运行中 n / 生成中 */}
-                  <TurnStatusRow />
-                </ol>
-              )}
-            </ScopedErrorBoundary>
+                  <ol
+                    className={`mx-auto flex list-none flex-col gap-5 p-0 ${widthClass}`}
+                  >
+                    {visibleUnits.map((unit) =>
+                      unit.kind === "item" ? (
+                        <li
+                          key={unit.id}
+                          data-query-id={
+                            unit.item.kind === "user" ? unit.id : undefined
+                          }
+                        >
+                          <SessionItemView item={unit.item} />
+                        </li>
+                      ) : (
+                        <li key={unit.id}>
+                          <WorkGroupCard
+                            unit={unit}
+                            expanded={openGroups.has(unit.id)}
+                            onToggle={() => {
+                              setOpenGroups((current) => {
+                                const next = new Set(current);
+                                if (next.has(unit.id)) {
+                                  next.delete(unit.id);
+                                } else {
+                                  next.add(unit.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            renderItem={(item) => (
+                              <SessionItemView item={item} />
+                            )}
+                          />
+                        </li>
+                      ),
+                    )}
+                    {/* 轮次相位行长在消息流末尾：思考中 / 工具运行中 n / 生成中 */}
+                    <TurnStatusRow />
+                  </ol>
+                )}
+              </ScopedErrorBoundary>
+            </div>
           </div>
           {!isFollowing && items.length > 0 ? (
             <button
@@ -502,85 +735,8 @@ export function SessionView({ onSubmitAawPrompt }: SessionViewProps = {}) {
               {unseenCount > 0 ? `（${unseenCount} 条新消息）` : ""}
             </button>
           ) : null}
-        </div>
-        {turnError !== null && !isAgentRunning ? (
-          <div
-            role="alert"
-            className={`mx-auto mb-2 flex w-full flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-danger-ink ${widthClass}`}
-          >
-            <span className="font-medium">
-              {turnError.category === "auth"
-                ? "模型或密钥配置异常"
-                : turnError.category === "timeout"
-                  ? "请求超时"
-                  : "请求失败"}
-            </span>
-            <span
-              className="min-w-0 flex-1 truncate text-xs text-ink-mute"
-              title={turnError.message}
-            >
-              {turnError.message}
-            </span>
-            <button
-              type="button"
-              onClick={retryLastPrompt}
-              className={
-                "rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-ink hover:border-ink-faint hover:bg-raised"
-              }
-            >
-              重试
-            </button>
-            {turnError.category === "auth" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  useWorkbenchUiStore.getState().toggleOverlay("settings");
-                }}
-                className="rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-ink hover:border-ink-faint hover:bg-raised"
-              >
-                打开设置
-              </button>
-            ) : null}
-            <button
-              type="button"
-              aria-label="关闭错误提示"
-              onClick={clearTurnError}
-              className="rounded p-1.5 text-ink-faint hover:text-ink"
-            >
-              <XIcon className="h-3 w-3" />
-            </button>
-          </div>
-        ) : null}
-        {/* 会话停靠坞：问答 > 队列——队列永远紧挨输入框；任务步骤在
-            消息流内（PlanCard），不占停靠坞 */}
-        <SessionDock>
-          {/* 结构化问答：不弹窗、不遮会话——回答所需上下文就在上方 */}
-          <QuestionDock />
-          {/* 排队消息：运行中「稍后发送」，取消/出错后挂起等放行 */}
-          <QueueDock />
-        </SessionDock>
-        <ChatInput
-          isAgentRunning={isAgentRunning}
-          disabled={isConnecting}
-          onSend={sendPrompt}
-          onEnqueue={enqueuePrompt}
-          onCancel={requestCancel}
-        />
+        </SessionStatusOverlay>
       </section>
-      {/* AAW 增强面板：默认收起，按需展开；展开时对话仍占主区。
-          未注入发送通路时（孤立渲染 / 测试）给一个如实失败的兜底，
-          不让开关变成没反应的死按钮 */}
-      {isAawOpen ? (
-        <ScopedErrorBoundary scope="AAW 面板" resetKey={contextPath ?? "none"}>
-          <SessionAawPanel
-            onSubmitAawPrompt={
-              onSubmitAawPrompt ??
-              (() => ({ ok: false, reason: NO_SUBMIT_PATH }))
-            }
-            onClose={toggleAaw}
-          />
-        </ScopedErrorBoundary>
-      ) : null}
     </div>
   );
 }

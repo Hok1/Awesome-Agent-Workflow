@@ -55,6 +55,68 @@ async function walkToReview(): Promise<void> {
 }
 
 describe("EntryWizard", () => {
+  it("斜杠入口优先于项目旧入口和步骤，且保留草稿字段", async () => {
+    const draftKey = "test-project-initial-entry-draft";
+    const first = render(
+      <EntryWizard
+        draftKey={draftKey}
+        initialEntry="sr"
+        onSubmitPrompt={() => undefined}
+      />,
+    );
+    await user.type(screen.getByLabelText("SR 编号"), "SR-009");
+    await user.type(
+      screen.getByLabelText("需求原文（保持原文，不总结不改写）"),
+      "保留的原始需求",
+    );
+    first.unmount();
+
+    render(
+      <EntryWizard
+        draftKey={draftKey}
+        initialEntry="dev"
+        onSubmitPrompt={() => undefined}
+      />,
+    );
+    expect(screen.getByText("dev 个人轻量")).toBeInTheDocument();
+    expect(screen.getByLabelText("一句话需求")).toBeInTheDocument();
+    expect(screen.getByLabelText("SR 编号")).toHaveValue("SR-009");
+    await user.click(screen.getByRole("button", { name: "更换" }));
+    await user.click(screen.getByLabelText(/SR 严谨流程/));
+    await user.click(screen.getByRole("button", { name: "下一步：填写变量" }));
+    expect(
+      screen.getByLabelText("需求原文（保持原文，不总结不改写）"),
+    ).toHaveValue("保留的原始需求");
+  });
+
+  it("显式斜杠入口不被同项目已发起摘要遮住", async () => {
+    const draftKey = "test-project-initial-entry-sent";
+    const first = render(
+      <EntryWizard
+        draftKey={draftKey}
+        initialEntry="dev"
+        onSubmitPrompt={() => true}
+      />,
+    );
+    await user.type(screen.getByLabelText("SR 编号"), "SR-009");
+    await user.type(screen.getByLabelText("一句话需求"), "完成一个小功能");
+    await user.click(screen.getByRole("button", { name: "下一步：确认发送" }));
+    await user.click(screen.getByRole("button", { name: "交给会话发送" }));
+    expect(screen.getByText(/已发起/)).toBeInTheDocument();
+    first.unmount();
+
+    render(
+      <EntryWizard
+        draftKey={draftKey}
+        initialEntry="ar"
+        onSubmitPrompt={() => undefined}
+      />,
+    );
+    expect(screen.queryByText(/已发起/)).not.toBeInTheDocument();
+    expect(screen.getByText("AR 从 AR 切入")).toBeInTheDocument();
+    expect(screen.getByLabelText("AR 编号")).toBeInTheDocument();
+  });
+
   it("第一步渲染三入口与中文场景说明", () => {
     setup();
     expect(screen.getByText("SR 严谨流程")).toBeInTheDocument();

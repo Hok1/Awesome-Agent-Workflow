@@ -33,6 +33,8 @@ export type { AawStatusLoader };
 const logger = createLogger("aaw");
 
 interface AawStatusStoreState {
+  /** 当前快照绑定项目；展示层据此排除切项目过渡帧里的旧数据。 */
+  workspacePath: string | null;
   /** 注入的数据源；null 时面板呈「未连接」空态。 */
   loader: AawStatusLoader | null;
   /** 项目内全部 SR 编号（status --json）。 */
@@ -134,6 +136,7 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
   }
 
   return {
+    workspacePath: null,
     loader: null,
     srs: [],
     currentSr: null,
@@ -151,6 +154,7 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
       boundWorkspace = workspacePath;
       set({
         loader,
+        workspacePath,
         isLoading: false,
         lastError: null,
         ...(changedProject
@@ -315,6 +319,7 @@ export const useAawStatusStore = create<AawStatusStoreState>((set, get) => {
       boundWorkspace = null;
       set({
         loader: null,
+        workspacePath: null,
         srs: [],
         currentSr: null,
         status: null,

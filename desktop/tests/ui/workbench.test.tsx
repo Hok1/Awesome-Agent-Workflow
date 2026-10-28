@@ -29,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { open as mockOpen } from "@tauri-apps/plugin-dialog";
 
 import App from "../../src/App";
+import { useRightPanelStore } from "../../src/stores/rightPanelStore.ts";
 import { useApprovalStore } from "../../src/stores/approvalStore.ts";
 import { useSessionStore } from "../../src/stores/sessionStore.ts";
 import { useWorkspaceStore } from "../../src/stores/workspaceStore.ts";
@@ -71,6 +72,7 @@ const NAME_B = "other-project";
 
 function resetAll(): void {
   window.localStorage.clear();
+  useRightPanelStore.setState({ projects: {} });
   // 串行队列是模块级状态：上个用例遗留的挂起编排不拖累下一个
   resetSessionOpenQueueForTests();
   vi.mocked(openRealWorkspace).mockReset();
@@ -521,7 +523,7 @@ describe("项目树 → 新会话（普通会话）", () => {
     expect(useWorkspaceStore.getState().activePath).toBe(PATH);
     expect(useWorkbenchUiStore.getState().contextPath).toBe(PATH);
     // 向导不是入口：它只是会话内 AAW 面板里的一个可选分段
-    expect(screen.queryByLabelText("入口启动向导")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("入口启动向导")).not.toBeVisible();
   });
 
   it("没有历史会话的项目也可以展开并新建（空项目在树上不是死路）", async () => {
@@ -570,6 +572,7 @@ describe("会话内 AAW 面板", () => {
     seedProjectWithSessions();
     useWorkbenchUiStore.setState({ treeView: "session", contextPath: PATH });
     useWorkspaceStore.setState({ activePath: PATH, selectedPath: PATH });
+    useSessionStore.setState({ activeSessionId: "sess-1" });
     useSessionStore.getState().bindSession({
       prompt: () => Promise.resolve({ stopReason: "end_turn" as const }),
       cancel: () => {},
@@ -581,13 +584,13 @@ describe("会话内 AAW 面板", () => {
     render(<App />);
 
     expect(screen.queryByLabelText("AAW 面板")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "AAW" }));
+    await userEvent.click(screen.getByRole("button", { name: "打开AAW面板" }));
     expect(screen.getByLabelText("AAW 面板")).toBeInTheDocument();
     // 对话仍在：面板是右侧并列栏，不是替换
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "收起 AAW 面板" }),
+      screen.getByRole("button", { name: "收起右侧工具栏" }),
     );
     expect(screen.queryByLabelText("AAW 面板")).not.toBeInTheDocument();
   });
@@ -605,7 +608,7 @@ describe("会话内 AAW 面板", () => {
     });
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: "AAW" }));
+    await userEvent.click(screen.getByRole("button", { name: "打开AAW面板" }));
     await userEvent.click(screen.getByRole("tab", { name: "启动" }));
     await userEvent.click(screen.getByLabelText(/dev 个人轻量/));
     await userEvent.click(
@@ -621,7 +624,7 @@ describe("会话内 AAW 面板", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "交给会话发送" }));
 
-    expect(promptCalls).toBe(1);
+    await waitFor(() => expect(promptCalls).toBe(1));
     // 已在会话视图：不跳页，只是把首条 prompt 送进对话
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
   });

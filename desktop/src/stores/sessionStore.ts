@@ -15,8 +15,8 @@
  * - tool_call / tool_call_update 按 toolCallId 合并为一张卡片，
  *   update 缺省的字段沿用 tool_call 落笔时的值（title 记忆）；
  * - chrys_error / chrys_warning 落为系统提示条目；
- * - user_message_chunk 忽略：chrys 0.22.x 不回显用户消息（服务端无发送
- *   点），用户消息由 sendPrompt 落笔，避免双写。
+ * - 实时 user_message_chunk 忽略，用户消息由 sendPrompt 落笔避免双写；
+ *   session/load 历史回放期间只接收目标会话的用户消息。
  */
 import { create } from "zustand";
 import { createLogger } from "../core/logger.ts";
@@ -104,6 +104,8 @@ export interface PlanItem {
   readonly kind: "plan";
   readonly id: string;
   readonly entries: readonly PlanEntry[];
+  /** ACP 原始会话身份；老快照缺失时仍保留历史卡，但不用于当前会话摘要。 */
+  readonly sourceSessionId?: string;
 }
 
 export type SessionItem =
@@ -356,6 +358,8 @@ interface SessionStoreState {
   readonly bindSession: (binding: SessionBinding | null) => void;
   /** 事件流入口：消费协议层类型化事件。 */
   readonly handleEvent: (event: AcpSessionEvent) => void;
+  /** 指定 session/load 回放目标；回放结束或失败时传 null。 */
+  readonly setHistoryReplaySession: (sessionId: string | null) => void;
   /**
    * 封口流式条目（不动轮次状态）：agent 抛出结构化提问 / 审批请求时，
    * 生成已停、在等用户——消息的「生成中…」必须落定，否则等回答期间
@@ -686,7 +690,14 @@ function sanitizeRestoredItem(raw: unknown): SessionItem | null {
       if (entries.length === 0) {
         return null;
       }
-      return { kind: "plan", id, entries };
+      return {
+        kind: "plan",
+        id,
+        entries,
+        ...(typeof record["sourceSessionId"] === "string"
+          ? { sourceSessionId: record["sourceSessionId"] }
+          : {}),
+      };
     }
     case "system":
       // 历史版本的快照曾把即时反馈（错误/警告/取消）一并存入——
@@ -755,6 +766,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   // 流式条目的落笔位置：非响应式内部状态，仅归约逻辑使用
   let openAssistantId: string | null = null;
   let openThoughtId: string | null = null;
+  let historyReplaySessionId: string | null = null;
+  let openReplayUser: { messageId: string; itemId: string } | null = null;
   // 当前的下行通道绑定
   let activeBinding: SessionBinding | null = null;
   // 旧 Promise 只能收尾它所属的轮次；清空、换绑、恢复均使其失效。
@@ -816,11 +829,12 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
   ): SessionItem[] => {
     openAssistantId = null;
     openThoughtId = null;
+    openReplayUser = null;
     const endedAt = Date.now();
     return items.map((item) =>
-      item.kind === "thought"
+      item.kind === "thought" && (item.isStreaming || item.endedAt === null)
         ? { ...item, isStreaming: false, endedAt: item.endedAt ?? endedAt }
-        : item.kind === "assistant"
+        : item.kind === "assistant" && item.isStreaming
           ? { ...item, isStreaming: false }
           : item,
     );
@@ -952,6 +966,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
 
   /** 落笔用户消息并标记轮次开始（轮次生命周期的真实领域入口）。 */
   const beginTurn = (text: string): void => {
+    historyReplaySessionId = null;
     turnGeneration += 1;
     turnStartLength = get().items.length;
     const closed = sealedItems();
@@ -1273,7 +1288,15 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
       });
     },
 
+    setHistoryReplaySession: (sessionId) => {
+      historyReplaySessionId = sessionId;
+      openReplayUser = null;
+    },
+
     handleEvent: (event) => {
+      if (event.type !== "user_message_chunk") {
+        openReplayUser = null;
+      }
       if (
         event.type === "agent_message_chunk" ||
         event.type === "agent_thought_chunk" ||
@@ -1298,9 +1321,46 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
           applyToolEvent(event);
           scheduleSessionLogFlush();
           return;
-        case "user_message_chunk":
-          // chrys 不回显用户消息，忽略（见文件头注释）
+        case "user_message_chunk": {
+          // 实时回显由 beginTurn 落笔，避免重复；历史回放则必须恢复原文。
+          if (
+            historyReplaySessionId === null ||
+            event.sessionId !== historyReplaySessionId
+          ) {
+            return;
+          }
+          const items = get().items;
+          const last = items[items.length - 1];
+          if (
+            event.messageId &&
+            openReplayUser?.messageId === event.messageId &&
+            last?.kind === "user" &&
+            last.id === openReplayUser.itemId
+          ) {
+            set({
+              items: [
+                ...items.slice(0, -1),
+                { ...last, text: last.text + event.text },
+              ],
+            });
+          } else {
+            // 上游会缓冲流式分片：切到用户消息前必须先提交上一条回复。
+            const closed = sealedItems();
+            const id = nextItemId("user");
+            set({
+              items: [
+                ...closed,
+                { kind: "user", id, text: event.text, createdAt: "" },
+              ],
+            });
+            // Chrys 回放没有 messageId，每条通知代表独立提问，不能凭相邻合并。
+            openReplayUser = event.messageId
+              ? { messageId: event.messageId, itemId: id }
+              : null;
+          }
+          scheduleSessionLogFlush();
           return;
+        }
         case "plan": {
           // todo_write 整表替换（bridge.plan_update_for_todos）。流内呈现：
           // 更新最后一张未完结的清单卡；上一张已全部完成而新清单有活干，
@@ -1322,11 +1382,20 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
             last !== undefined &&
             last.kind === "plan" &&
             last.entries.every((entry) => entry.status === "completed");
-          if (last !== undefined && last.kind === "plan" && !lastAllDone) {
+          if (
+            last !== undefined &&
+            last.kind === "plan" &&
+            !lastAllDone &&
+            last.sourceSessionId === event.sessionId
+          ) {
             set({
               items: items.map((item, position) =>
                 position === lastIndex
-                  ? { ...item, entries: event.entries }
+                  ? {
+                      ...item,
+                      entries: event.entries,
+                      sourceSessionId: event.sessionId,
+                    }
                   : item,
               ),
             });
@@ -1337,6 +1406,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
                 {
                   kind: "plan",
                   id: nextItemId("plan"),
+                  sourceSessionId: event.sessionId,
                   entries: event.entries,
                 },
               ],
@@ -1645,6 +1715,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     clear: () => {
       turnGeneration += 1;
       stopIdleTimer();
+      historyReplaySessionId = null;
+      openReplayUser = null;
       // 会话清空时流式落笔锚点一并复位，否则后续 chunk 会拼到已消失的条目上
       openAssistantId = null;
       openThoughtId = null;
@@ -1671,6 +1743,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => {
     restoreItems: (items) => {
       turnGeneration += 1;
       stopIdleTimer();
+      historyReplaySessionId = null;
+      openReplayUser = null;
       openAssistantId = null;
       openThoughtId = null;
       set({

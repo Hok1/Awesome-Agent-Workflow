@@ -64,6 +64,38 @@ html.theme-warm {
   background: transparent;
 }
 
+/* 会话正文参考 ZCode：透明轨道、圆角滑块；刻度目录自身不露滚动条。 */
+.conversation-scroll {
+  scrollbar-width: auto;
+}
+/* Chromium 的标准 scrollbar-color 会覆盖下方圆角/箭头样式，交回伪元素绘制。 */
+@supports selector(::-webkit-scrollbar) {
+  .conversation-scroll {
+    scrollbar-color: auto;
+  }
+}
+.conversation-scroll::-webkit-scrollbar {
+  width: 14px;
+}
+.conversation-scroll::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: var(--color-line-strong);
+  background-clip: padding-box;
+}
+.conversation-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.conversation-query-rail {
+  scrollbar-width: none;
+}
+.conversation-query-rail::-webkit-scrollbar {
+  display: none;
+}
+
 /**
  * 内部滚动容器：
  * - 滚到自己尽头就停（overscroll-behavior: contain），手势不继续传给
