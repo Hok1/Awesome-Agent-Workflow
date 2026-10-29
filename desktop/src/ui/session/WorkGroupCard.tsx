@@ -44,10 +44,15 @@ export const WorkGroupCard = memo(function WorkGroupCard({
         </span>
       </button>
       {expanded ? (
-        <div className="space-y-4 py-3">
-          {unit.items.map((item) => (
-            <div key={item.id}>{renderItem(item)}</div>
-          ))}
+        /* 左导线 + 缩进：组内容与平级行区分开（与思考行展开区同一视觉语言） */
+        <div className="py-2">
+          <div className="ml-2 border-line border-l pl-3.5">
+            <div className="space-y-4">
+              {unit.items.map((item) => (
+                <div key={item.id}>{renderItem(item)}</div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
