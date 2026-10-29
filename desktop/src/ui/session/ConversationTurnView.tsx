@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SessionItem } from "../../stores/sessionStore.ts";
 import type { ConversationTurn } from "./conversationTurns.ts";
 import { groupTurnWork, type TurnUnit } from "./turnGrouping.ts";
@@ -50,17 +50,19 @@ function WorkGroup({
   readonly renderItem: (item: SessionItem) => ReactNode;
 }) {
   const [open, setOpen] = useExpansionState(unit.id);
+  // 稳定回调：WorkGroupCard 已 memo，内联箭头会击穿它
+  const toggle = useCallback(() => setOpen((current) => !current), [setOpen]);
   return (
     <WorkGroupCard
       unit={unit}
       expanded={open}
-      onToggle={() => setOpen(!open)}
+      onToggle={toggle}
       renderItem={renderItem}
     />
   );
 }
 
-export function ConversationTurnView({
+function ConversationTurnViewBase({
   turn,
   renderItem,
 }: {
@@ -159,3 +161,7 @@ export function ConversationTurnView({
     </div>
   );
 }
+
+/** memo：turn 对象经 conversationTurns 的引用稳定性缓存，流式 chunk 间
+ * 历史 turn 引用不变则整树跳过——每个 chunk 只有运行中的最后回合重渲染。 */
+export const ConversationTurnView = memo(ConversationTurnViewBase);
