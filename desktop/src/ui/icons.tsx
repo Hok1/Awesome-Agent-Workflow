@@ -275,6 +275,23 @@ export function RefreshIcon(props: IconProps) {
   );
 }
 
+/** 加载中：八辐条风车（Lucide loader）。运行中回合的尾部 spinner——
+ * 旋转容器而非 SVG 本体（ZCode ChatLoading 同款，动画走合成层）。 */
+export function LoaderIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m6.34 17.66-1.41 1.41" />
+      <path d="m19.07 4.93-1.41 1.41" />
+    </Svg>
+  );
+}
+
 /** 思考：脑形图标（Lucide brain）。ZCode reasoning 行的静态 glyph——
  * 源码注释明确不用旋转 loader（长流式下长期占用渲染资源）。 */
 export function BrainIcon(props: IconProps) {
