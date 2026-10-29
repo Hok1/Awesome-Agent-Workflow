@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { FolderGlyph, RefreshIcon } from "../icons.tsx";
+
 import { insidePath, pathKey } from "../../core/panelPaths.ts";
 import {
   panelError,
@@ -65,10 +67,11 @@ function DirectoryRows({
   }, [path, revision]);
   return (
     <div role="group">
-      {result.loading && (
+      {/* 刷新期间保留旧数据静默重读，加载行只在首载出现，避免运行期整树闪烁。 */}
+      {result.loading && !result.data && (
         <p className="p-2 text-ui-base text-ink-faint">正在读取目录…</p>
       )}
-      {result.error && (
+      {result.error && !result.data && (
         <p
           role="alert"
           className="break-words p-2 text-ui-base text-danger-ink"
@@ -94,11 +97,11 @@ function DirectoryRows({
             }
           >
             <span aria-hidden="true">
-              {entry.directory
-                ? expanded.has(entry.path)
-                  ? "▾ 📁"
-                  : "▸ 📁"
-                : "·"}
+              {entry.directory ? (
+                <FolderGlyph isExpanded={expanded.has(entry.path)} />
+              ) : (
+                "·"
+              )}
             </span>
             <span className="truncate">{entry.name}</span>
             {entry.symlink && <span className="text-ink-faint">链接</span>}
@@ -140,6 +143,7 @@ export function FileTree({
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [manual, setManual] = useState(0);
+  const [spin, setSpin] = useState(0);
   const agentRevision = useAgentRevision(root, !external);
   const watch = usePanelWatch(
     [
@@ -167,17 +171,29 @@ export function FileTree({
     return () => window.removeEventListener("focus", refresh);
   }, [external]);
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col bg-base">
       <div className="flex items-center gap-2 border-b border-line p-2 text-ui-base">
         <span className="min-w-0 flex-1 truncate" title={root}>
           {root}
         </span>
         {external && <span className="text-warn-ink">项目外 · 临时目录</span>}
         <button
-          className="rounded border border-line px-2 py-1 hover:bg-raised"
-          onClick={() => setManual((value) => value + 1)}
+          type="button"
+          title="刷新"
+          aria-label="刷新"
+          className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+          onClick={() => {
+            setManual((value) => value + 1);
+            setSpin((value) => value + 360);
+          }}
         >
-          刷新
+          <RefreshIcon
+            className="h-3.5 w-3.5"
+            style={{
+              transform: `rotate(${spin}deg)`,
+              transition: "transform 0.5s ease",
+            }}
+          />
         </button>
       </div>
       {watch.error && !external && (

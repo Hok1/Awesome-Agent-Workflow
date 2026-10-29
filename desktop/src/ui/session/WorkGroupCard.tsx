@@ -1,8 +1,9 @@
 /**
- * 轮内已完成工作组（折叠卡）：一行「▸ 已工作 2m13s · 6 个步骤」，
- * 默认收起（降噪是目的），点开看组内的思考块与工具卡（原样渲染，
- * 由 SessionView 注入 renderItem）。失败的工具卡不进组（排障现场
- * 要一直可见），因此组内永远只有安静的历史。
+ * 轮内已完成工作组（紧凑头）：一行「N 个步骤 · 耗时」，默认收起（降噪是
+ * 目的），点开看组内的思考块与工具卡（原样渲染，由 SessionView 注入
+ * renderItem）。失败的工具卡不进组（排障现场要一直可见），因此组内永远
+ * 只有安静的历史。ZCode v4 无回合级工作组容器——头行样式对齐其紧凑行
+ * 语言（无边框壳、无 hover 变色、chevron hover 浮现），结构本身保留。
  */
 import type { ReactNode } from "react";
 import type { SessionItem } from "../../stores/sessionStore.ts";
@@ -28,22 +29,20 @@ export function WorkGroupCard({
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="group/work flex w-full items-center gap-2 border-b border-line/50 pb-2 text-left text-ui-base text-ink-mute transition-colors hover:text-ink-soft"
+        className="group/work flex w-full items-center gap-2 text-left text-ui-base text-ink-mute transition-colors"
       >
         <span>
-          {unit.elapsedMs !== null ? (
-            <>步骤耗时 {formatDuration(unit.elapsedMs)} · </>
-          ) : null}
           {count} 个步骤
+          {unit.elapsedMs !== null ? ` · ${formatDuration(unit.elapsedMs)}` : ""}
         </span>
         <span
-          className={`shrink-0 text-ink-ghost transition-all group-hover/work:opacity-100 group-focus-visible/work:opacity-100 [@media(hover:none)]:opacity-100 ${expanded ? "rotate-90 opacity-100" : "opacity-0"}`}
+          className={`shrink-0 text-ink-mute transition-all group-hover/work:opacity-100 group-focus-visible/work:opacity-100 [@media(hover:none)]:opacity-100 ${expanded ? "rotate-90 opacity-100" : "opacity-0"}`}
         >
-          <ChevronRightIcon className="h-4 w-4" />
+          <ChevronRightIcon className="size-4" />
         </span>
       </button>
       {expanded ? (
-        <div className="space-y-3 py-3">
+        <div className="space-y-4 py-3">
           {unit.items.map((item) => (
             <div key={item.id}>{renderItem(item)}</div>
           ))}

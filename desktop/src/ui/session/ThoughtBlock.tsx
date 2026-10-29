@@ -1,21 +1,90 @@
 /**
- * 思考过程（agent_thought_chunk）：默认折叠，点击展开。
+ * 思考行（agent_thought_chunk）：对齐 ZCode ReasoningRowView + ReasoningTrigger。
  *
- * 流式中的标题写「思考中…」（配动点）——状态要能被一眼读到，而不是只有
- * 一枚无文字的灰点；流式结束后折叠行给思考耗时（store 记录的起止时刻，
- * 快照恢复的历史条目没有时刻则不显示）。
+ * 触发行 = 静态 BrainIcon 在前 + 语义标签 + （流式时）末行摘要 + chevron 在后；
+ * 流式态文案「正在思考」走 turn-status-shimmer 扫光，完成态给
+ * 「思考 · 持续了 X 秒」三段标签（无时刻记录的历史条目落「持续了几秒」）。
+ * 流式摘要视口每次内容增长把单行推到末尾（始终显示最新一行），溢出后加
+ * 双缘 16px 渐变 mask（ZCode reasoning.tsx 同款，不再固定截前缀）。
+ * 流式且尚无文本时整行不渲染（ZCode ConversationRowView 同规则）。
+ * 展开区走 ZCode default variant 的左导线 + max-h-60 内滚动。
  */
-import { useState, memo } from "react";
+import { useEffect, useRef, useState, memo, type CSSProperties } from "react";
 import type { ThoughtItem } from "../../stores/sessionStore.ts";
-import { ChevronRightIcon } from "../icons.tsx";
-import { formatClock, formatDuration } from "./clock.ts";
+import { BrainIcon, ChevronRightIcon } from "../icons.tsx";
+
+/** 流式摘要：取最后一个非空行（resolveReasoningStreamingSummary 语义）。 */
+function streamingSummaryOf(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) ?? "";
+}
+
+/** 流式摘要双缘渐变 mask（ZCode REASONING_SUMMARY_MASK）。 */
+const STREAMING_SUMMARY_MASK =
+  "linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%)";
+
+function streamingSummaryMaskStyle(
+  overflowing: boolean,
+): CSSProperties | undefined {
+  if (!overflowing) {
+    return undefined;
+  }
+  return {
+    WebkitMaskImage: STREAMING_SUMMARY_MASK,
+    maskImage: STREAMING_SUMMARY_MASK,
+    WebkitMaskRepeat: "no-repeat",
+    maskRepeat: "no-repeat",
+    WebkitMaskSize: "100% 100%",
+    maskSize: "100% 100%",
+  };
+}
 
 function ThoughtBlockBase({ item }: { readonly item: ThoughtItem }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [summaryOverflowing, setSummaryOverflowing] = useState(false);
+  const summaryViewportRef = useRef<HTMLSpanElement | null>(null);
+  const summaryTextRef = useRef<HTMLSpanElement | null>(null);
+  const streamingSummary = item.isStreaming ? streamingSummaryOf(item.text) : "";
+  useEffect(() => {
+    const viewport = summaryViewportRef.current;
+    if (!viewport || !streamingSummary) {
+      return;
+    }
+    const syncSummaryViewport = () => {
+      setSummaryOverflowing((current) => {
+        const next = viewport.scrollWidth > viewport.clientWidth + 1;
+        return current === next ? current : next;
+      });
+      // 流式摘要超过可用宽度后，普通 overflow-hidden 会固定显示旧前缀，
+      // 最新 token 被裁在右侧。每次内容增长后把单行视口推到末尾，让旧内容向左移。
+      viewport.scrollLeft = viewport.scrollWidth;
+    };
+    syncSummaryViewport();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const resizeObserver = new ResizeObserver(syncSummaryViewport);
+    resizeObserver.observe(viewport);
+    if (summaryTextRef.current) {
+      resizeObserver.observe(summaryTextRef.current);
+    }
+    return () => resizeObserver.disconnect();
+  }, [streamingSummary]);
+  // 流式且还没有任何思考文本：整行不渲染（ZCode ConversationRowView 同款守卫）
+  if (item.isStreaming && item.text.trim().length === 0) {
+    return null;
+  }
   const durationMs =
     item.startedAt !== null && item.endedAt !== null
       ? Math.max(0, item.endedAt - item.startedAt)
       : null;
+  const durationLabel =
+    durationMs !== null
+      ? `持续了 ${Math.max(1, Math.ceil(durationMs / 1000))} 秒`
+      : "持续了几秒";
   return (
     <div className="w-full" data-item-kind="thought">
       <button
@@ -24,33 +93,50 @@ function ThoughtBlockBase({ item }: { readonly item: ThoughtItem }) {
         onClick={() => {
           setIsOpen((current) => !current);
         }}
-        // hover 时间戳：思考开始时刻；快照恢复的条目无时刻则不显示
-        title={formatClock(item.startedAt) ?? undefined}
-        className="flex items-center gap-2 text-ui-base text-ink-mute transition-colors hover:text-ink-soft"
+        className="group/thought inline-flex max-w-full min-w-0 items-center gap-2 self-start text-left text-ui-base transition-colors"
       >
-        <span
-          className={`inline-block transition-transform ${isOpen ? "rotate-90" : ""}`}
-        >
-          <ChevronRightIcon className="h-3 w-3" />
+        {/* 长流式下旋转 loader 会长期占用渲染资源：glyph 固定静态脑形 */}
+        <BrainIcon className="size-4 shrink-0 text-ink-mute" />
+        <span className="shrink-0 whitespace-nowrap">
+          {item.isStreaming ? (
+            /* 运行态文案扫光（turn-status-shimmer 为全应用唯一流光实现） */
+            <span className="turn-status-shimmer font-medium">正在思考</span>
+          ) : (
+            <span className="inline-flex items-center gap-2">
+              <span className="font-medium text-ink-mute">思考</span>
+              <span className="font-normal text-ink-mute">·</span>
+              <span className="font-normal text-ink-mute">{durationLabel}</span>
+            </span>
+          )}
         </span>
-        {item.isStreaming ? (
-          <span className="flex items-center gap-1.5 text-ink-soft">
-            <span className="inline-block size-1.5 animate-pulse rounded-full bg-ink-faint" />
-            思考中…
-          </span>
-        ) : (
-          <span>思考过程</span>
-        )}
-        {durationMs !== null && !item.isStreaming ? (
-          <span className="text-ui-sm text-ink-mute">
-            {formatDuration(durationMs)}
-          </span>
+        {item.isStreaming && streamingSummary ? (
+          <>
+            <span className="shrink-0 text-ink-mute">·</span>
+            {/* 单行视口：内容增长推到末尾（始终最新一行），溢出后双缘渐变 mask */}
+            <span
+              ref={summaryViewportRef}
+              className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-ink-soft"
+              style={streamingSummaryMaskStyle(summaryOverflowing)}
+            >
+              <span ref={summaryTextRef} className="inline-block min-w-max">
+                {streamingSummary}
+              </span>
+            </span>
+          </>
         ) : null}
+        <ChevronRightIcon
+          className={`size-4 shrink-0 text-ink-mute transition-opacity transition-transform ${isOpen ? "rotate-90 opacity-100" : "rotate-0 opacity-0 group-hover/thought:opacity-100"}`}
+        />
       </button>
       {isOpen ? (
-        <p className="mt-1.5 border-l border-line pl-4 text-ui-base leading-relaxed whitespace-pre-wrap break-words text-ink-faint">
-          {item.text}
-        </p>
+        /* pt-3 在导线容器外层：左导线上方留 12px 空隙（ZCode reasoning.tsx 同款） */
+        <div className="pt-3">
+          <div className="ml-2 border-line border-l pl-3.5">
+            <div className="max-h-60 space-y-2 overflow-auto text-ui-base text-ink-mute">
+              <p className="whitespace-pre-wrap break-words">{item.text}</p>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

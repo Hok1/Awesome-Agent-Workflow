@@ -95,7 +95,7 @@ export function CopyButton({
       title={
         state === "done" ? "已复制" : state === "failed" ? "复制失败" : label
       }
-      className={`shrink-0 rounded px-1.5 py-0.5 text-xs transition-all ${revealClass} ${
+      className={`shrink-0 rounded transition-all ${iconOnly ? "p-1" : "px-1.5 py-0.5 text-xs"} ${revealClass} ${
         state === "done"
           ? "text-ok-ink"
           : state === "failed"

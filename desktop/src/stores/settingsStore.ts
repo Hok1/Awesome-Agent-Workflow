@@ -81,7 +81,8 @@ export const approvalModeOptions: readonly {
 /**
  * iCode（原 chrys）可执行路径默认值：留空（不硬编码开发者本机路径）。启动时若
  * 为空会异步探测（PATH 查找与常见安装位置，见 probeChrysPath）；探测不到
- * 保持为空，设置页提示手动指定。已有用户持久化值不受影响。
+ * 保持为空，设置页提示手动指定。已有持久化值若是指向已不存在文件的绝对
+ * 路径（开发 venv 被删/移动），启动时同样重探并治愈写回。
  */
 export const defaultChrysPath = "";
 
@@ -488,9 +489,22 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
     },
     probeChrysPathIfNeeded: async (force = false) => {
       const previousPath = get().chrysPath;
-      if ((!force && previousPath.trim() !== "") || get().isProbingChrysPath) {
-        // 已有路径（含用户持久化值）或在探测中：不覆盖
+      if (get().isProbingChrysPath) {
         return;
+      }
+      if (!force && previousPath.trim() !== "") {
+        // 已有路径默认直通（含用户持久化值）。但绝对路径可能失效（开发
+        // venv 被删/移动）：先复检存在性，失效则视为未配置走重探治愈。
+        // 裸命令名交给 PATH 解析，不做存在性检查；复检失败保守不覆盖。
+        if (!/[\\/]/.test(previousPath)) return;
+        try {
+          if (await hostRuntime.pathExists(previousPath)) return;
+        } catch {
+          return;
+        }
+        logger.warn("已配置的 iCode 路径不存在，自动重新探测", {
+          chrysPath: previousPath,
+        });
       }
       set({ isProbingChrysPath: true });
       try {

@@ -239,6 +239,16 @@ html.theme-warm {
   --color-ink-faint: #525252; /* 更弱（neutral-600） */
   --color-ink-ghost: #404040; /* 最弱（neutral-700） */
 
+  /* diffstat 专用饱和绿红（ZCode --color-diff-added/removed：暗色取
+     tailwind green/red-500 原值） */
+  --color-diff-added: #22c55e;
+  --color-diff-removed: #ef4444;
+
+  /* 流光扫过带两档透明度（ZCode --animated-gradient-text-* 暗色实值：
+     strong 纯白、soft 20%） */
+  --turn-status-shimmer-strong: rgb(255 255 255 / 1);
+  --turn-status-shimmer-soft: rgb(255 255 255 / 0.2);
+
   /* 状态：通过（Zai 绿 #46bf72 族；bg/line 取 16% / 42% 叠加等效实色） */
   --color-ok-bg: #1e3125;
   --color-ok-ink: #87d9a4;
@@ -294,6 +304,14 @@ html.theme-warm {
   --color-ink-mute: #737373;
   --color-ink-faint: #a3a3a3;
   --color-ink-ghost: #d4d4d4;
+
+  /* diffstat 专用饱和绿红（ZCode 浅色取 tailwind green/red-600 原值） */
+  --color-diff-added: #16a34a;
+  --color-diff-removed: #dc2626;
+
+  /* 流光扫过带两档透明度（ZCode 浅色实值：strong 近黑、soft 22%） */
+  --turn-status-shimmer-strong: rgb(10 10 10 / 1);
+  --turn-status-shimmer-soft: rgb(10 10 10 / 0.22);
 
   --color-ok-bg: #eaf7ee;
   --color-ok-ink: #166b32;
@@ -575,6 +593,47 @@ html.theme-warm .composer-card:focus-within {
   .chip-in,
   .toast-in,
   .modal-in {
+    animation: none;
+  }
+}
+
+/* 轮次相位「思考中 / 生成中」——ZCode animated-gradient-text 原样移植：
+   4s 一轮，前半程亮带扫过、后半程静止（非连续往返），节奏对齐 ZCode。 */
+@keyframes turn-status-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  50% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+.turn-status-shimmer {
+  /* 颜色对齐 ZCode animated-gradient-text 实值：strong = 纯前景
+     （暗 rgb(255 255 255 / 1) / 亮 rgb(10 10 10 / 1)），
+     soft = 暗色 0.2 / 浅色 0.22（变量随主题取值） */
+  background: linear-gradient(
+    90deg,
+    var(--turn-status-shimmer-strong) 0%,
+    var(--turn-status-shimmer-strong) 34%,
+    var(--turn-status-shimmer-soft) 50%,
+    var(--turn-status-shimmer-strong) 66%,
+    var(--turn-status-shimmer-strong) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: turn-status-shimmer 4s linear infinite;
+  will-change: background-position;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-status-shimmer {
     animation: none;
   }
 }
