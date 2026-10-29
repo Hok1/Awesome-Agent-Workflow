@@ -194,6 +194,10 @@ async function loadSessionWithHistoryReplay(
     archiveError = error instanceof Error ? error.message : String(error);
     logger.warn("压缩归档读取失败", { sessionId, reason: archiveError });
   }
+  // 回放即权威历史的整体替换：清掉屏上内容（快照先行灌入的预览 / 上一条
+  // 会话的残留）。归档逐事件重放是同步循环，清空与重建落在同一帧——用户
+  // 不会看到空窗，只从快照内容无缝换成回放结果。
+  store.clear();
   store.setHistoryReplaySession(sessionId);
   try {
     for (const event of archive) store.handleEvent(event);
@@ -216,8 +220,7 @@ async function loadSessionWithHistoryReplay(
 }
 
 /** ISO 时间 → 列表标题用 HH:MM（本地时区）。 */
-function hhmmOf(iso: string): string {
-  const time = Date.parse(iso);
+function hhmmOf(iso: string): string {  const time = Date.parse(iso);
   if (Number.isNaN(time)) {
     return "";
   }
@@ -486,6 +489,18 @@ async function openWorkspaceNow(
         await disposeRuntime(candidate);
         focusRuntime(retained);
         return targetId;
+      }
+      // 快照先行：目标会话的本地快照立刻上屏（进程冷启动、归档读取与
+      // 回放期间内容可见，连接横幅不再空转）；回放随后以权威历史无缝替换。
+      // 写目标先指向目标会话，回落新建时由后面的编排重置为新会话。
+      viewStore
+        .getState()
+        .setSessionLogTarget(`${pathKey(workspacePath)}#${targetId}`);
+      viewStore
+        .getState()
+        .restoreSessionLog(`${pathKey(workspacePath)}#${targetId}`);
+      if (viewStore.getState().items.length === 0) {
+        viewStore.getState().restoreSessionLog(workspacePath);
       }
       try {
         await loadSessionWithHistoryReplay(
