@@ -69,6 +69,8 @@ import { ExpansionScopeProvider } from "./expansionState.tsx";
 import {
   isNearBottom,
   shouldLoadOlder,
+  FIRST_MOUNT_TURNS,
+  MOUNT_STEP,
   WINDOW_CHUNK,
 } from "./sessionWindow.ts";
 import { UserMessage } from "./UserMessage.tsx";
@@ -266,6 +268,9 @@ export function SessionView() {
     return () => observer?.disconnect();
   }, []);
   const [visibleCount, setVisibleCount] = useState(WINDOW_CHUNK);
+  // 渐进上屏：首帧只挂尾部少量回合（视口在底部），其余用 rAF 分批补完。
+  // 首次加载的 reconcile 从「150 条一帧做完」变成「头部立刻可见，后台追赶」。
+  const [mountedTurnCount, setMountedTurnCount] = useState(FIRST_MOUNT_TURNS);
   const [isFollowing, setIsFollowing] = useState(true);
   const lastLengthRef = useRef(0);
   const lastFollowLayoutRef = useRef<{
@@ -286,6 +291,25 @@ export function SessionView() {
       ),
     [items, visibleCount, isAgentRunning, turnState, showPlans],
   );
+
+  // 渐进上屏追赶循环：每帧多挂一批回合，直到窗口内全部就绪。流式新回合
+  // 到来时 slice(-n) 先短暂让最早的回合退场，下一帧即追回（叶子卡片 memo，
+  // 重挂成本可忽略）。
+  useEffect(() => {
+    if (mountedTurnCount >= visibleTurns.length) {
+      return;
+    }
+    const handle = requestAnimationFrame(() => {
+      setMountedTurnCount((count) =>
+        Math.min(count + MOUNT_STEP, visibleTurns.length),
+      );
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [mountedTurnCount, visibleTurns.length]);
+  const fullyMounted = mountedTurnCount >= visibleTurns.length;
+  const mountedTurns = fullyMounted
+    ? visibleTurns
+    : visibleTurns.slice(-mountedTurnCount);
 
   // 项目或会话变化时创建新目录，避免同名或复用条目引用跨会话串缓存。
   const queryBuilder = useMemo(
@@ -320,6 +344,7 @@ export function SessionView() {
   if (viewScope !== scope) {
     setViewScope(scope);
     setVisibleCount(WINDOW_CHUNK);
+    setMountedTurnCount(FIRST_MOUNT_TURNS);
     setIsFollowing(true);
   }
   useLayoutEffect(() => {
@@ -343,6 +368,8 @@ export function SessionView() {
     prependAnchorRef.current = null;
     setIsFollowing(false);
     setVisibleCount((count) => Math.max(count, items.length - query.itemIndex));
+    // 导航是用户点名要看的位置：立即全量挂载，不做渐进追赶
+    setMountedTurnCount(Number.MAX_SAFE_INTEGER);
     jumpTargetRef.current = query.id;
     setJumpRevision((revision) => revision + 1);
   };
@@ -406,6 +433,7 @@ export function SessionView() {
     if (items.length < previous) {
       // 会话清空 / 切换：窗口与跟随态复位
       setVisibleCount(WINDOW_CHUNK);
+      setMountedTurnCount(FIRST_MOUNT_TURNS);
       setIsFollowing(true);
       return;
     }
@@ -474,6 +502,8 @@ export function SessionView() {
     ) {
       prependAnchorRef.current = element.scrollHeight - element.scrollTop;
       setVisibleCount((count) => Math.min(items.length, count + WINDOW_CHUNK));
+      // 补载是用户主动上翻要看的内容：立即全量挂载（渐进只属于会话首挂）
+      setMountedTurnCount(Number.MAX_SAFE_INTEGER);
     }
   };
 
@@ -763,7 +793,7 @@ export function SessionView() {
                     <ol
                       className={`mx-auto flex list-none flex-col gap-5 p-0 ${widthClass}`}
                     >
-                      {visibleTurns.map((turn) => (
+                      {mountedTurns.map((turn) => (
                         <li key={turn.id}>
                           <ConversationTurnView
                             turn={turn}

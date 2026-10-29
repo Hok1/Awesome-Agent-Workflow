@@ -7,6 +7,12 @@
 /** 初始/补载窗口大小（条）。 */
 export const WINDOW_CHUNK = 150;
 
+/** 渐进上屏：首帧挂载的回合数（视口在底部，先挂尾部让用户立刻看到内容）。 */
+export const FIRST_MOUNT_TURNS = 6;
+
+/** 渐进上屏每帧追加的回合数（rAF 追赶循环，直到窗口内全部就绪）。 */
+export const MOUNT_STEP = 8;
+
 /** 距顶阈值（px）：滚动位置在此内且有未揭示历史时补载一块。 */
 export const LOAD_OLDER_THRESHOLD_PX = 240;
 

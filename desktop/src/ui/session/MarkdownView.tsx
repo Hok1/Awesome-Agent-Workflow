@@ -15,12 +15,12 @@
 import { memo, type ReactNode } from "react";
 import type { Components } from "streamdown";
 import { cjk } from "@streamdown/cjk";
-import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import { Streamdown } from "streamdown";
 import { useSettingsStore } from "../../stores/settingsStore.ts";
 import { resolveFileReference } from "../../core/panelPaths.ts";
 import { CodeBlock } from "./markdown/CodeBlock.tsx";
+import { deferredCodePlugin } from "./markdown/deferredCodePlugin.ts";
 import {
   MarkdownImage,
   MarkdownImageParagraph,
@@ -28,9 +28,8 @@ import {
 } from "./markdown/MarkdownImage.tsx";
 import { MarkdownTable } from "./markdown/MarkdownTable.tsx";
 
-const codePlugin = createCodePlugin({
-  themes: ["github-light", "github-dark"],
-});
+// 视口门控的 shiki 插件(会话首载只高亮首屏可见块,滚动到才补高亮)
+const codePlugin = deferredCodePlugin;
 const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
 // mermaid 不进静态插件族:引擎经 MermaidBlock 动态加载(省首屏约 2MB),
 // 块级 mermaid 由 pre → CodeBlock 拦截后自渲染

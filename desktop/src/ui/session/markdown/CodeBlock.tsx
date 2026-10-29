@@ -8,13 +8,20 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type HTMLAttributes,
   type ReactNode,
 } from "react";
 import { CopyButton } from "../CopyButton.tsx";
 import { MermaidBlock } from "./MermaidBlock.tsx";
+import {
+  codeHashOf,
+  isCodeVisible,
+  markCodeVisibleAndFlush,
+} from "./deferredCodePlugin.ts";
 import {
   isMermaidLanguage,
   shouldRenderMermaidCodeBlock,
@@ -242,6 +249,10 @@ export function CodeBlock({
   const [isWrapped, setIsWrapped] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSvg, setPreviewSvg] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // 最新代码哈希（流式期逐 chunk 变化）；IO 回调经此取当前块
+  const hashRef = useRef<string>("");
+  hashRef.current = codeHashOf(code);
   const toggleWrapLongLines = useCallback(() => {
     setIsWrapped((current) => !current);
   }, []);
@@ -261,9 +272,45 @@ export function CodeBlock({
     }
   }
 
+  // 首帧同步量位（useLayoutEffect 在绘制前跑）：本块在首屏视口内（±200px
+  // 预高亮带）就立即标记可见并冲刷排队高亮——微任务在绘制前完成，首屏块
+  // 不会出现素色闪烁。视口外块走下方 IO。
+  useLayoutEffect(() => {
+    if (canRenderMermaid) return;
+    const hash = hashRef.current;
+    if (isCodeVisible(hash)) return;
+    const node = containerRef.current;
+    if (node === null) return;
+    const rect = node.getBoundingClientRect();
+    if (rect.top < window.innerHeight + 200 && rect.bottom > -200) {
+      markCodeVisibleAndFlush(hash);
+    }
+  });
+
+  // 视口外块：进入视口（±200px 预高亮带）后冲刷高亮。观察的是节点而非
+  // 代码内容，流式换哈希不重建观察器。
+  useEffect(() => {
+    if (canRenderMermaid) return;
+    const node = containerRef.current;
+    if (node === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        const hash = hashRef.current;
+        if (!isCodeVisible(hash)) {
+          markCodeVisibleAndFlush(hash);
+        }
+      },
+      { rootMargin: "200px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [canRenderMermaid]);
+
   return (
     <CodeBlockContext.Provider value={contextValue}>
       <div
+        ref={containerRef}
         className="group relative my-3 w-full overflow-hidden rounded-lg border border-line bg-surface"
         data-language={language}
         style={{
