@@ -131,16 +131,14 @@ describe("InputStatusBar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("轮次相位行：轮次内相位可见，轮次外不渲染", () => {
+  it("诊断行：常规相位不渲染（流内思考行/工具卡承担指示），异常态可见", () => {
     seedRuntime();
     useSessionStore.setState({ isAgentRunning: true });
-    const { rerender } = render(<TurnStatusRow />);
-    // 轮次未开始（isTurnActive=false）：不显示
-    expect(screen.queryByText(/思考中/)).not.toBeInTheDocument();
-
     useRuntimeStatusStore.getState().beginTurn();
-    rerender(<TurnStatusRow />);
-    expect(screen.getByText("思考中…")).toBeInTheDocument();
+    const { rerender } = render(<TurnStatusRow />);
+    // ZCode 结构：常规思考/工具相位不渲染独立行——指示由流内的思考行
+    // 与工具卡标题的流光承担
+    expect(screen.queryByText(/思考中/)).not.toBeInTheDocument();
 
     useRuntimeStatusStore.getState().handleSessionEvent({
       type: "tool_call",
@@ -149,22 +147,25 @@ describe("InputStatusBar", () => {
       status: "in_progress",
     } as never);
     rerender(<TurnStatusRow />);
-    expect(screen.getByText("工具运行中 1…")).toBeInTheDocument();
-
-    // 轮次结束（isAgentRunning=false）：不显示
-    useSessionStore.setState({ isAgentRunning: false });
-    rerender(<TurnStatusRow />);
     expect(screen.queryByText(/工具运行中/)).not.toBeInTheDocument();
+
+    // 等待响应（ACP 无活动）诊断态可见；轮次结束即退场
+    useSessionStore.setState({ isWaitingForActivity: true });
+    rerender(<TurnStatusRow />);
+    expect(screen.getByText(/暂未收到新进度/)).toBeInTheDocument();
+    useSessionStore.setState({ isAgentRunning: false, isWaitingForActivity: false });
+    rerender(<TurnStatusRow />);
+    expect(screen.queryByText(/暂未收到新进度/)).not.toBeInTheDocument();
   });
 
-  it("轮次相位行：有挂起的提问/审批时退场（此刻是在等用户，不是生成中）", () => {
+  it("诊断行：有挂起的提问/审批时退场（此刻是在等用户，不是生成中）", () => {
     seedRuntime();
     useSessionStore.setState({ isAgentRunning: true });
     useRuntimeStatusStore.getState().beginTurn();
     render(<TurnStatusRow />);
-    expect(screen.getByText("思考中…")).toBeInTheDocument();
+    expect(screen.queryByText(/思考中/)).not.toBeInTheDocument();
 
-    // 挂起一条提问（Promise 悬置、轮次仍 active）：相位行让位给问答面板
+    // 挂起一条提问（Promise 悬置、轮次仍 active）：诊断行让位给问答面板
     act(() => {
       void useApprovalStore.getState().offerQuestions({
         sessionId: "s-1",

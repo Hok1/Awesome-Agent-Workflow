@@ -45,27 +45,33 @@ describe("SessionView", () => {
     // 轮内已完成工作折叠：两张连续完成的工具卡（search + read）收进
     // 一个默认收起的工作组，单张的 load skill 仍在流中
     expect(screen.queryByText("load skill")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "工作过程" }));
+    await userEvent.click(screen.getByRole("button", { name: "已处理" }));
     const groupToggle = screen.getByRole("button", { name: /2 个步骤/ });
     expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+    // read/search 已改摘要行（div，不可展开）；仍在流中的 load skill
+    // 保持开关行，主文本 = 结果摘要（标题只作 hover 提示）
     expect(
-      screen.getAllByRole("button", { name: /search|read|load skill/ }).length,
+      screen.getAllByRole("button", { name: /技能 test-writer 已加载/ }).length,
     ).toBe(1);
 
-    // 展开工作组：组内工具卡原样渲染
+    // 展开工作组：search 主文本为「查找 {query}」句式、read 为文件 chip
+    // + 次级目录路径（对齐 ZCode renderers）
     await userEvent.click(groupToggle);
     expect(groupToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText('search "login"')).toBeInTheDocument();
-    expect(screen.getByText("read src/api/login.ts")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "查看详情" })).toHaveLength(2);
+    expect(screen.getByText("查找 login")).toBeInTheDocument();
+    // 文件名与助手正文里的行内代码重名：getAllByText 兜住 chip + code 两处
+    expect(screen.getAllByText("login.ts").length).toBeGreaterThan(0);
+    expect(screen.getByText("src/api/")).toBeInTheDocument();
+    // ⓘ 展开按钮已删：read/search 行内不再有「查看详情」
+    expect(
+      screen.queryByRole("button", { name: "查看详情" }),
+    ).not.toBeInTheDocument();
 
     // 助手 Markdown：代码块语言标签（bash → script.sh，ZCode 式映射）
     expect(screen.getByText("script.sh")).toBeInTheDocument();
 
-    // 思考块折叠入口（按钮名含折叠箭头，按子串匹配）
-    expect(
-      screen.getByRole("button", { name: /思考过程/ }),
-    ).toBeInTheDocument();
+    // 思考块折叠入口（按钮名 =「思考 · 持续了 N 秒」三段标签，按子串匹配）
+    expect(screen.getByRole("button", { name: /思考/ })).toBeInTheDocument();
   });
 
   it("空会话显示引导文案", () => {

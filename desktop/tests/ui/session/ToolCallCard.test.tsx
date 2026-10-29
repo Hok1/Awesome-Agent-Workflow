@@ -1,7 +1,8 @@
 /**
- * 工具调用卡片：折叠态一行摘要、展开看完整输入输出、状态徽标、耗时与复制。
+ * 工具调用行：折叠态一行摘要（kind 词 + 主文本 + diffstat + 失败词）、
+ * 开关行展开看完整输入输出、摘要行（read/search/fetch）不可展开、复制。
  */
-import { act, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,7 +29,7 @@ function makeItem(overrides: Partial<ToolCallItem> = {}): ToolCallItem {
 }
 
 describe("ToolCallCard", () => {
-  it("完成的编辑直接显示文件卡片，片段默认折叠且可独立展开", async () => {
+  it("完成的编辑折叠行给 +N/-N diffstat，改动卡移入展开区且片段默认折叠", async () => {
     render(
       <ToolCallCard
         item={makeItem({
@@ -43,8 +44,15 @@ describe("ToolCallCard", () => {
         })}
       />,
     );
-    expect(screen.getByLabelText("工具改动")).toBeInTheDocument();
+    // 折叠行 diffstat（ZCode renderDiffCount）：+N 绿 / -N 红（专用 diff token）
+    expect(screen.getByText("+1")).toHaveClass("text-diff-added");
+    expect(screen.getByText("-1")).toHaveClass("text-diff-removed");
+    // 改动卡不再行下直出，随行展开出现
+    expect(screen.queryByLabelText("工具改动")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("工具输出")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
+    expect(screen.getByLabelText("工具改动")).toBeInTheDocument();
+    expect(screen.getByLabelText("工具输出")).toBeInTheDocument();
     const card = screen.getByRole("button", { name: /修改片段/ });
     expect(card).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(card);
@@ -54,13 +62,17 @@ describe("ToolCallCard", () => {
     expect(screen.queryByLabelText("行级差异")).not.toBeInTheDocument();
   });
 
-  it("折叠态一行：状态徽标 + 工具名 + 输入摘要，不显示完整 JSON", () => {
+  it("折叠态一行：运行态 kind 词扫光 + 主文本为原始命令（标题转 hover 提示）", () => {
     render(<ToolCallCard item={makeItem()} />);
-    expect(screen.getByText("运行中")).toBeInTheDocument();
-    expect(screen.getByText("run_command npm test")).toBeInTheDocument();
-    expect(
-      screen.getByText("command=npm test · cwd=desktop"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("正在执行")).toHaveClass("turn-status-shimmer");
+    // 主文本 = 原始命令文本（getExecuteSecondaryText），不出键值对摘要；
+    // 标题只在 title 提示上
+    expect(screen.getByText("npm test")).toHaveAttribute(
+      "title",
+      "run_command npm test",
+    );
+    expect(screen.queryByText("run_command npm test")).not.toBeInTheDocument();
+    expect(screen.queryByText("command=npm test · cwd=desktop")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("工具输入")).not.toBeInTheDocument();
   });
 
@@ -73,7 +85,7 @@ describe("ToolCallCard", () => {
         })}
       />,
     );
-    const toggle = screen.getByRole("button", { name: /run_command npm test/ });
+    const toggle = screen.getByRole("button", { name: /npm test/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -96,14 +108,12 @@ describe("ToolCallCard", () => {
         })}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /run_command npm test/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     expect(screen.getByLabelText("工具输出")).toHaveTextContent('"files": [');
     expect(screen.getByLabelText("工具输出")).toHaveTextContent('"a.ts"');
   });
 
-  it("失败状态徽标为「失败」，输出区红色呈现", async () => {
+  it("失败状态词为「执行失败」：点线下划线、报错挂 title 提示", async () => {
     render(
       <ToolCallCard
         item={makeItem({
@@ -113,19 +123,21 @@ describe("ToolCallCard", () => {
         })}
       />,
     );
-    expect(screen.getByText("失败")).toBeInTheDocument();
-    // 折叠行给出结果摘要（resultSummary）
+    const failedWord = screen.getByText("执行失败");
+    expect(failedWord).toBeInTheDocument();
+    // 状态词继承摘要容器单色（无红字类），点线下划线提示可 hover
+    expect(failedWord).toHaveClass("underline", "decoration-dotted");
+    expect(failedWord).not.toHaveClass("text-danger-ink");
+    // 报错原文挂状态词 title 提示，不占主文本位
     expect(screen.getByTitle("exit 1")).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: /run_command npm test/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     expect(screen.getByLabelText("工具输出")).toHaveTextContent("exit 1");
   });
 
   it("运行中手动展开的卡在完成后保持展开", async () => {
     const { rerender } = render(<ToolCallCard item={makeItem()} />);
     // 展开盯运行
-    await userEvent.click(screen.getByRole("button", { name: /run_command/ }));
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     expect(screen.getByLabelText("工具输入")).toBeInTheDocument();
 
     // 完成不覆盖用户选择
@@ -148,7 +160,7 @@ describe("ToolCallCard", () => {
       </ExpansionScopeProvider>
     );
     const { rerender, unmount } = render(card("p1", "s1"));
-    await userEvent.click(screen.getByRole("button", { name: /run_command/ }));
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     rerender(card("p1", "s2"));
     expect(screen.queryByLabelText("工具输入")).not.toBeInTheDocument();
     rerender(card("p2", "s1"));
@@ -162,7 +174,7 @@ describe("ToolCallCard", () => {
 
   it("失败不自动收起：输出是排障现场，需要被人看到", async () => {
     const { rerender } = render(<ToolCallCard item={makeItem()} />);
-    await userEvent.click(screen.getByRole("button", { name: /run_command/ }));
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
 
     rerender(
       <ToolCallCard
@@ -176,14 +188,16 @@ describe("ToolCallCard", () => {
     expect(screen.getByLabelText("工具输出")).toBeInTheDocument();
   });
 
-  it("status 缺省（null）时显示「已发起」", () => {
+  it("status 缺省（null）时按运行态呈现：kind 词扫光，不再有徽标", () => {
     render(<ToolCallCard item={makeItem({ status: null })} />);
-    expect(screen.getByText("已发起")).toBeInTheDocument();
+    expect(screen.queryByText("已发起")).not.toBeInTheDocument();
+    expect(screen.getByText("正在执行")).toBeInTheDocument();
+    expect(screen.getByText("npm test")).toBeInTheDocument();
   });
 });
 
-// ---------------------------------------------------------------- 耗时与复制（M1）
-describe("ToolCallCard 耗时与复制", () => {
+// ---------------------------------------------------------------- 复制（M1）
+describe("ToolCallCard 复制", () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
@@ -192,51 +206,6 @@ describe("ToolCallCard 耗时与复制", () => {
       value: { writeText },
       configurable: true,
     });
-  });
-
-  it("运行中卡片实时跳动耗时（首个整秒后出现）；终态定格为总耗时", () => {
-    // 运行中：首秒内不显示，第一次整秒跳动后显示当前已运行时长
-    vi.useFakeTimers();
-    try {
-      const startedAt = Date.now() - 5_000;
-      render(<ToolCallCard item={makeItem({ startedAt })} />);
-      expect(screen.queryByTitle("已运行时长")).not.toBeInTheDocument();
-      act(() => {
-        vi.advanceTimersByTime(1_100);
-      });
-      // 假时钟推进 1.1s：已运行 6.1s → 6s
-      expect(screen.getByTitle("已运行时长")).toHaveTextContent("6s");
-    } finally {
-      vi.useRealTimers();
-    }
-
-    // 完成：起止差 3.2s → 3s
-    render(
-      <ToolCallCard
-        item={makeItem({
-          status: "completed",
-          startedAt: 1_000_000,
-          endedAt: 1_003_200,
-        })}
-      />,
-    );
-    expect(screen.getByTitle("总耗时")).toHaveTextContent("3s");
-  });
-
-  it("旧快照缺时刻（null）不显示耗时", () => {
-    render(
-      <ToolCallCard
-        item={makeItem({ status: "completed", startedAt: null, endedAt: null })}
-      />,
-    );
-    expect(screen.queryByTitle("已运行时长")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("总耗时")).not.toBeInTheDocument();
-  });
-
-  it("pending（等待批准）不显示耗时：审批等待不是工作耗时", () => {
-    render(<ToolCallCard item={makeItem({ status: "pending" })} />);
-    expect(screen.queryByTitle("已运行时长")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("总耗时")).not.toBeInTheDocument();
   });
 
   it("展开后输入 / 输出段各带复制按钮，复制写入剪贴板", async () => {
@@ -248,9 +217,7 @@ describe("ToolCallCard 耗时与复制", () => {
         })}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /run_command npm test/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     await userEvent.click(screen.getByRole("button", { name: "复制输出" }));
     expect(writeText).toHaveBeenCalledWith("3 passed");
     await userEvent.click(screen.getByRole("button", { name: "复制输入" }));
@@ -272,7 +239,7 @@ describe("ToolCallCard edit diff / execute 终端输出", () => {
     });
   });
 
-  it("edit_file：输入段替换为 diff 视图（路径 + 增删统计 + 行级差异）", async () => {
+  it("edit_file：折叠行 diffstat，展开区输入段替换为 diff 视图（路径 + 增删统计 + 行级差异）", async () => {
     render(
       <ToolCallCard
         item={makeItem({
@@ -286,15 +253,14 @@ describe("ToolCallCard edit diff / execute 终端输出", () => {
         })}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /edit_file src\/app\.ts/ }),
-    );
+    // 展开前：折叠行 diffstat（唯一一处 +1/-1）
+    expect(screen.getByText("+1")).toBeInTheDocument();
+    expect(screen.getByText("-1")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     // 改动段存在，原始输入 JSON 段不再渲染
     expect(screen.getByLabelText("工具改动")).toBeInTheDocument();
     expect(screen.queryByLabelText("工具输入")).not.toBeInTheDocument();
-    // 头部统计：+1 −1 与路径
-    expect(screen.getByText("+1")).toBeInTheDocument();
-    expect(screen.getByText("−1")).toBeInTheDocument();
+    // 片段默认折叠：行级差异不可见
     expect(screen.queryByLabelText("行级差异")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /修改片段/ }));
     expect(screen.getByTitle("src/app.ts")).toHaveTextContent("src/app.ts");
@@ -314,9 +280,7 @@ describe("ToolCallCard edit diff / execute 终端输出", () => {
         })}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /write_file new\.ts/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     expect(screen.queryByText("新文件")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("新文件内容预览")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /写入内容/ }));
@@ -335,18 +299,14 @@ describe("ToolCallCard edit diff / execute 终端输出", () => {
         })}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /edit_file mystery/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     expect(screen.getByLabelText("工具输入")).toBeInTheDocument();
     expect(screen.queryByLabelText("工具改动")).not.toBeInTheDocument();
   });
 
   it("非 edit 类工具不出现改动段", async () => {
     render(<ToolCallCard item={makeItem()} />);
-    await userEvent.click(
-      screen.getByRole("button", { name: /run_command npm test/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     expect(screen.getByLabelText("工具输入")).toBeInTheDocument();
     expect(screen.queryByLabelText("工具改动")).not.toBeInTheDocument();
   });
@@ -360,9 +320,7 @@ describe("ToolCallCard edit diff / execute 终端输出", () => {
         })}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /run_command npm test/ }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /npm test/ }));
     const terminal = screen.getByLabelText("终端输出");
     expect(terminal).toBeInTheDocument();
     expect(terminal.style.height).toBe("8.125em");
@@ -373,19 +331,43 @@ describe("ToolCallCard edit diff / execute 终端输出", () => {
     );
   });
 
-  it("非 execute 类输出保持原 pre（max-h-72）", async () => {
+  it("read 行不可展开（对齐 ZCode canToggle=false）：主文本为文件 chip + 次级目录路径", () => {
     render(
       <ToolCallCard
         item={makeItem({
           toolKind: "read",
-          title: "read_file a.ts",
+          title: "read_file src/app.ts",
+          rawInput: { path: "src/app.ts" },
           status: "completed",
           rawOutput: "file body",
+          resultSummary: "file body",
         })}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "查看详情" }));
-    expect(screen.queryByLabelText("终端输出")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("工具输出")).toHaveTextContent("file body");
+    // 摘要行是 div，不再是 button；标题只作 hover 提示
+    expect(
+      screen.queryByRole("button", { name: /read_file src\.app\.ts/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("工具输出")).not.toBeInTheDocument();
+    // 主文本 = 文件 chip（图标 + 文件名），次级为目录路径；结果摘要不上行
+    expect(screen.getByText("app.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/")).toBeInTheDocument();
+    expect(screen.queryByText("file body")).not.toBeInTheDocument();
+  });
+
+  it("search 行主文本为「查找 {query}」句式（对齐 ZCode getSearchPrimaryText）", () => {
+    render(
+      <ToolCallCard
+        item={makeItem({
+          toolKind: "search",
+          title: "search foo bar",
+          rawInput: { query: "foo bar" },
+          status: "completed",
+          resultSummary: "3 matches",
+        })}
+      />,
+    );
+    expect(screen.getByText("查找 foo bar")).toBeInTheDocument();
+    expect(screen.queryByText("3 matches")).not.toBeInTheDocument();
   });
 });

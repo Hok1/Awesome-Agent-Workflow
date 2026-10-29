@@ -14,6 +14,8 @@ import {
 } from "../../core/panelService.ts";
 import { changeKey, reviewChanges } from "../../core/gitReview.ts";
 import { createGitDiffCache } from "../../core/gitDiffCache.ts";
+import { ChevronRightIcon, FolderGlyph, RefreshIcon } from "../../ui/icons.tsx";
+import { ColumnResizer } from "../workbench/ColumnResizer.tsx";
 import { useProjectGit } from "./useProjectGit.ts";
 import { GitReviewDiff } from "./GitReviewDiff.tsx";
 import { useRightPanelStore } from "../../stores/rightPanelStore.ts";
@@ -41,12 +43,17 @@ export function GitPanel({ project }: { project: string }) {
       ) : (
         <div className="p-3">
           <button
-            className="rounded border border-line px-2 py-1"
+            type="button"
+            title="刷新"
+            aria-label="刷新"
+            className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
             onClick={result.refresh}
           >
-            刷新
+            <RefreshIcon className="h-3.5 w-3.5" />
           </button>
-          {result.loading && <p className="py-2">正在读取 Git 状态…</p>}
+          {result.loading && !result.data && (
+            <p className="py-2">正在读取 Git 状态…</p>
+          )}
         </div>
       )}
     </div>
@@ -70,11 +77,16 @@ function GitReview({
     changes: true,
     untracked: reveal?.source === "untracked",
   });
+  // 悬浮卡点击（gitReveal.revision 自增）为一次「展开波次」：对应组的
+  // 文件树按波次重挂载并全量展开。挂载时已存在的 reveal 不算波次，
+  // 避免切页签回来把用户整理好的树重新摊开。
+  const [revealWave, setRevealWave] = useState(0);
   const [openedUntracked, setOpenedUntracked] = useState<Set<string>>(
     new Set(),
   );
   const treeRef = useRef<HTMLElement>(null);
   const pendingLocation = useRef<string | null>(null);
+  const [spin, setSpin] = useState(0);
   if (seenReveal !== reveal) {
     setSeenReveal(reveal);
     if (reveal) {
@@ -82,8 +94,14 @@ function GitReview({
         ...old,
         [reveal.source === "untracked" ? "untracked" : "changes"]: true,
       }));
+      setRevealWave(reveal.revision);
     }
   }
+  const revealedGroup = reveal
+    ? reveal.source === "untracked"
+      ? "untracked"
+      : "changes"
+    : null;
   useLayoutEffect(() => {
     if (reveal)
       treeRef.current
@@ -267,18 +285,40 @@ function GitReview({
             ))
           )}
         </div>
+        <ColumnResizer
+          cssVarName="--git-review-rail-w"
+          storageKey="aaw-desktop/layout/git-review-rail-w"
+          defaultWidthPx={256}
+          minPx={220}
+          maxPx={560}
+          growDirection="start"
+          label="调整差异视图与工作区更改栏"
+        />
         <aside
           ref={treeRef}
           aria-label="Git 文件导航"
-          className="w-64 max-w-[40%] shrink-0 overflow-auto border-l border-line p-2"
+          className="shrink-0 overflow-auto border-l border-line bg-base p-2"
+          style={{ width: "var(--git-review-rail-w, 256px)" }}
         >
           <div className="mb-2 flex items-center justify-between">
             <span className="text-ink-faint">工作区更改</span>
             <button
-              className="rounded border border-line px-2 py-1"
-              onClick={onRefresh}
+              type="button"
+              title="刷新"
+              aria-label="刷新"
+              className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+              onClick={() => {
+                onRefresh();
+                setSpin((value) => value + 360);
+              }}
             >
-              刷新
+              <RefreshIcon
+                className="h-3.5 w-3.5"
+                style={{
+                  transform: `rotate(${spin}deg)`,
+                  transition: "transform 0.5s ease",
+                }}
+              />
             </button>
           </div>
           {(["changes", "untracked"] as const).map((group) => {
@@ -309,6 +349,8 @@ function GitReview({
                 </button>
                 {isOpen && (
                   <GitFileTree
+                    key={`${group}-${group === revealedGroup ? revealWave : 0}`}
+                    initiallyExpanded={group === revealedGroup && revealWave > 0}
                     changes={all}
                     selectedPath={
                       changes.find(
@@ -342,18 +384,33 @@ function GitReview({
   );
 }
 
+
+function toggleFolder(
+  expanded: ReadonlySet<string>,
+  setExpanded: (next: ReadonlySet<string>) => void,
+  key: string,
+): void {
+  const next = new Set(expanded);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  setExpanded(next);
+}
+
 function GitFileTree({
   changes,
   selectedPath,
   onSelect,
   red,
   prefix = "",
+  initiallyExpanded = false,
 }: {
   changes: GitChange[];
   selectedPath?: string;
   onSelect: (path: string) => void;
   red: boolean;
   prefix?: string;
+  /** 挂载即全量展开（悬浮卡点击波次的重挂载；逐层下传）。 */
+  initiallyExpanded?: boolean;
 }) {
   const folders = new Map<string, string[]>();
   const files: string[] = [];
@@ -366,24 +423,50 @@ function GitFileTree({
       folders.set(name, [...(folders.get(name) ?? []), path]);
     }
   }
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
+    initiallyExpanded
+      ? new Set([...folders.keys()].map((name) => `${prefix}${name}`))
+      : new Set(),
+  );
   return (
     <div className="space-y-1">
-      {[...folders].map(([name, children]) => (
-        <details key={name} open>
-          <summary className="cursor-pointer truncate py-1">{name}</summary>
-          <div className="ml-3 border-l border-line pl-2">
-            <GitFileTree
-              changes={changes.filter((change) =>
-                children.includes(change.path),
-              )}
-              selectedPath={selectedPath}
-              prefix={`${prefix}${name}/`}
-              red={red}
-              onSelect={onSelect}
-            />
+      {[...folders].map(([name, children]) => {
+        const isOpen = expanded.has(`${prefix}${name}`);
+        return (
+          <div key={name}>
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              className="flex w-full items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-raised"
+              onClick={() => toggleFolder(expanded, setExpanded, `${prefix}${name}`)}
+            >
+              <span
+                aria-hidden={true}
+                className="shrink-0 text-ink-faint transition-transform"
+                style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}
+              >
+                <ChevronRightIcon className="h-3 w-3" />
+              </span>
+              <FolderGlyph isExpanded={isOpen} />
+              <span className="min-w-0 flex-1 truncate">{name}</span>
+            </button>
+            {isOpen && (
+              <div className="ml-3 border-l border-line pl-2">
+                <GitFileTree
+                  changes={changes.filter((change) =>
+                    children.includes(change.path),
+                  )}
+                  selectedPath={selectedPath}
+                  prefix={`${prefix}${name}/`}
+                  red={red}
+                  onSelect={onSelect}
+                  initiallyExpanded={initiallyExpanded}
+                />
+              </div>
+            )}
           </div>
-        </details>
-      ))}
+        );
+      })}
       {files.map((path) => (
         <button
           key={path}

@@ -1,10 +1,12 @@
 import { memo } from "react";
 /**
- * 助手消息：Markdown 渲染 + 流式指示 + 整条复制（复制 Markdown 源文本）。
+ * 助手消息：Markdown 渲染 + 整条复制（复制 Markdown 源文本）。
+ * 流式时正文经 MarkdownView 直接流式渲染，行内无「生成中」指示元素
+ * （对齐 ZCode：ConversationRowView 经 MessageResponse 直接流式，无该残留）。
  */
 import type { AssistantMessageItem } from "../../stores/sessionStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
-import { formatClock } from "./clock.ts";
+import { formatActionClock, formatClock } from "./clock.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { useState } from "react";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
@@ -13,8 +15,12 @@ import { openPanelPath } from "../right-panel/openPanelPath.ts";
 
 function AssistantMessageBase({
   item,
+  showActions = true,
 }: {
   readonly item: AssistantMessageItem;
+  /** 动作行（复制 + 落笔时间）只属于轮次最终回答；折叠区内的中间
+   * 过程文本不带（对齐 ZCode：中途 prose 无操作行）。 */
+  readonly showActions?: boolean;
 }) {
   const project = useWorkspaceStore((state) => state.activePath);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -25,19 +31,6 @@ function AssistantMessageBase({
       data-item-kind="assistant"
       title={formatClock(item.createdAt) ?? undefined}
     >
-      <div className="flex w-full items-center justify-between">
-        <div className="flex items-center gap-2">
-          {item.isStreaming ? (
-            <span
-              className="flex items-center gap-1 text-xs text-accent-ink"
-              role="status"
-            >
-              <span className="inline-block size-1.5 animate-pulse rounded-full bg-sky-400" />
-              生成中…
-            </span>
-          ) : null}
-        </div>
-      </div>
       <div className="w-full py-2">
         <MarkdownView
           text={item.text}
@@ -57,9 +50,19 @@ function AssistantMessageBase({
           </p>
         )}
       </div>
-      <div className="flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-        <CopyButton getText={() => item.text} label="复制消息" iconOnly />
-      </div>
+      {showActions && (
+        <div className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          <CopyButton getText={() => item.text} label="复制消息" iconOnly />
+          {(() => {
+            const clock = formatActionClock(item.createdAt);
+            return clock !== null ? (
+              <span className="text-ui-sm leading-none tabular-nums text-ink-mute">
+                {clock}
+              </span>
+            ) : null;
+          })()}
+        </div>
+      )}
     </div>
   );
 }

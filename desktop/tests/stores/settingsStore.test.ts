@@ -323,7 +323,8 @@ describe("useSettingsStore", () => {
     expect(useSettingsStore.getState().isProbingChrysPath).toBe(false);
     expect(readPersisted()).toMatchObject({ chrysPath: "C:/probed/icode.exe" });
 
-    // 已有持久化值：再次探测不覆盖（也不发命令）
+    // 已有持久化值且文件真实存在：再次探测不覆盖（也不发命令）
+    await demoHost.writeTextFile("C:/probed/icode.exe", "fake-binary");
     demoHost.scriptCommand("where", ["icode"], {
       code: 0,
       stdout: "C:/other/icode.exe\n",
@@ -331,6 +332,31 @@ describe("useSettingsStore", () => {
     });
     await useSettingsStore.getState().probeChrysPathIfNeeded();
     expect(useSettingsStore.getState().chrysPath).toBe("C:/probed/icode.exe");
+  });
+
+  it("probeChrysPathIfNeeded：持久化的绝对路径失效时重探并治愈", async () => {
+    // 持久化值指向已被删除的文件（开发 venv 被清掉的形态）
+    useSettingsStore
+      .getState()
+      .setChrysPath("D:/gone/workspace/.venv/Scripts/icode.exe");
+    demoHost.scriptCommand("where", ["icode"], {
+      code: 0,
+      stdout: "C:/Users/test/.local/bin/icode.exe\n",
+      stderr: "",
+    });
+    await useSettingsStore.getState().probeChrysPathIfNeeded();
+    expect(useSettingsStore.getState().chrysPath).toBe(
+      "C:/Users/test/.local/bin/icode.exe",
+    );
+    expect(readPersisted()).toMatchObject({
+      chrysPath: "C:/Users/test/.local/bin/icode.exe",
+    });
+  });
+
+  it("probeChrysPathIfNeeded：裸命令名不做存在性复检", async () => {
+    useSettingsStore.getState().setChrysPath("icode");
+    await useSettingsStore.getState().probeChrysPathIfNeeded();
+    expect(useSettingsStore.getState().chrysPath).toBe("icode");
   });
 
   it("probeChrysPathIfNeeded：探测不到保持为空", async () => {

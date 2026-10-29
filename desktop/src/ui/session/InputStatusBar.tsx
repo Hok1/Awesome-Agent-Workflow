@@ -17,10 +17,7 @@ import { Fragment } from "react";
 
 import { useSessionStore } from "../../stores/sessionStore.ts";
 import { useApprovalStore } from "../../stores/approvalStore.ts";
-import {
-  turnStatusLabel,
-  useRuntimeStatusStore,
-} from "../../stores/runtimeStatusStore.ts";
+import { useRuntimeStatusStore } from "../../stores/runtimeStatusStore.ts";
 import {
   MenuItemRow,
   MenuSectionLabel,
@@ -203,9 +200,10 @@ export function InputStatusRight(): React.JSX.Element {
 }
 
 /**
- * 对话流末尾的轮次相位行：agent 运行中显示当前相位（思考中 / 工具运行
- * 中 n / 生成中），随事件流推进，轮次结束即消失。挂在消息列表末尾，
- * 自动滚动跟随。
+ * 对话流末尾的诊断行：只承载相位行不覆盖的异常态——执行状态未确认 /
+ * 取消中 / 等待响应，以及排队计数。常规的「思考中/生成中」指示由流内的
+ * 思考行与工具卡标题的流光承担（ZCode 结构：无独立相位行），轮次正常
+ * 且无排队时本行退场。
  */
 export function TurnStatusRow(): React.JSX.Element | null {
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
@@ -214,16 +212,16 @@ export function TurnStatusRow(): React.JSX.Element | null {
     (state) => state.isWaitingForActivity,
   );
   const queuedCount = useSessionStore((state) => state.queuedPrompts.length);
-  const isTurnActive = useRuntimeStatusStore((state) => state.isTurnActive);
   // 等你回答/审批时轮次还开着（Promise 未 resolve），但相位不是
-  // 「思考中/生成中」——是「在等你」，相位行退场让位给问答面板
+  // 「思考中/生成中」——是「在等你」，本行退场让位给问答面板
   const pendingCount = useApprovalStore((state) => state.pending.length);
-  const phase = useRuntimeStatusStore((state) =>
-    state.isTurnActive ? turnStatusLabel(state) : null,
-  );
+  const hasNotice =
+    turnState === "unknown" ||
+    turnState === "cancelling" ||
+    isWaitingForActivity;
   if (
     !isAgentRunning ||
-    ((isTurnActive === false || phase === null) && turnState !== "unknown") ||
+    (!hasNotice && queuedCount === 0) ||
     (pendingCount > 0 && turnState !== "cancelling" && turnState !== "unknown")
   ) {
     return null;
@@ -232,18 +230,21 @@ export function TurnStatusRow(): React.JSX.Element | null {
     <li
       aria-live="polite"
       data-turn-status=""
-      className="flex items-center gap-2 px-1 py-1.5 text-xs text-ink-faint"
+      className="flex items-center gap-2 px-1 py-1.5 text-xs"
     >
-      <span className="inline-block size-1.5 animate-pulse rounded-full bg-info" />
-      {turnState === "unknown"
-        ? "执行状态未确认，请检查连接；当前轮次仍被保留"
-        : turnState === "cancelling"
-          ? isWaitingForActivity
+      {turnState === "unknown" ? (
+        <span className="text-ink-faint">
+          执行状态未确认，请检查连接；当前轮次仍被保留
+        </span>
+      ) : turnState === "cancelling" ? (
+        <span className="text-ink-faint">
+          {isWaitingForActivity
             ? "仍在等待取消确认…"
-            : "正在取消，等待确认…"
-          : isWaitingForActivity
-            ? "暂未收到新进度，仍在等待响应…"
-            : `${phase}…`}
+            : "正在取消，等待确认…"}
+        </span>
+      ) : isWaitingForActivity ? (
+        <span className="text-ink-faint">暂未收到新进度，仍在等待响应…</span>
+      ) : null}
       {queuedCount > 0 ? (
         <span className="text-ink-ghost">（{queuedCount} 条排队待发）</span>
       ) : null}

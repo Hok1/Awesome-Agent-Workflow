@@ -32,24 +32,29 @@ describe("ConversationTurnView", () => {
     const view = render(
       <ConversationTurnView turn={base} renderItem={renderItem} />,
     );
-    expect(screen.getByRole("button", { name: "工作进行中" })).toBeDisabled();
-    expect(screen.getByText("progress")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "工作中" })).toBeDisabled();
+    // 折叠区内的中间助手文本经 AssistantMessage 渲染（markdown 文本可见）
+    expect(screen.getByText("intermediate")).toBeInTheDocument();
+    // 中间过程文本不带动作行（复制/时间只属于轮次最终回答，对齐 ZCode）
+    expect(
+      screen.queryByRole("button", { name: "复制消息" }),
+    ).not.toBeInTheDocument();
     view.rerender(
       <ConversationTurnView
         turn={{ ...base, forceOpen: false, running: false }}
         renderItem={renderItem}
       />,
     );
-    expect(screen.queryByText("progress")).not.toBeInTheDocument();
+    expect(screen.queryByText("intermediate")).not.toBeInTheDocument();
     expect(screen.getByText("final")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "工作过程" }));
-    expect(screen.getByText("progress")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "已处理" }));
+    expect(screen.getByText("intermediate")).toBeInTheDocument();
     view.rerender(
       <ConversationTurnView
         turn={{ ...base, forceOpen: false, running: false }}
         renderItem={renderItem}
       />,
     );
-    expect(screen.getByText("progress")).toBeInTheDocument();
+    expect(screen.getByText("intermediate")).toBeInTheDocument();
   });
 });

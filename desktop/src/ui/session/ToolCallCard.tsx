@@ -1,58 +1,70 @@
 /**
- * 工具调用卡片：
- * - 折叠态一行 = 状态徽标（运行中带脉动点）+ 工具类型小标 + 工具名 +
- *   摘要（输入摘要与结果摘要由 store 层算好，组件只渲染；有结果后优先
- *   展示结果一行）+ 耗时（运行中实时跳动，终态定格；旧快照缺时刻不显示）；
- * - 展开态按工具类型定制：edit 类输入段替换为 diff/新内容预览
- *   （EditDiffView，批准前一眼看到改成什么），execute 类输出段替换为
- *   终端视图（TerminalOutput：5 行窗口 + 吸底跟随 + 上滚冻结）；
- *   其余保持完整 JSON 输入 / 输出，输入 / 输出段各带复制按钮；
+ * 工具调用行：对齐 ZCode ToolSummaryRow 两变体（ToolLayout + renderers）。
+ *
+ * - 开关行触发表 = inline-flex max-w-full（随内容收缩，chevron 紧随摘要文本），
+ *   摘要行（read/search/fetch）= flex w-full；
+ * - 折叠态一行 = 图标 + kind 词 + 主文本（单行截断）+（edit）+N/-N diffstat
+ *   +（失败）状态词（点线下划线，报错挂 hover 提示）；
+ *   运行态 kind 词走 turn-status-shimmer 扫光（全应用唯一流光实现），无脉动点；
+ * - 主文本结构对齐 ZCode renderers：execute 出原始命令（getExecuteSecondaryText，
+ *   不出键值对）、read 出文件 chip（图标 + 文件名）+ 次级目录路径、
+ *   search/fetch 出「查找 {query}」句式，其余走 结果摘要 → 标题 → 输入摘要 兜底；
+ * - read / search / fetch 为摘要行（canToggle=false，ZCode 同规则）：
+ *   不可展开，原始输出经 FileTree / 代码查看器兜底；
+ * - execute / edit / other 为开关行：hover 浮现 chevron，展开区沿左导线给出
+ *   完整输入 / 输出（edit 类输入段替换为 diff/新内容预览；execute 类输出段
+ *   替换为终端视图），输入 / 输出段各带复制按钮；
  * - 展开状态由用户控制，工具完成时不覆盖用户选择。
  */
-import { useEffect, useMemo, useState, memo } from "react";
+import { useMemo, memo, type ComponentType } from "react";
 import type { ToolCallItem } from "../../stores/sessionStore.ts";
-import { ChevronRightIcon } from "../icons.tsx";
-import { formatClock, formatDuration } from "./clock.ts";
+import {
+  ChevronRightIcon,
+  FileIcon,
+  GlobeIcon,
+  PencilIcon,
+  SearchIcon,
+  SquareTerminalIcon,
+  WrenchIcon,
+  type IconProps,
+} from "../icons.tsx";
 import { CopyButton } from "./CopyButton.tsx";
-import { extractEditPayload } from "./editDiff.ts";
+import { extractEditPayload, buildDiffRows } from "./editDiff.ts";
 import { EditDiffView } from "./EditDiffView.tsx";
-import { FilePathButton } from "../right-panel/FilePathButton.tsx";
 import { TerminalOutput } from "./TerminalOutput.tsx";
 import { useExpansionState } from "./useExpansionState.ts";
 
-const statusBadges: Readonly<
-  Record<
-    NonNullable<ToolCallItem["status"]>,
-    { label: string; className: string }
-  >
-> = {
-  pending: { label: "等待", className: "text-ink-mute border-line-strong" },
-  in_progress: {
-    label: "运行中",
-    className: "text-accent-ink border-info-line",
-  },
-  completed: {
-    label: "完成",
-    className: "text-ok-ink border-ok-line",
-  },
-  failed: { label: "失败", className: "text-danger-ink border-danger-line" },
-};
-
-/** 未知 / 缺省状态（tool_call 落笔时可能不带 status）。 */
-const unknownBadge = {
-  label: "已发起",
-  className: "text-ink-mute border-line-strong",
-};
-
-/** 工具类型小标（read/edit/execute/search/fetch/other）。 */
+/** kind 词表（对齐 ZCode zh-CN chat.toolCall.kind，去「工具」字样）。
+ *  未收录 kind 不进词表，行内回落首字母大写的 kind 词（fallback.tsx 同款）。 */
 const kindLabels: Readonly<Record<string, string>> = {
-  read: "读",
-  edit: "写",
-  execute: "执行",
+  read: "读取",
+  edit: "编辑",
+  execute: "终端",
   search: "搜索",
-  fetch: "抓取",
-  other: "工具",
+  fetch: "网页抓取",
 };
+
+/** 运行态 kind 词（运行中扫光位）；未知 kind 无运行态词。 */
+const runningLabels: Readonly<Record<string, string>> = {
+  read: "正在读取",
+  edit: "正在编辑",
+  execute: "正在执行",
+  search: "正在搜索",
+  fetch: "正在抓取",
+};
+
+/** kind 图标（ZCode renderers 同款 lucide 几何；未知 kind 落 fallback 扳手）。 */
+const kindIcons: Readonly<Record<string, ComponentType<IconProps>>> = {
+  read: SearchIcon,
+  edit: PencilIcon,
+  execute: SquareTerminalIcon,
+  search: SearchIcon,
+  fetch: GlobeIcon,
+  other: WrenchIcon,
+};
+
+/** 摘要行（不可展开）的 kind：对齐 ZCode canToggle=false 的 renderers。 */
+const summaryOnlyKinds: ReadonlySet<string> = new Set(["read", "search", "fetch"]);
 
 /** 完整载荷的呈现文本：字符串按原文，其余安全 JSON 美化。 */
 function formatPayload(value: unknown): string {
@@ -90,158 +102,243 @@ function isSummaryRedundant(title: string, summary: string): boolean {
   return values.every((value) => value.length > 0 && title.includes(value));
 }
 
-/** 耗时标签：运行中每秒跳动（首个整秒后出现），终态定格为总耗时；
- *  无时刻（旧快照）不渲染。Date.now 只出现在定时器回调里，渲染保持纯函数。 */
-function ElapsedLabel({
-  item,
-  isRunning,
-}: {
-  readonly item: ToolCallItem;
-  readonly isRunning: boolean;
-}) {
-  const [now, setNow] = useState<number | null>(null);
-  const startedAt = item.startedAt;
-  const endedAt = item.endedAt;
-  useEffect(() => {
-    if (!isRunning || startedAt === null) {
-      return;
+/** execute 的原始命令文本（ZCode getExecuteSecondaryText 核心路径：字符串
+ *  直取；对象取 command/cmd/script 首个非空字段）。 */
+function executeCommandText(rawInput: unknown): string {
+  if (typeof rawInput === "string") {
+    return rawInput.trim();
+  }
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) {
+    return "";
+  }
+  const record = rawInput as Readonly<Record<string, unknown>>;
+  for (const key of ["command", "cmd", "script"] as const) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
     }
-    const timer = setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [isRunning, startedAt]);
-  if (startedAt === null) {
-    return null;
   }
-  // pending（等待批准）不算工作耗时：运行中按最近跳动时刻，终态按定格终点
-  const end = isRunning ? now : endedAt;
-  if (end === null) {
-    return null;
+  return "";
+}
+
+/** read 的文件路径（ZCode readReadMetadataFromValue 键序：filePath/file_path/
+ *  path/filename 首个非空字符串字段）。 */
+function readPathText(rawInput: unknown): string {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) {
+    return "";
   }
-  return (
-    <span
-      className="shrink-0 tabular-nums text-ui-sm text-ink-mute"
-      title={isRunning ? "已运行时长" : "总耗时"}
-    >
-      {formatDuration(Math.max(0, end - startedAt))}
-    </span>
-  );
+  const record = rawInput as Readonly<Record<string, unknown>>;
+  for (const key of ["filePath", "file_path", "path", "filename"] as const) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
+/** search/fetch 的查询词（ZCode getSearchPrimaryText 键序；fetch 的 url 同列
+ *  ——WebFetch 摘要与 search 共用「查找 {query}」句式）。 */
+function searchQueryText(rawInput: unknown): string {
+  if (typeof rawInput === "string") {
+    return rawInput.trim();
+  }
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) {
+    return "";
+  }
+  const record = rawInput as Readonly<Record<string, unknown>>;
+  for (const key of [
+    "search_query",
+    "searchQuery",
+    "query",
+    "pattern",
+    "path",
+    "url",
+    "prompt",
+    "target",
+    "name",
+  ] as const) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
+/** 路径拆分（ZCode getPathLeaf/buildFilePath 语义）：叶为文件名，目录含
+ *  结尾斜杠；无目录段（根下单名）返回 null。 */
+function splitFilePath(path: string): { leaf: string; dir: string | null } {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const leafIndex = normalized.lastIndexOf("/");
+  if (leafIndex === -1) {
+    return { leaf: normalized, dir: null };
+  }
+  return {
+    leaf: normalized.slice(leafIndex + 1),
+    dir: normalized.slice(0, leafIndex + 1),
+  };
 }
 
 function ToolCallCardBase({ item }: { readonly item: ToolCallItem }) {
   const [isOpen, setIsOpen] = useExpansionState(`tool:${item.id}`);
-  const badge = item.status === null ? unknownBadge : statusBadges[item.status];
   const isRunning = item.status === "in_progress" || item.status === null;
-  // 摘要优先级：有结果给结果行（完成/失败的结论比输入重要），无结果给输入行
+  // 主文本按 ZCode renderers 结构分派（提取失败或非对应 kind 走兜底链）：
+  // - execute：原始命令（结果/报错不上行，经展开区与状态词提示）；
+  // - read：文件 chip + 次级目录路径；
+  // - search/fetch：「查找 {query}」句式；
+  // - 兜底链：结果摘要 → 标题（摘要与标题重复/缺失时）→ 输入摘要，
+  //   标题转为 hover 提示（ZCode SummaryContent 单行语义）。
+  const executeCommand =
+    item.toolKind === "execute" ? executeCommandText(item.rawInput) : "";
+  const readPath = item.toolKind === "read" ? readPathText(item.rawInput) : "";
+  const searchQuery =
+    item.toolKind === "search" || item.toolKind === "fetch"
+      ? searchQueryText(item.rawInput)
+      : "";
   const hasResult =
     item.status === "completed" || item.status === "failed"
       ? item.resultSummary.length > 0
       : false;
-  const summaryText = hasResult ? item.resultSummary : item.inputSummary;
   const summaryRedundant = hasResult
     ? false
     : isSummaryRedundant(item.title, item.inputSummary);
-  const kindLabel =
-    item.toolKind === null ? null : (kindLabels[item.toolKind] ?? "工具");
-  // edit 类的改动载荷：形状认识则输入段让位给 diff 视图，否则回落 JSON
+  const fallbackText = hasResult
+    ? item.resultSummary || item.title
+    : summaryRedundant
+      ? item.title
+      : item.inputSummary;
+  const readChip = readPath.length > 0 ? splitFilePath(readPath) : null;
+  const summaryOnly = item.toolKind !== null && summaryOnlyKinds.has(item.toolKind);
+  // ZCode prioritizePrimaryText（read/edit 传入）：主文本区 flex-1 顶满；
+  // 其余 kind 的触发行随内容收缩（ToolSummaryRow inline-flex max-w-full）。
+  const prioritize = item.toolKind === "read" || item.toolKind === "edit";
+  const staticKindLabel =
+    item.toolKind === null
+      ? null
+      : (kindLabels[item.toolKind] ??
+        item.toolKind.charAt(0).toUpperCase() + item.toolKind.slice(1));
+  const runningLabel =
+    item.toolKind === null ? null : (runningLabels[item.toolKind] ?? null);
+  const rowKindLabel =
+    isRunning && runningLabel !== null ? runningLabel : staticKindLabel;
+  const KindIcon =
+    item.toolKind === null ? WrenchIcon : (kindIcons[item.toolKind] ?? WrenchIcon);
+  // edit 类的改动载荷：展开区输入段让位给 diff 视图，否则回落 JSON
   const editPayload = useMemo(
     () => (item.toolKind === "edit" ? extractEditPayload(item.rawInput) : null),
     [item.toolKind, item.rawInput],
   );
-  const input = item.rawInput;
-  const summaryOnly = item.toolKind === "read" || item.toolKind === "search";
-  const showFileCard = editPayload !== null && item.status === "completed";
-  const filePath =
-    input && typeof input === "object" && !Array.isArray(input)
-      ? ["path", "file_path", "filePath"]
-          .map((key) => (input as Record<string, unknown>)[key])
-          .find((value): value is string => typeof value === "string")
-      : undefined;
+  // 折叠行 diffstat（ZCode renderDiffCount）：行级 LCS 计数，memo 保证每个
+  // item 只算一次（MAX_LCS_DIM 护栏在 editDiff 内）
+  const editDiffStat = useMemo(() => {
+    if (editPayload === null || editPayload.kind !== "edit") {
+      return null;
+    }
+    const { added, removed } = buildDiffRows(
+      editPayload.oldString,
+      editPayload.newString,
+      1,
+    );
+    return { added, removed };
+  }, [editPayload]);
   const summary = (
     <>
-      <span
-        className={`flex shrink-0 items-center gap-1 text-ui-sm leading-4 ${item.status === "completed" ? "sr-only" : badge.className}`}
-      >
-        {isRunning ? (
-          <span className="inline-block size-1 animate-pulse rounded-full bg-current" />
-        ) : null}
-        {badge.label}
+      <span className="shrink-0 text-ink-mute">
+        <KindIcon className="size-4 shrink-0" />
       </span>
-      {kindLabel !== null ? (
-        <span className="shrink-0 text-ui-base text-ink-mute">{kindLabel}</span>
-      ) : null}
-      {/* 标题与摘要同行：各自截断省略，标题最多占一半宽度，
-            长标题不把摘要挤出卡片 */}
-      <span className="max-w-[50%] shrink-0 truncate text-ui-base text-ink-soft">
-        {item.title}
-      </span>
-      {!summaryRedundant && summaryText.length > 0 ? (
+      {rowKindLabel !== null ? (
         <span
-          className={`min-w-0 flex-1 truncate text-ui-base ${hasResult ? (item.status === "failed" ? "text-danger-ink/80" : "text-ink-faint") : "text-ink-faint"}`}
-          title={summaryText}
+          className={`font-medium whitespace-nowrap shrink-0 ${isRunning ? "turn-status-shimmer" : ""}`}
         >
-          {summaryText}
+          {rowKindLabel}
+        </span>
+      ) : null}
+      {readChip !== null ? (
+        // read 主文本：文件 chip（图标 + 文件名，hover 出全路径）+ 次级目录路径
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span
+            className="inline-flex min-w-0 items-center gap-1.5 text-ink-soft"
+            title={readPath}
+          >
+            <FileIcon className="size-4 shrink-0" />
+            <span className="min-w-0 truncate">{readChip.leaf}</span>
+          </span>
+          {readChip.dir !== null ? (
+            <span className="min-w-0 truncate">{readChip.dir}</span>
+          ) : null}
+        </span>
+      ) : executeCommand.length > 0 ? (
+        // execute 主文本：原始命令原文（ZCode getExecuteSecondaryText）
+        <span className="min-w-0 truncate" title={item.title}>
+          {executeCommand}
+        </span>
+      ) : searchQuery.length > 0 ? (
+        // search/fetch 主文本：「查找 {query}」整句摘要（getSearchPrimaryText）
+        <span className="min-w-0 truncate" title={item.title}>
+          {`查找 ${searchQuery}`}
+        </span>
+      ) : fallbackText.length > 0 ? (
+        <span
+          className={`min-w-0 truncate ${prioritize ? "flex-1" : ""} ${summaryOnly && item.toolKind === "read" ? "text-ink-soft" : ""}`}
+          title={item.title}
+        >
+          {fallbackText}
         </span>
       ) : (
         <span className="min-w-0 flex-1" />
       )}
-      <ElapsedLabel item={item} isRunning={isRunning} />
+      {editDiffStat !== null && (editDiffStat.added > 0 || editDiffStat.removed > 0) ? (
+        <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono leading-none tabular-nums">
+          {editDiffStat.added > 0 ? (
+            <span className="text-diff-added">+{editDiffStat.added}</span>
+          ) : null}
+          {editDiffStat.removed > 0 ? (
+            <span className="text-diff-removed">-{editDiffStat.removed}</span>
+          ) : null}
+        </span>
+      ) : null}
+      {item.status === "failed" ? (
+        // 失败态词继承摘要容器单色（ZCode ToolLayout 无颜色类），
+        // 点线下划线提示可 hover；报错原因挂原生 title 提示
+        <span
+          className="shrink-0 cursor-help whitespace-nowrap underline decoration-dotted underline-offset-2"
+          title={item.resultSummary || "失败"}
+        >
+          执行失败
+        </span>
+      ) : null}
     </>
   );
   return (
     <div className="w-full min-w-0" data-item-kind="tool">
       {summaryOnly ? (
+        // 摘要行（read/search/fetch）：不可展开，无 chevron（ZCode canToggle=false）；
+        // hover title = 工具标题（ToolSummaryRow 同款，非开始时刻时钟）
         <div
-          className="group/tool flex w-full items-center gap-2 py-1 text-ui-base"
-          title={formatClock(item.startedAt) ?? undefined}
+          className="group/tool flex w-full cursor-default items-center gap-2 text-left text-ui-base text-ink-mute transition-colors"
+          title={item.title}
         >
           {summary}
-          <button
-            type="button"
-            aria-label={isOpen ? "收起详情" : "查看详情"}
-            title={isOpen ? "收起详情" : "查看详情"}
-            aria-expanded={isOpen}
-            onClick={() => setIsOpen((current) => !current)}
-            className="shrink-0 rounded p-1 text-ink-mute opacity-0 transition-opacity hover:bg-raised group-hover/tool:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              className="size-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            >
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 11v5M12 8h.01" />
-            </svg>
-          </button>
         </div>
       ) : (
         <button
           type="button"
           aria-expanded={isOpen}
           onClick={() => setIsOpen((current) => !current)}
-          title={formatClock(item.startedAt) ?? undefined}
-          className="group/tool flex w-full items-center gap-2 py-1 text-left text-ui-base transition-colors hover:text-ink"
+          title={item.title}
+          className="group/tool inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base text-ink-mute transition-colors"
         >
           {summary}
+          {/* chevron hover 浮现（对齐 ToolSummaryRow）；触屏设备常显兜底 */}
           <ChevronRightIcon
-            className={`h-4 w-4 shrink-0 text-ink-ghost transition-all group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 [@media(hover:none)]:opacity-100 ${isOpen ? "rotate-90 opacity-100" : "opacity-0"}`}
+            className={`size-4 shrink-0 text-ink-mute opacity-0 transition-transform transition-opacity duration-200 ease-out will-change-transform group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 [@media(hover:none)]:opacity-100 ${isOpen ? "rotate-90 opacity-100" : "rotate-0"}`}
           />
         </button>
       )}
-      {showFileCard && (
-        <section aria-label="工具改动" className="mt-2">
-          <EditDiffView payload={editPayload} />
-        </section>
-      )}
       {isOpen ? (
-        <div className="mt-2 space-y-3 border-l border-line pl-4 py-1">
-          {showFileCard ? null : editPayload !== null ? (
+        <div className="mt-2 ml-2 space-y-3 border-line border-l py-1 pl-3.5">
+          {editPayload !== null ? (
             // edit 类：输入段由 diff/新内容预览替代（批准前一眼看到改成什么）
             <section aria-label="工具改动" className="group">
               <div className="mb-1 flex items-center justify-between text-xs text-ink-faint">
@@ -266,12 +363,7 @@ function ToolCallCardBase({ item }: { readonly item: ToolCallItem }) {
                   revealOnHover={true}
                 />
               </div>
-              {filePath && item.toolKind === "read" && (
-                <div className="mb-2 text-xs">
-                  <FilePathButton path={filePath} />
-                </div>
-              )}
-              <pre className="max-h-72 overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-ink-soft">
+              <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-surface p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-ink-soft">
                 {formatPayload(item.rawInput)}
               </pre>
             </section>
@@ -294,7 +386,7 @@ function ToolCallCardBase({ item }: { readonly item: ToolCallItem }) {
               />
             ) : (
               <pre
-                className={`max-h-72 overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${item.status === "failed" ? "text-danger-ink" : "text-ink-soft"}`}
+                className={`max-h-72 overflow-auto rounded-lg border border-line bg-surface p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${item.status === "failed" ? "text-danger-ink" : "text-ink-soft"}`}
               >
                 {formatPayload(item.rawOutput)}
               </pre>

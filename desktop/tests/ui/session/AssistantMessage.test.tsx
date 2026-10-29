@@ -62,8 +62,9 @@ describe("AssistantMessage", () => {
     expect(writeText).toHaveBeenCalledWith("普通段落，包含 `行内代码`。");
   });
 
-  it("流式中显示「生成中」状态", () => {
+  it("流式中行内不再有「生成中」指示（正文直接流式渲染，对齐 ZCode）", () => {
     render(<AssistantMessage item={makeItem({ isStreaming: true })} />);
-    expect(screen.getByRole("status")).toHaveTextContent("生成中");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
   });
 });

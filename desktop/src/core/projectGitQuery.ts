@@ -36,6 +36,7 @@ export function createProjectGitQuery(
     watchGeneration = 0;
   let stopWatch: (() => void) | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let changeTimer: ReturnType<typeof setTimeout> | undefined;
   let firstInvalidation = 0;
   const publish = (next: ProjectGitState): void => {
     state = next;
@@ -71,6 +72,7 @@ export function createProjectGitQuery(
       // 先推进代际再停止旧监听，避免它的回调或迟到的注册结果覆盖新监听。
       watchGeneration++;
       watchKey = "";
+      if (changeTimer) clearTimeout(changeTimer);
       const stop = stopWatch;
       stopWatch = undefined;
       stop?.();
@@ -80,7 +82,10 @@ export function createProjectGitQuery(
       .watch(
         paths.map((path) => ({ path, recursive: true })),
         () => {
-          if (current()) invalidate();
+          if (changeTimer) clearTimeout(changeTimer);
+          changeTimer = setTimeout(() => {
+            if (current()) invalidate();
+          }, 2000);
         },
         fail,
       )
@@ -102,7 +107,7 @@ export function createProjectGitQuery(
     }
     const version = generation;
     inFlight = true;
-    publish({ ...state, loading: true, error: undefined });
+    publish({ ...state, loading: !state.data, error: undefined });
     void services
       .status(project)
       .then((data) => {
