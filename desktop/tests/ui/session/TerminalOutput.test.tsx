@@ -36,10 +36,9 @@ describe("TerminalOutput", () => {
     rerender(<TerminalOutput text={"a\nb"} />);
     // 跟随态：scrollTop 被推到最底
     expect(pre.scrollTop).toBe(300);
-    expect(screen.queryByText(/已暂停跟随/)).not.toBeInTheDocument();
   });
 
-  it("上滚冻结：脱离底部后内容增长不抢滚动位置，并提示恢复方式", () => {
+  it("上滚冻结：脱离底部后内容增长不抢滚动位置", () => {
     const first = ["l1", "l2", "l3", "l4", "l5"].join("\n");
     const { rerender } = render(<TerminalOutput text={first} />);
     const pre = screen.getByLabelText("终端输出");
@@ -47,7 +46,6 @@ describe("TerminalOutput", () => {
     // 用户上滚：距底 300-100-80=120px > 4 → 冻结
     pre.scrollTop = 100;
     fireEvent.scroll(pre);
-    expect(screen.getByText(/已暂停跟随/)).toBeInTheDocument();
 
     // 冻结态内容增长：scrollTop 不被抢走
     rerender(<TerminalOutput text={`${first}\nl6`} />);
@@ -61,7 +59,6 @@ describe("TerminalOutput", () => {
     overrideGeometry(pre, { scrollHeight: 300, clientHeight: 80 });
     pre.scrollTop = 100;
     fireEvent.scroll(pre);
-    expect(screen.getByText(/已暂停跟随/)).toBeInTheDocument();
 
     // 滚回底部：距底 ≤4px → 恢复跟随并贴底
     pre.scrollTop = 220;

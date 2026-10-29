@@ -2,8 +2,7 @@
  * execute 类工具的输出视图（工具卡展开区输出段的替身）：
  * - 默认 5 行窗口（内容不足时按实际行数收缩），内部滚动；
  * - 吸底跟随：新内容到达时贴底滚入；用户上滚即冻结（盯中间输出不被
- *   新行顶走），滚回底部自动恢复跟随（LogView 贴底模式的同款语义）；
- * - 冻结时给出一行「已暂停跟随」提示，指明恢复方式。
+ *   新行顶走），滚回底部自动恢复跟随（LogView 贴底模式的同款语义）。
  *
  * 高度按行数估算（leading-relaxed × text-xs ≈ 1.625em/行）：长行折行会
  * 使实际视觉行数偏多，多出的部分仍可滚动，不影响跟随语义。
@@ -57,23 +56,16 @@ export function TerminalOutput({
   };
 
   return (
-    <div>
-      <pre
-        ref={preRef}
-        onScroll={handleScroll}
-        aria-label="终端输出"
-        style={{ height: `${Math.min(lineCount, WINDOW_LINES) * LINE_HEIGHT_EM}em` }}
-        className={`overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${
-          failed ? "text-danger-ink" : "text-ink-soft"
-        }`}
-      >
-        {text}
-      </pre>
-      {!follows ? (
-        <p className="select-none pt-0.5 text-2xs text-ink-ghost">
-          已暂停跟随 · 滚回底部恢复
-        </p>
-      ) : null}
-    </div>
+    <pre
+      ref={preRef}
+      onScroll={handleScroll}
+      aria-label="终端输出"
+      style={{ height: `${Math.min(lineCount, WINDOW_LINES) * LINE_HEIGHT_EM}em` }}
+      className={`overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${
+        failed ? "text-danger-ink" : "text-ink-soft"
+      }`}
+    >
+      {text}
+    </pre>
   );
 }
