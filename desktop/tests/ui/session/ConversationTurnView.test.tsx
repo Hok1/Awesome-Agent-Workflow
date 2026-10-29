@@ -57,4 +57,34 @@ describe("ConversationTurnView", () => {
     );
     expect(screen.getByText("intermediate")).toBeInTheDocument();
   });
+
+  it("运行中折叠区尾部有常驻 spinner；结束即消失", () => {
+    const view = render(
+      <ConversationTurnView turn={base} renderItem={renderItem} />,
+    );
+    // 运行中：工作块末尾的旋转 loader（role=status），标记「还有内容在路上」
+    expect(screen.getByRole("status", { name: "工作中" })).toBeInTheDocument();
+    view.rerender(
+      <ConversationTurnView
+        turn={{ ...base, forceOpen: false, running: false }}
+        renderItem={renderItem}
+      />,
+    );
+    // 回合结束：spinner 消失
+    expect(
+      screen.queryByRole("status", { name: "工作中" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("运行中且零工作条目：头部与 spinner 照常渲染（空窗期不显示会像卡死）", () => {
+    const empty: ConversationTurn = {
+      id: "empty",
+      forceOpen: true,
+      running: true,
+      history: [],
+    };
+    render(<ConversationTurnView turn={empty} renderItem={renderItem} />);
+    expect(screen.getByRole("button", { name: "工作中" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "工作中" })).toBeInTheDocument();
+  });
 });

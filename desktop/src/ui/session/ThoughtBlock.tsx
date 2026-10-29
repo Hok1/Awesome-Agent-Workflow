@@ -48,9 +48,14 @@ function ThoughtBlockBase({ item }: { readonly item: ThoughtItem }) {
   const summaryViewportRef = useRef<HTMLSpanElement | null>(null);
   const summaryTextRef = useRef<HTMLSpanElement | null>(null);
   const streamingSummary = item.isStreaming ? streamingSummaryOf(item.text) : "";
+  // RO 只在流式期订阅一次（依赖 isStreaming 而非摘要文本）：流式摘要每行
+  // 都换，若以文本为依赖则每行 disconnect/observe 一次，且回调里读
+  // scrollWidth 是强制同步布局——高频流式下就是卡顿源。文本尺寸变化由
+  // RO 对 summaryTextRef 的观察覆盖，无需按文本重挂。
+  const isStreaming = item.isStreaming;
   useEffect(() => {
     const viewport = summaryViewportRef.current;
-    if (!viewport || !streamingSummary) {
+    if (!viewport || !isStreaming) {
       return;
     }
     const syncSummaryViewport = () => {
@@ -72,7 +77,7 @@ function ThoughtBlockBase({ item }: { readonly item: ThoughtItem }) {
       resizeObserver.observe(summaryTextRef.current);
     }
     return () => resizeObserver.disconnect();
-  }, [streamingSummary]);
+  }, [isStreaming]);
   // 流式且还没有任何思考文本：整行不渲染（ZCode ConversationRowView 同款守卫）
   if (item.isStreaming && item.text.trim().length === 0) {
     return null;

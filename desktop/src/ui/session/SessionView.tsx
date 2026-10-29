@@ -18,6 +18,7 @@
  * 组件只订阅 sessionStore 的选择器；数据折叠全部在 store 层完成。
  */
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -79,7 +80,13 @@ import {
   type QueryNavigationItem,
 } from "./conversationNavigation.ts";
 
-function SessionItemView({ item }: { readonly item: SessionItem }) {
+/** memo：条目对象引用不变即跳过——流式 chunk 只改末尾条目，历史条目
+ * 的分发开销也省掉。 */
+const SessionItemView = memo(function SessionItemView({
+  item,
+}: {
+  readonly item: SessionItem;
+}) {
   switch (item.kind) {
     case "user":
       return <UserMessage item={item} />;
@@ -94,7 +101,13 @@ function SessionItemView({ item }: { readonly item: SessionItem }) {
     case "system":
       return <SystemNotice item={item} />;
   }
-}
+});
+
+/** 模块级稳定引用：传入 memo 化的 ConversationTurnView 不因每次渲染
+ * 的新箭头函数而击穿 memo。 */
+const renderSessionItem = (item: SessionItem): React.JSX.Element => (
+  <SessionItemView item={item} />
+);
 
 /** 时段问候（hero 主标题的一部分；测试以系统时间驱动）。 */
 function greetingOfHour(hour: number): string {
@@ -754,9 +767,7 @@ export function SessionView() {
                         <li key={turn.id}>
                           <ConversationTurnView
                             turn={turn}
-                            renderItem={(item) => (
-                              <SessionItemView item={item} />
-                            )}
+                            renderItem={renderSessionItem}
                           />
                         </li>
                       ))}

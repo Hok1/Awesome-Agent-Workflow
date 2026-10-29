@@ -5,13 +5,15 @@
  * 只有安静的历史。ZCode v4 无回合级工作组容器——头行样式对齐其紧凑行
  * 语言（无边框壳、无 hover 变色、chevron hover 浮现），结构本身保留。
  */
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import type { SessionItem } from "../../stores/sessionStore.ts";
 import { ChevronRightIcon } from "../icons.tsx";
 import { formatDuration } from "./clock.ts";
 import type { TurnUnit } from "./turnGrouping.ts";
 
-export function WorkGroupCard({
+/** memo：unit 与 renderItem 引用稳定（turn 缓存 + 模块级回调），流式
+ * chunk 间历史工作组跳过重渲染。 */
+export const WorkGroupCard = memo(function WorkGroupCard({
   unit,
   expanded,
   onToggle,
@@ -42,12 +44,17 @@ export function WorkGroupCard({
         </span>
       </button>
       {expanded ? (
-        <div className="space-y-4 py-3">
-          {unit.items.map((item) => (
-            <div key={item.id}>{renderItem(item)}</div>
-          ))}
+        /* 左导线 + 缩进：组内容与平级行区分开（与思考行展开区同一视觉语言） */
+        <div className="py-2">
+          <div className="ml-2 border-line border-l pl-3.5">
+            <div className="space-y-4">
+              {unit.items.map((item) => (
+                <div key={item.id}>{renderItem(item)}</div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
   );
-}
+});
