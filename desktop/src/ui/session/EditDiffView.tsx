@@ -13,11 +13,12 @@ import { FilePathButton } from "../right-panel/FilePathButton.tsx";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 import { useRightPanelStore } from "../../stores/rightPanelStore.ts";
 
-/** diff 行的底色：增=ok 系，删=danger 系（与全局语义色一致）。 */
+/** diff 行的底色：ZCode lightweight-diff-preview 公式——14% 行底 + 3px
+    内嵌状态条（token 落 index.css --color-diff-*-row，双主题同源）。 */
 const rowClasses: Readonly<Record<string, string>> = {
   context: "",
-  add: "bg-ok-bg/40",
-  del: "bg-danger-bg/40",
+  add: "bg-diff-added-row shadow-[inset_3px_0_0_var(--color-diff-added)]",
+  del: "bg-diff-removed-row shadow-[inset_3px_0_0_var(--color-diff-removed)]",
   gap: "",
 };
 
@@ -38,12 +39,12 @@ function FileChangeCard({
   const [expanded, setExpanded] = useState(defaultExpanded);
   const project = useWorkspaceStore((state) => state.activePath);
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-surface">
+    <div className="overflow-hidden bg-surface">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
-        className="flex h-10 w-full items-center gap-2 px-3 text-left text-ui-base hover:bg-raised"
+        className="flex h-10 w-full items-center gap-2 px-3 text-left text-ui-base hover:bg-hover"
       >
         <ChevronRightIcon
           className={`size-3.5 shrink-0 text-ink-mute transition-transform ${expanded ? "rotate-90" : ""}`}
@@ -59,7 +60,7 @@ function FileChangeCard({
             {!defaultExpanded && project && (
               <button
                 type="button"
-                className="ml-auto shrink-0 rounded border border-line px-2 py-1 text-ui-sm hover:bg-raised"
+                className="ml-auto shrink-0 rounded border border-line px-2 py-1 text-ui-sm hover:bg-hover"
                 onClick={() => {
                   const panel = useRightPanelStore.getState();
                   panel.gitSource(project, "changes");
@@ -79,24 +80,40 @@ function FileChangeCard({
 
 function DiffRowsView({ diff }: { readonly diff: DiffResult }) {
   if (diff.rows.length === 0) {
-    return <p className="px-2.5 py-1.5 text-xs text-ink-faint">（无差异行）</p>;
+    return <p className="px-3 py-1.5 text-ui-sm text-ink-mute">（无差异行）</p>;
   }
   return (
     <div
-      className="max-h-64 overflow-auto rounded bg-base/70 font-mono text-xs leading-relaxed"
+      className="max-h-60 overflow-auto bg-base font-mono text-xs leading-relaxed text-ink"
       aria-label="行级差异"
     >
       {diff.rows.map((row, index) => (
         <div
           key={index}
-          className={`flex gap-2 px-2.5 whitespace-pre-wrap break-words ${
+          className={`flex gap-2 px-3 whitespace-pre-wrap break-words ${
             rowClasses[row.type] ?? ""
           }`}
         >
-          <span className="w-7 shrink-0 select-none text-right text-ink-ghost">
+          <span
+            className={`w-12 shrink-0 select-none px-2 text-right tabular-nums ${
+              row.type === "add"
+                ? "bg-diff-added-gutter text-diff-added"
+                : row.type === "del"
+                  ? "bg-diff-removed-gutter text-diff-removed"
+                  : "text-ink-subtlest"
+            }`}
+          >
             {row.type === "gap" ? "" : (row.oldNo ?? "")}
           </span>
-          <span className="w-7 shrink-0 select-none text-right text-ink-ghost">
+          <span
+            className={`w-10 shrink-0 select-none border-r border-line px-2 text-right tabular-nums ${
+              row.type === "add"
+                ? "bg-diff-added-gutter text-diff-added"
+                : row.type === "del"
+                  ? "bg-diff-removed-gutter text-diff-removed"
+                  : "text-ink-subtlest"
+            }`}
+          >
             {row.type === "gap" ? "" : (row.newNo ?? "")}
           </span>
           <span
@@ -104,18 +121,16 @@ function DiffRowsView({ diff }: { readonly diff: DiffResult }) {
             className="w-3 shrink-0 select-none text-center"
           >
             {row.type === "add" ? (
-              <span className="text-ok-ink">+</span>
+              <span className="text-diff-added">+</span>
             ) : row.type === "del" ? (
-              <span className="text-danger-ink">−</span>
+              <span className="text-diff-removed">−</span>
             ) : row.type === "gap" ? (
-              <span className="text-ink-ghost">⋯</span>
+              <span className="text-ink-mute">⋯</span>
             ) : null}
           </span>
           <span
             className={`min-w-0 flex-1 ${
-              row.type === "gap"
-                ? "select-none text-ink-ghost"
-                : "text-ink-soft"
+              row.type === "gap" ? "select-none text-ink-mute" : "text-ink"
             }`}
           >
             {row.text}
@@ -131,7 +146,7 @@ function WritePreview({ content }: { readonly content: string }) {
   const preview = useMemo(() => previewLines(content), [content]);
   return (
     <div
-      className="max-h-64 overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-ink-soft"
+      className="max-h-60 overflow-auto bg-base p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-ink"
       aria-label="新文件内容预览"
     >
       {preview.lines.length === 0
@@ -140,7 +155,7 @@ function WritePreview({ content }: { readonly content: string }) {
             <div key={index}>{line.length === 0 ? " " : line}</div>
           ))}
       {preview.truncated ? (
-        <div className="select-none pt-1 text-ink-ghost">
+        <div className="select-none pt-1 text-ink-mute">
           ⋯ 已截断预览，完整内容见「输入」JSON
         </div>
       ) : null}
@@ -170,8 +185,8 @@ function EditCard({
       label="修改片段"
       stats={
         <span>
-          <span className="text-ok-ink">+{diff.added}</span>{" "}
-          <span className="text-danger-ink">−{diff.removed}</span>
+          <span className="text-diff-added">+{diff.added}</span>{" "}
+          <span className="text-diff-removed">−{diff.removed}</span>
         </span>
       }
     >

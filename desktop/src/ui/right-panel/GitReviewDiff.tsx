@@ -49,7 +49,7 @@ export function GitReviewDiff({
       const contextButton = (
         <button
           key={`context-${start}`}
-          className="block w-full bg-info-bg/30 px-3 py-1 text-left text-ink-faint"
+          className="block w-full px-3 py-1 text-left text-ink-mute transition-colors hover:bg-hover"
           onClick={() =>
             setExpanded((old) => {
               const next = new Set(old);
@@ -90,8 +90,8 @@ export function GitReviewDiff({
               data-current-hit={current || undefined}
               className={
                 current
-                  ? "bg-amber-400 text-black outline-2 outline-amber-600"
-                  : "bg-yellow-200 text-black"
+                  ? "bg-find-highlight-active text-ink"
+                  : "bg-find-highlight text-ink"
               }
             >
               {text.slice(start, start + needle.length)}
@@ -104,12 +104,27 @@ export function GitReviewDiff({
       return (
         <div
           key={`row-${displayed[side === "old" ? 0 : 1].length}`}
-          className={`flex min-w-0 ${!present ? "bg-raised" : item.kind === "add" ? "bg-ok-bg" : item.kind === "del" ? "bg-danger-bg" : ""}`}
+          className={`flex min-w-0 ${!present ? "bg-raised" : item.kind === "add" ? "bg-diff-added-row shadow-[inset_3px_0_0_var(--color-diff-added)]" : item.kind === "del" ? "bg-diff-removed-row shadow-[inset_3px_0_0_var(--color-diff-removed)]" : ""}`}
         >
-          <span className="w-10 shrink-0 select-none pr-2 text-right text-ink-faint">
+          {/* 行号格自带 inset 3px 状态条（ZCode gutterStyle boxShadow）：
+              sticky 不透明格会盖住行级的 inset 条，分屏里的增删色条须画在
+              格上才可见（与 GitDiffView/EditDiffView 行首露出条一致） */}
+          <span
+            className={`sticky left-0 z-[1] w-12 shrink-0 select-none border-r border-line px-2 text-right tabular-nums ${
+              !present
+                ? "bg-raised text-ink-subtlest"
+                : item.kind === "add"
+                  ? "bg-diff-added-gutter text-diff-added shadow-[inset_3px_0_0_var(--color-diff-added)]"
+                  : item.kind === "del"
+                    ? "bg-diff-removed-gutter text-diff-removed shadow-[inset_3px_0_0_var(--color-diff-removed)]"
+                    : "bg-base text-ink-subtlest"
+            }`}
+          >
             {present ? (side === "old" ? item.old : item.next) : ""}
           </span>
-          <code className="whitespace-pre pr-3">{parts}</code>
+          <code className="block min-w-0 flex-1 px-3 whitespace-pre">
+            {parts}
+          </code>
         </div>
       );
     };
@@ -133,7 +148,7 @@ export function GitReviewDiff({
       }
     } else if (row.kind === "meta") {
       const meta = (
-        <div key={i} className="bg-info-bg/30 px-3 text-ink-faint">
+        <div key={i} className="px-3 text-ink-soft">
           {row.text}
         </div>
       );
@@ -143,10 +158,13 @@ export function GitReviewDiff({
     }
   }
   return (
+    /* bg-base：ZCode lightweight-diff-preview 根容器 bg-background（desktop
+       等价 token）——增删 14% mix 行与 context 行合成在内容底上，不随右栏
+       surface 提亮 */
     <div
       ref={ref}
       aria-label="Git 左右差异"
-      className="overflow-x-auto font-mono text-xs leading-6"
+      className="overflow-x-auto bg-base font-mono text-xs leading-relaxed text-ink"
     >
       {pageStart > 0 && !match && (
         <button

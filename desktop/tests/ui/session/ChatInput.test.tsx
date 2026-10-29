@@ -101,7 +101,12 @@ describe("ChatInput 悬浮形态", () => {
       modelLabel: "0123456789abcdef0123456789abcdef",
     });
     const { rerender } = render(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={false}
+        onSend={vi.fn()}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     // runtime 无模型信息：回落 sessionStore 的 modelLabel（裸 hash 截 12 位）
     expect(screen.getByTitle(/0123456789abcdef/)).toHaveTextContent(
@@ -120,7 +125,12 @@ describe("ChatInput 悬浮形态", () => {
       },
     });
     rerender(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={false}
+        onSend={vi.fn()}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     expect(screen.getByTitle(/glm-5/)).toHaveTextContent("glm-5.3-flash");
 
@@ -128,7 +138,12 @@ describe("ChatInput 悬浮形态", () => {
     useSessionStore.setState({ modelLabel: null });
     useRuntimeStatusStore.getState().reset();
     rerender(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={false}
+        onSend={vi.fn()}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     expect(screen.getByText("—")).toBeInTheDocument();
   });
@@ -138,7 +153,12 @@ describe("ChatInput 悬浮形态", () => {
       approvalMode: { id: "manual", name: "手动审批" },
     });
     render(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={false}
+        onSend={vi.fn()}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     expect(screen.getByTitle("审批模式")).toHaveTextContent("手动审批");
   });
@@ -146,10 +166,20 @@ describe("ChatInput 悬浮形态", () => {
   it("发送为圆角主钮：空输入禁用、填写后可用并发出", async () => {
     const onSend = vi.fn();
     render(
-      <ChatInput isAgentRunning={false} onSend={onSend} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={false}
+        onSend={onSend}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     const sendButton = screen.getByRole("button", { name: "发送" });
-    expect(sendButton).toHaveClass("rounded-lg");
+    expect(sendButton).toHaveClass(
+      "rounded-lg",
+      "h-7",
+      "bg-brand",
+      "text-foreground-inverse",
+    );
     expect(sendButton).toBeDisabled();
     await userEvent.type(getTextarea(), "悬浮输入");
     expect(sendButton).toBeEnabled();
@@ -157,18 +187,29 @@ describe("ChatInput 悬浮形态", () => {
     expect(onSend).toHaveBeenCalledWith("悬浮输入");
   });
 
-  it("运行中停止钮为圆形危险钮", () => {
+  it("运行中停止钮为 ZCode 式次级钮", () => {
     render(
-      <ChatInput isAgentRunning={true} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={true}
+        onSend={vi.fn()}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     expect(screen.getByRole("button", { name: "停止" })).toHaveClass(
-      "rounded-full",
+      "rounded-lg",
+      "bg-raised",
     );
   });
 
   it("附件占位已移除：功能接入前不留可点却无动作的图标", () => {
     render(
-      <ChatInput isAgentRunning={false} onSend={vi.fn()} onEnqueue={vi.fn()} onCancel={vi.fn()} />,
+      <ChatInput
+        isAgentRunning={false}
+        onSend={vi.fn()}
+        onEnqueue={vi.fn()}
+        onCancel={vi.fn()}
+      />,
     );
     expect(screen.queryByLabelText(/附件/)).not.toBeInTheDocument();
     expect(screen.queryByTitle(/附件/)).not.toBeInTheDocument();
@@ -352,7 +393,9 @@ describe("ChatInput slash 命令面板", () => {
     setup();
     const textarea = getTextarea();
     await userEvent.type(textarea, "看 /cl");
-    expect(screen.queryByRole("listbox", { name: "命令面板" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("listbox", { name: "命令面板" }),
+    ).not.toBeInTheDocument();
     await userEvent.clear(textarea);
     await userEvent.type(textarea, "、");
     expect(

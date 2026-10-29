@@ -1,5 +1,5 @@
 /**
- * 输入区（悬浮形态）：不贴边贴底的圆角卡片——外层 `0 20px 16px` 留白，
+ * 输入区（悬浮形态）：不贴边贴底的圆角卡片——外层 `0 16px 16px` 留白，
  * 内部 max-w-4xl 居中，surface 植面 + 圆角 16 + 投影。
  *
  * - 上行：多行文本（透明背景无边框），Enter 发送 / Shift+Enter 换行，
@@ -63,8 +63,8 @@ import {
 import { draftScopeKey, readDraft, writeDraft } from "./draftStore.ts";
 import { skillNamesFromSources } from "./skillCatalog.ts";
 
-/** 自动增长的高度上限（px）：超过后转入内部滚动。 */
-const MAX_HEIGHT_PX = 192;
+/** 自动增长的高度上限（px）：ZCode 编辑器 max-h-40=160px，超过后转入内部滚动。 */
+const MAX_HEIGHT_PX = 160;
 
 /** 审批模式徽标配色（ZCode 式无框浅植面）：手动（琥珀）/ 自动（蓝）/ 全放行（红，提示风险）。 */
 const modeBadgeClasses: Readonly<Record<string, string>> = {
@@ -97,17 +97,45 @@ function ArrowUpIcon() {
   );
 }
 
-/** 停止：运行中的圆形危险钮内的实心方块。 */
+/** 停止：ZCode 式次级钮（variant=secondary）内的实心方块（SquareIcon size-4）。 */
 function StopIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
       fill="currentColor"
       aria-hidden={true}
-      className="h-3.5 w-3.5"
+      className="h-4 w-4"
     >
       <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
+  );
+}
+
+/**
+ * 发送/停止钮的悬停提示（ZCode ControlHintTooltip 等价物）：desktop 无
+ * Radix/tw-animate，用纯 CSS group-hover/focus-within 挂在 `group/send`
+ * 包裹层上。按 ZCode 无描述变体对齐：容器 px-2.5 py-1 pr-1（kbd 自带右距，
+ * ControlHintTooltip.tsx:104-106）、sideOffset=2 → 距钮 2px（:64）、
+ * TooltipContent 无阴影（tooltip.tsx:64）；kbd h-4 bg-tooltip-tag text-ui-xs
+ * （ControlShortcutBadge.tsx:11）。
+ */
+function SendHintTooltip({
+  label,
+  shortcut,
+}: {
+  readonly label: string;
+  readonly shortcut: string;
+}) {
+  return (
+    <span
+      role="tooltip"
+      className="pointer-events-none absolute bottom-full right-0 z-30 mb-0.5 hidden items-center gap-2 whitespace-nowrap rounded-lg border border-line bg-tooltip px-2.5 py-1 pr-1 text-ui-sm font-medium text-tooltip-ink composer-pop group-focus-within/send:flex group-hover/send:flex"
+    >
+      {label}
+      <kbd className="inline-flex h-4 items-center rounded-sm bg-tooltip-tag px-1.5 font-mono text-ui-xs font-medium text-tooltip-tag-ink">
+        {shortcut}
+      </kbd>
+    </span>
   );
 }
 
@@ -568,24 +596,26 @@ export function ChatInput({
   };
 
   return (
-    /* 悬浮留白：不贴边贴底（左右 20px、底部 16px）；
+    /* 悬浮留白：不贴边贴底（ZCode dock px-4 pb-4：左右 16px、底部 16px）；
        relative 承载提及面板（弹在整卡上方，盖住消息流底部而不被卡片的
        overflow-hidden 裁掉） */
-    <div className="relative shrink-0" style={{ padding: "0 20px 16px" }}>
+    <div className="relative shrink-0" style={{ padding: "0 16px 16px" }}>
       {slash !== null ? (
-        <div className="absolute inset-x-5 bottom-full mb-1 z-30">
+        <div className="absolute inset-x-4 bottom-full mb-1 z-30">
           <div
             role="listbox"
             aria-label="命令面板"
-            className={`mx-auto max-h-72 overflow-y-auto rounded-xl border border-line-strong bg-surface ${widthClass}`}
+            className={`mx-auto max-h-56 overflow-y-auto rounded-2xl border border-line bg-surface px-1 py-0.75 shadow-xs composer-pop ${widthClass}`}
           >
             {slashOptions.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-ink-faint">没有匹配的命令</p>
+              <p className="px-4 py-3 text-ui-base text-ink-subtlest">
+                没有匹配的命令
+              </p>
             ) : (
               slashRows.map(({ key, header, item, index }) => (
-                <div key={key}>
+                <div key={key} className="py-px">
                   {header !== null ? (
-                    <p className="border-b border-line/60 px-3 py-1 text-xs font-medium tracking-wide text-ink-ghost">
+                    <p className="flex h-8 items-center px-3 text-ui-base font-semibold uppercase tracking-wide text-ink-soft">
                       {header}
                     </p>
                   ) : null}
@@ -598,16 +628,18 @@ export function ChatInput({
                       event.preventDefault();
                       selectSlashItem(item);
                     }}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+                    className={`flex h-8 w-full items-center gap-3 rounded-xl px-3 text-left transition-colors ${
                       index === slash.index
-                        ? "bg-raised text-ink"
-                        : "text-ink-soft hover:bg-raised/60"
+                        ? "bg-selected text-ink"
+                        : "text-ink-soft hover:bg-hover"
                     }`}
                   >
-                    <span className="shrink-0 font-mono text-sm">
+                    {/* label 上限 40% + 截断、描述 14px（ZCode
+                        slashCommandPanelSections.tsx:34/:39） */}
+                    <span className="max-w-[40%] shrink-0 truncate text-ui-base font-medium">
                       /{item.label}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">
+                    <span className="min-w-0 flex-1 truncate text-ui-base text-ink-subtlest">
                       {item.description}
                     </span>
                   </button>
@@ -618,23 +650,23 @@ export function ChatInput({
         </div>
       ) : null}
       {mention !== null ? (
-        <div className="absolute inset-x-5 bottom-full mb-1 z-30">
+        <div className="absolute inset-x-4 bottom-full mb-1 z-30">
           <div
             role="listbox"
             aria-label="提及候选"
-            className={`mx-auto max-h-60 overflow-y-auto rounded-xl border border-line-strong bg-surface ${widthClass}`}
+            className={`mx-auto max-h-56 overflow-y-auto rounded-2xl border border-line bg-surface px-1 py-0.75 shadow-xs composer-pop ${widthClass}`}
           >
             {mentionOptions.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-ink-faint">
+              <p className="px-4 py-3 text-ui-base text-ink-subtlest">
                 {filesState.for === activePath
                   ? "没有匹配的文件或 skill"
                   : "正在读取文件列表…"}
               </p>
             ) : (
               mentionRows.map(({ key, header, option, index }) => (
-                <div key={key}>
+                <div key={key} className="py-px">
                   {header !== null ? (
-                    <p className="border-b border-line/60 px-3 py-1 text-xs font-medium tracking-wide text-ink-ghost">
+                    <p className="flex h-8 items-center px-3 text-ui-base font-semibold uppercase tracking-wide text-ink-soft">
                       {header}
                     </p>
                   ) : null}
@@ -646,16 +678,16 @@ export function ChatInput({
                       event.preventDefault();
                       insertMention(option);
                     }}
-                    className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left font-mono text-sm transition-colors ${
+                    className={`flex h-8 w-full items-center gap-3 rounded-xl px-3 text-left transition-colors ${
                       index === mention.index
-                        ? "bg-raised text-ink"
-                        : "text-ink-soft hover:bg-raised/60"
+                        ? "bg-selected text-ink"
+                        : "text-ink-soft hover:bg-hover"
                     }`}
                   >
-                    <span className="shrink-0 text-ink-faint">
+                    <span className="shrink-0 text-ink-mute">
                       {option.kind === "file" ? "@" : "✦"}
                     </span>
-                    <span className="min-w-0 flex-1 truncate">
+                    <span className="min-w-0 flex-1 truncate text-ui-base font-medium">
                       {option.label}
                     </span>
                   </button>
@@ -666,10 +698,10 @@ export function ChatInput({
         </div>
       ) : null}
       <div
-        className={`composer-card mx-auto w-full overflow-hidden rounded-2xl border border-line bg-surface ${widthClass}`}
+        className={`composer-card mx-auto w-full overflow-hidden rounded-2xl border border-line bg-surface transition-[max-width] duration-150 ease-out ${widthClass}`}
       >
-        {/* 上行：透明无边框的多行输入 */}
-        <div className="px-4 pb-1 pt-3">
+        {/* 上行：透明无边框的多行输入（ZCode 壳 p-3：文字距卡缘 12px） */}
+        <div className="px-3 pb-0 pt-3">
           <textarea
             ref={textareaRef}
             value={draft}
@@ -690,12 +722,13 @@ export function ChatInput({
                 : "输入消息，Enter 发送，Shift+Enter 换行，/ 命令，@ 引用"
             }
             rows={1}
-            className={`max-h-48 min-h-[2.5rem] w-full resize-none overflow-y-auto rounded bg-transparent text-ui-base leading-relaxed text-ink outline-none placeholder:text-ink-ghost disabled:cursor-not-allowed disabled:opacity-60`}
+            className={`max-h-40 min-h-[2.5rem] w-full resize-none overflow-y-auto rounded bg-transparent text-ui-base leading-5 text-ink outline-none placeholder:text-ink-subtlest disabled:cursor-not-allowed disabled:opacity-60`}
           />
         </div>
         {/* 下行：左=skills/mcp + 审批模式 + 自动应答开关；右=模型 + 上下文圆环 + 发送/停止
-            （ZCode 式：无分隔横线，底行直接贴在输入区下） */}
-        <div className="mt-1 flex items-center gap-1.5 px-2 py-1.5">
+            （ZCode 式：无分隔横线；工具栏行 items-end + 壳 p-3：与编辑器间距 12px、
+            底距 12px，ChatPromptEditor.tsx:440-443） */}
+        <div className="mt-3 flex items-end gap-1.5 px-3 pb-3">
           {approvalMode !== null ? (
             <span
               className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
@@ -746,33 +779,46 @@ export function ChatInput({
           {/* 按钮形态（评审确认）：运行中「有草稿=发送（入队），无草稿=停止」；
               空闲时恒为发送。Esc 仍可全局停止（SessionView）。 */}
           {isAgentRunning && draft.trim().length === 0 ? (
-            /* 停止：圆形危险钮（同 btnDanger 植面，形状为圆形） */
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={turnState === "cancelling"}
-              aria-label={turnState === "cancelling" ? "正在取消" : "停止"}
-              title={
-                turnState === "cancelling"
-                  ? "正在取消，等待确认"
-                  : "停止（Esc）"
-              }
-              className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-danger-line bg-danger-bg/40 text-danger-ink transition-colors hover:bg-danger-bg/70"
-            >
-              <StopIcon />
-            </button>
+            /* 停止：ZCode variant=secondary 次级钮（raised 即 zai secondary
+               #363636 同档），非圆形危险钮；Esc 提示挂在自绘 tooltip 上 */
+            <span className="group/send relative shrink-0">
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={turnState === "cancelling"}
+                aria-label={turnState === "cancelling" ? "正在取消" : "停止"}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-raised text-ink transition-colors hover:bg-raised/80 disabled:pointer-events-none disabled:opacity-50"
+              >
+                <StopIcon />
+              </button>
+              <SendHintTooltip
+                label={
+                  turnState === "cancelling" ? "正在取消，等待确认" : "停止"
+                }
+                shortcut="Esc"
+              />
+            </span>
           ) : (
-            /* 发送：圆形主钮（运行中即「加入队列」） */
-            <button
-              type="button"
-              onClick={submit}
-              disabled={disabled || draft.trim().length === 0}
-              aria-label={isAgentRunning ? "加入队列" : "发送"}
-              title={isAgentRunning ? "加入队列，当前轮结束后按序发出" : "发送"}
-              className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-(--color-info) text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <ArrowUpIcon />
-            </button>
+            /* 发送：rounded-lg 主钮（ZCode size-7 rounded-lg bg-brand
+               text-foreground-inverse hover:bg-brand/80：zai-dark 白底黑箭头
+               #ffffff/#000000，zai-light 黑底白字）；运行中即「加入队列」 */
+            <span className="group/send relative shrink-0">
+              <button
+                type="button"
+                onClick={submit}
+                disabled={disabled || draft.trim().length === 0}
+                aria-label={isAgentRunning ? "加入队列" : "发送"}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand text-foreground-inverse transition-colors hover:bg-brand/80 disabled:pointer-events-none disabled:opacity-50"
+              >
+                <ArrowUpIcon />
+              </button>
+              <SendHintTooltip
+                label={
+                  isAgentRunning ? "加入队列，当前轮结束后按序发出" : "发送"
+                }
+                shortcut="Enter"
+              />
+            </span>
           )}
         </div>
       </div>

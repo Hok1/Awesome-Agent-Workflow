@@ -108,7 +108,7 @@ export function StatusChipMenu({
           setIsOpen((current) => !current);
         }}
         onKeyDown={handleKeyDown}
-        className={`press flex items-center gap-1 rounded px-1 py-0.5 text-sm transition-colors ${toneClass} ${
+        className={`flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm transition-colors hover:bg-hover ${toneClass} ${
           isOpen && tone !== "warn" ? "text-ink-soft" : ""
         }`}
       >
@@ -136,7 +136,7 @@ export function StatusChipMenu({
                 transform: "translateY(-100%)",
                 marginTop: "-6px",
               }}
-              className="z-50 w-64 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-md"
+              className="z-50 w-64 overflow-hidden rounded-xl border border-line bg-surface p-2.5 shadow-md composer-pop-up"
             >
               {children}
             </div>,
@@ -150,7 +150,7 @@ export function StatusChipMenu({
 /** 菜单分区标题。 */
 export function MenuSectionLabel({ text }: { readonly text: string }) {
   return (
-    <p className="border-b border-line px-3 py-1.5 text-sm font-medium text-ink-ghost">
+    <p className="border-b border-line px-3 py-1.5 text-sm font-medium text-ink-mute">
       {text}
     </p>
   );
@@ -174,7 +174,9 @@ export function MenuItemButton({
       role="menuitem"
       onClick={onClick}
       className={`flex w-full items-start gap-2 px-3 py-1.5 text-left text-sm transition-colors ${
-        danger ? "text-danger-ink hover:bg-danger-bg/40" : "text-ink-soft hover:bg-raised/70"
+        danger
+          ? "text-danger-ink hover:bg-danger-bg/40"
+          : "text-ink-soft hover:bg-hover"
       }`}
     >
       <span aria-hidden={true} className="w-3 shrink-0 text-ok-ink">
@@ -207,18 +209,21 @@ export function MenuItemRow({
       type="button"
       role="menuitem"
       onClick={onClick}
-      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-raised/70 ${
+      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover ${
         selected ? "text-ink" : "text-ink-soft"
       }`}
     >
       {icon !== undefined ? (
-        <span aria-hidden={true} className="shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5">
+        <span
+          aria-hidden={true}
+          className="shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5"
+        >
           {icon}
         </span>
       ) : null}
       <span className="min-w-0 flex-1">
         <span className="block text-sm">{title}</span>
-        <span className="mt-0.5 block text-xs leading-snug text-ink-faint">
+        <span className="mt-0.5 block text-ui-sm leading-snug text-ink-mute">
           {description}
         </span>
       </span>

@@ -112,7 +112,9 @@ export function ContextRing(): React.JSX.Element | null {
           className={ringClass}
         />
       </svg>
-      <span className="text-2xs tabular-nums text-ink-mute">
+      {/* 百分比 12px 档（ZCode CodingPlanContextUsage.tsx:151：
+          text-ui-sm tabular-nums） */}
+      <span className="text-ui-sm tabular-nums text-ink-mute">
         {Math.floor(pct)}%
       </span>
     </span>
@@ -135,9 +137,9 @@ export function ModelTag(): React.JSX.Element {
   const effectiveCurrentId =
     currentModelId ??
     (label !== null
-      ? availableModels.find(
+      ? (availableModels.find(
           (model) => model.modelId === label || model.name === label,
-        )?.modelId ?? null
+        )?.modelId ?? null)
       : null);
   if (availableModels.length === 0) {
     return (
@@ -145,7 +147,7 @@ export function ModelTag(): React.JSX.Element {
         className="flex min-w-0 items-center px-1 py-0.5 text-sm text-ink-mute"
         title={hoverLines([label ?? "", runtime.modelProvider ?? ""])}
       >
-        <span className="truncate font-mono">
+        <span className="truncate">
           {label === null ? "—" : shortModelLabel(label)}
         </span>
       </span>
@@ -156,7 +158,7 @@ export function ModelTag(): React.JSX.Element {
       title={`当前模型：${label ?? "—"}（点击切换，仅本会话生效）`}
       menuLabel="模型选择"
       label={
-        <span className="max-w-40 truncate font-mono">
+        <span className="max-w-40 truncate">
           {label === null ? "—" : shortModelLabel(label)}
         </span>
       }
@@ -166,11 +168,7 @@ export function ModelTag(): React.JSX.Element {
         {availableModels.map((model) => (
           <MenuItemRow
             key={model.modelId}
-            title={
-              <span className="block truncate font-mono text-xs">
-                {model.name}
-              </span>
-            }
+            title={<span className="block truncate">{model.name}</span>}
             description={
               model.description !== null &&
               model.description !== undefined &&
@@ -238,9 +236,7 @@ export function TurnStatusRow(): React.JSX.Element | null {
         </span>
       ) : turnState === "cancelling" ? (
         <span className="text-ink-faint">
-          {isWaitingForActivity
-            ? "仍在等待取消确认…"
-            : "正在取消，等待确认…"}
+          {isWaitingForActivity ? "仍在等待取消确认…" : "正在取消，等待确认…"}
         </span>
       ) : isWaitingForActivity ? (
         <span className="text-ink-faint">暂未收到新进度，仍在等待响应…</span>
