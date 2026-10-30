@@ -56,8 +56,11 @@ describe("ZCode 风格 Git 审查", () => {
         <GitPanel project="D:/repo" />
       </StrictMode>,
     );
+    // 模型 a：diff 默认收起——两行文件头在，差异体不挂载（缓存仍预取）
     await waitFor(() =>
-      expect(screen.getAllByLabelText("Git 左右差异")).toHaveLength(2),
+      expect(
+        screen.getAllByRole("button", { name: /展开 (src\/a\.txt|b\.txt)/ }),
+      ).toHaveLength(2),
     );
     expect(panelService.gitDiff).toHaveBeenCalledTimes(2);
     expect(
@@ -67,6 +70,13 @@ describe("ZCode 风格 Git 审查", () => {
     expect(
       screen.getByRole("button", { name: "Unversioned Files" }),
     ).toHaveAttribute("aria-expanded", "false");
+
+    // 点文件头展开：差异体挂载
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "展开 src/a.txt" })[0]!,
+    );
+    expect(await screen.findByLabelText("Git 左右差异")).toBeInTheDocument();
+
     await userEvent.click(
       screen.getByRole("button", { name: "Unversioned Files" }),
     );
@@ -115,6 +125,10 @@ describe("ZCode 风格 Git 审查", () => {
     const oneFile = { ...snapshot, changes: [staged] };
     vi.spyOn(panelService, "gitStatus").mockResolvedValue(oneFile);
     render(<GitPanel project="D:/repo" />);
+    // 模型 a：diff 默认收起，数据到位后点文件头展开
+    await userEvent.click(
+      (await screen.findAllByRole("button", { name: "展开 src/a.txt" }))[0]!,
+    );
     await screen.findAllByText("target A");
     let finish: ((value: GitDiff) => void) | undefined;
     vi.spyOn(panelService, "gitStatus").mockResolvedValue({ ...oneFile });
@@ -151,6 +165,10 @@ describe("ZCode 风格 Git 审查", () => {
       )
       .mockResolvedValue(diff("fresh"));
     const view = render(<GitPanel project="D:/repo" />);
+    // 模型 a：diff 默认收起，数据到位后点文件头展开
+    await userEvent.click(
+      (await screen.findAllByRole("button", { name: "展开 src/a.txt" }))[0]!,
+    );
     await screen.findAllByRole("button", { name: "收起 src/a.txt" });
     vi.spyOn(panelService, "gitStatus").mockResolvedValue({ ...snapshot });
     await userEvent.click(screen.getByRole("button", { name: "刷新" }));
