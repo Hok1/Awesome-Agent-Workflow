@@ -146,7 +146,7 @@ export function openSessionFromEntry(
         // 连接建立后再落 activePath（RealSessionRuntime 对同路径幂等）
         useWorkspaceStore.getState().openWorkspace(path);
       }
-      const switched = await switchRealSession(sessionId);
+      const switched = await switchRealSession(sessionId, path);
       if (!isLatest()) return;
       if (switched) {
         useSessionStore.getState().openSession(sessionId);

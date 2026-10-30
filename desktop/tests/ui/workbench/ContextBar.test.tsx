@@ -44,9 +44,11 @@ vi.mock("../../../src/aaw/tauriProcessRunner.ts", () => {
 // 钮的测试只关心编排动作与乐观视图切换，不关心 agent 生命周期
 vi.mock("../../../src/ui/realRuntime.ts", () => ({
   focusExistingSession: vi.fn(() => false),
-  openRealWorkspace: vi.fn(async () => "sess-new"),
-  switchRealSession: vi.fn(async () => true),
-  closeRealRuntime: vi.fn(async () => undefined),
+  preloadSessionLists: vi.fn(),
+  preloadSessionList: vi.fn(),
+  openRealWorkspace: vi.fn(() => Promise.resolve("sess-new")),
+  switchRealSession: vi.fn(() => Promise.resolve(true)),
+  closeRealRuntime: vi.fn(() => Promise.resolve()),
   unfocusRealRuntime: vi.fn(),
   hasRunningSessions: vi.fn(() => false),
 }));
@@ -245,7 +247,7 @@ describe("ContextBar 顶栏动作排（ZCode WorkspaceHeaderActionSection 形态
     expect(screen.getByTestId("side-pane-toggle")).toBeInTheDocument();
   });
 
-  it("help-menu-button：单项「打开诊断」切诊断覆盖层（再点同页取消语义不变）", async () => {
+  it("help-menu-button：单项「打开诊断」开设置覆盖层（诊断并入设置页签）", async () => {
     seedSessionView();
     render(<ContentArea />);
     await userEvent.click(screen.getByTestId("help-menu-button"));
@@ -253,7 +255,7 @@ describe("ContextBar 顶栏动作排（ZCode WorkspaceHeaderActionSection 形态
     await userEvent.click(
       within(menu).getByRole("menuitem", { name: "打开诊断" }),
     );
-    expect(useWorkbenchUiStore.getState().overlay).toBe("diagnostics");
+    expect(useWorkbenchUiStore.getState().overlay).toBe("settings");
   });
 
   it("窗控三钮的 testid 挂点：非 Tauri 测试环境不渲染（窗控行为见 WindowControls.test）", () => {
@@ -409,17 +411,6 @@ describe("ContextBar 全屏页", () => {
     expect(useWorkbenchUiStore.getState().overlay).toBeNull();
   });
 
-  it("诊断全屏页：页名 + 返回按钮，返回关闭覆盖层", async () => {
-    useWorkbenchUiStore.setState({ overlay: "diagnostics" });
-    render(<ContentArea />);
-
-    const bar = screen.getByLabelText("上下文条");
-    expect(
-      within(bar).getByRole("heading", { name: "诊断" }),
-    ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "返回" }));
-    expect(useWorkbenchUiStore.getState().overlay).toBeNull();
-  });
 });
 
 describe("ContextBar 收起态顶栏新建入口（ZCode DesktopTopOverlay 强制显示位）", () => {

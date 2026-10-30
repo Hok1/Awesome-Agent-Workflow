@@ -53,6 +53,7 @@ import {
   type ContentView,
   type OverlayView,
 } from "../../stores/workbenchUiStore.ts";
+import { openSettingsOverlayTab } from "../SettingsPage.tsx";
 import { btnSecondary } from "../controls.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
 import {
@@ -487,7 +488,6 @@ function OverlayBar({
  *  的文档 / 社区 / 反馈 / 导出日志 / 检查更新无对应能力，只含「打开诊断」
  *  （toggleOverlay 再点同页取消语义不变）。 */
 function HelpMenuButton() {
-  const toggleOverlay = useWorkbenchUiStore((state) => state.toggleOverlay);
   const { menu, open, dismiss } = useBarMenuController();
   // closing 态（退场动画中）视作已关：aria-expanded 翻 false，触发器
   // 再点即重开（open 已清挂起的退场计时器）
@@ -516,7 +516,7 @@ function HelpMenuButton() {
                 label: "打开诊断",
                 icon: <ActivityIcon className="h-4 w-4" />,
                 onSelect: () => {
-                  toggleOverlay("diagnostics");
+                  openSettingsOverlayTab("diagnostics");
                 },
               },
             ],
