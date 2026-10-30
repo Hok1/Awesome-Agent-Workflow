@@ -5,12 +5,12 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
 
 ## 职责
 
-- 主界面（App.tsx 组装）：上下文条（全应用唯一顶栏：视图上下文 +
-  agent 标识 + 待办下拉；原 46px 顶栏的重复 crumb 已并入）+ 左缘图标
-  窄栏（侧边栏开关 / 新建会话 / 设置 / 诊断，常驻 48px）+ 项目树
-  （收藏 / 最近打开 → 项目 → 会话子节点，可整列收起）+ 内容区（随树
-  选中项与窄栏入口切换）；权限与提问对话框（对应 ACP 的
-  `request_permission` 与 `chrys/request_input`）挂在模态层；
+- 主界面（App.tsx 组装）：顶栏（全应用唯一顶栏，48px：视图上下文 +
+  动作排——帮助 / 终端 / 分栏 / 窗控）+ 项目树（置顶带 / 最近打开 →
+  项目 → 会话子节点，可整列收起，收起后开关移入顶栏左端）+ 内容区
+  （随树选中项切换）；设置 / 诊断入口在侧栏底部 footer；权限与提问
+  对话框（对应 ACP 的 `request_permission` 与 `chrys/request_input`）
+  挂在模态层；
 - 项目总览（`workbench/ProjectOverview`）：项目状态行（健康摘要 chip +
   唯一主动作「新建会话」，已连接也一样——会话入口在树上，总览只管
   管理 + 发起）
@@ -28,12 +28,18 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
 ## 已实现
 
 - `workbench/`：主界面骨架。
-  - `IconRail.tsx`：图标窄栏（常驻 48px：侧边栏开关、新建会话、设置 /
-    诊断入口；侧边栏收起即隐藏树列，无第二条窄条）；
+  - `SidebarFooter.tsx`：侧栏底部 footer（身份位 + 统一设置菜单入口 +
+    设置齿轮；设置 / 诊断入口在此，ZCode WorkspaceSidebarFooter 同位）；
+  - `SidebarToggle.tsx`：侧栏开关钮（树列顶部拖拽带常驻，侧栏收起后
+    移入顶栏左端）；
+  - `NewTaskButtonGroup.tsx`：顶部新建会话行（ZCode 同名同形；全局新建
+    会话的唯一入口）；
+  - `TerminalPanel.tsx`：底部终端面板（execute 工具输出的只读回放，
+    固定高 + 拖拽手柄；顶栏终端钮开合）；
   - `ProjectTree.tsx`：左栏项目树（项目 / 会话双视角、段头【+】面板、
-    收藏 / 最近打开分组、健康徽标、会话子节点与「+ 新会话」，未连接项目
-    点会话先自动连接再切换；连接点仅在已连接 / 连接中 / 失败时出现，
-    会话视角空态给「去项目列表」出口）。**任何项目都可展开**：子区域里
+    置顶带 / 最近打开分组、健康徽标、会话子节点，未连接项目
+    点会话先自动连接再切换；会话视角空态给「去项目列表」出口）。
+    **任何项目都可展开**：子区域里
     常驻「＋ 新会话」，空项目在树上不是死路。选中是「内容区正在显示谁」，
     全树只有一个：会话视图高亮会话行（项目行只是展开的父节点），总览
     高亮项目行；行选中态统一取 `controls.tsx` 的 `rowSelectedClass`
@@ -47,10 +53,11 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
     agent 会话索引，不可用则扫描会话元数据（`src/agents/chrysSessions.ts`），按归一化路径补进
     `sessionStore.sessionsByPath`。**只补空缺项目**，不覆盖
     session/list 的权威快照；
-  - `ContextBar.tsx`：全应用唯一顶栏（44px，内容区顶部）：左侧是随视图
-    切换的上下文（会话标题 / 项目名 / 连接徽标 / AAW 面板开关——有工作流
-    数据时标签即「SR-xxx · 步骤 n」/ 关闭项目 / 返回按钮），右侧是共用的全局区
-    （agent 标识 + 待办下拉）；空态下只渲染全局区；
+  - `ContextBar.tsx`：全应用唯一顶栏（48px，内容区顶部，ZCode
+    WorkspaceHeader 形态）：左侧是随视图切换的标题区（Folder 钮 / 会话
+    标题（双击改名）+ 更多菜单 / 项目名 + 路径 / 关闭项目 / 返回按钮），
+    右侧是动作排（帮助 → 终端 → 分栏 → 窗控，gap-0.5 无分隔线）；空态下
+    左段留空（侧栏收起时只有开关）；
   - `ContentArea.tsx`：内容区视图容器（项目总览 / 会话 / 设置 / 诊断，
     状态在 `stores/workbenchUiStore`）；
   - `ProjectOverview.tsx`：项目总览（健康检查不随进页自动发起——首次

@@ -17,12 +17,16 @@ import DiagnosticsPage from "../DiagnosticsPage.tsx";
 import { SessionView } from "../session/SessionView.tsx";
 import ProjectOverview from "./ProjectOverview.tsx";
 import { PanelWorkspace } from "../right-panel/RightPanel.tsx";
+import { TerminalPanel } from "./TerminalPanel.tsx";
 
 /** 内容区视图分支（无 tab UI，纯状态驱动）。 */
 function ContentArea() {
   const treeView = useWorkbenchUiStore((state) => state.treeView);
   const overlay = useWorkbenchUiStore((state) => state.overlay);
   const contextPath = useWorkbenchUiStore((state) => state.contextPath);
+  const isTerminalOpen = useWorkbenchUiStore(
+    (state) => state.isTerminalOpen,
+  );
   const view = treeView;
 
   let body: React.ReactNode;
@@ -47,6 +51,12 @@ function ContentArea() {
           {body}
         </PanelWorkspace>
       </div>
+      {/* 底部终端面板（ZCode conversation 列底部 ResizablePanel 形态的
+          desktop 简化版：固定高 + 拖拽手柄，不做分栏 ResizablePanelGroup）；
+          全屏功能页激活时不渲染 */}
+      {overlay === null && isTerminalOpen && (
+        <TerminalPanel project={contextPath} />
+      )}
       {overlay !== null && (
         <div className="min-h-0 flex-1 overflow-hidden">
           {overlay === "settings" ? <SettingsPage /> : <DiagnosticsPage />}

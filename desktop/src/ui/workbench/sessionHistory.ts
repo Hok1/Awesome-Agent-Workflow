@@ -31,7 +31,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
 export async function hydrateSessionHistory(): Promise<void> {
   const workspace = useWorkspaceStore.getState();
   const knownPaths = [
-    ...workspace.favoritePaths,
+    ...workspace.pinnedPaths,
     ...workspace.recentWorkspaces.map((entry) => entry.path),
   ];
   if (knownPaths.length === 0) {

@@ -23,36 +23,12 @@ import {
   resolvePanelLayout,
 } from "../workbench/panelLayout.ts";
 
+/** 右栏的工具分段（模块内常量，ProjectPanel 的分段切换行使用）。 */
 const tools: readonly [PanelTool, string][] = [
   ["aaw", "AAW"],
   ["files", "文件"],
   ["git", "Git"],
 ];
-export function PanelButtons({ project }: { project: string }) {
-  const panel = useRightPanelStore(
-    (state) => state.projects[pathKey(project)] ?? emptyPanel,
-  );
-  return (
-    <div className="flex shrink-0 gap-1" aria-label="项目工具入口">
-      {tools.map(([id, label]) => (
-        <button
-          key={id}
-          type="button"
-          aria-label={`打开${label}面板`}
-          aria-pressed={panel.open && panel.active === id}
-          className={`rounded border border-line px-2 py-1 text-xs ${panel.open && panel.active === id ? "bg-info-bg text-info-ink" : "hover:bg-raised"}`}
-          onClick={() => {
-            const store = useRightPanelStore.getState();
-            if (panel.open && panel.active === id) store.collapse(project);
-            else store.tool(project, id);
-          }}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /** 内容区的子节点位置保持固定，右栏开关仅改变布局，不重挂聊天输入框。 */
 export function PanelWorkspace({

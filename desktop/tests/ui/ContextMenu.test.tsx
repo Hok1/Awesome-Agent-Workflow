@@ -215,7 +215,8 @@ describe("ContextMenu × ProjectTree 行键控", () => {
     window.localStorage.clear();
     useWorkspaceStore.setState({
       recentWorkspaces: [{ path: PATH, lastOpenedAt: "2026-10-20T10:00:00Z" }],
-      favoritePaths: [],
+      pinnedPaths: [],
+      pinnedSessions: [],
     });
     useSessionStore.setState({ sessions: [], sessionsByPath: {} });
     useWorkbenchUiStore.setState({
@@ -235,16 +236,16 @@ describe("ContextMenu × ProjectTree 行键控", () => {
     // jsdom 行矩形全 0：x=rect.right=0 夹取到 8px 边距，y=rect.bottom+4 同
     expect(menu.style.left).toBe("8px");
     expect(menu.style.top).toBe("8px");
-    // 条目 = 新建会话 / 收藏 / 从列表移除（分隔线隔开危险项）
+    // 条目 = 新建会话 / 置顶 / 从列表移除（分隔线隔开危险项）
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
       "新建会话",
-      "收藏",
+      "置顶",
       "从列表移除",
     ]);
   });
 
-  it("项目行 Shift+F10 同样开启菜单；会话行右键是「打开会话」单项", () => {
+  it("项目行 Shift+F10 同样开启菜单；会话行右键是「打开会话 + 置顶」（ZCode TaskActionMenuContent 的 pin 同位）", () => {
     useSessionStore.setState({
       sessionsByPath: {
         [PATH]: [{ id: "s-1", title: "会话 · 甲", updatedAt: null }],
@@ -260,9 +261,12 @@ describe("ContextMenu × ProjectTree 行键控", () => {
     // 项目默认展开（有会话）：右键会话子行
     fireEvent.contextMenu(screen.getByRole("button", { name: /会话 · 甲/ }));
     const sessionMenu = screen.getByRole("menu", { name: "会话菜单" });
+    // 条目 = 打开会话 / 置顶（分隔线隔开；置顶进侧栏最顶的置顶任务带）
     expect(
-      within(sessionMenu).getByRole("menuitem", { name: "打开会话" }),
-    ).toBeInTheDocument();
-    expect(within(sessionMenu).getAllByRole("menuitem")).toHaveLength(1);
+      within(sessionMenu).getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(["打开会话", "置顶"]);
+    expect(
+      within(sessionMenu).getAllByRole("separator"),
+    ).toHaveLength(1);
   });
 });

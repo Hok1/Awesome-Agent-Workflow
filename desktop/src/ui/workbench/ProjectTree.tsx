@@ -11,17 +11,16 @@ import {
  *
  * 两个视角（切换经 workbenchUiStore 持久化，入口在列表头「切换视角」菜单，
  * radio 单选语义）：
- * - 「项目」：收藏 / 最近打开两组项目节点；项目行 = folder 图标（收起
- *   合口 / 展开开口双态）+ 目录名 + 行尾健康徽标与连接状态点（仅已连接 /
- *   连接中 / 连接失败时出现）；右键 / 键盘 ContextMenu 键弹项目菜单
- *   （新建会话 / 收藏·取消收藏 / 从列表移除——原行尾常驻星与 ✕ 收进菜单，
- *   对齐 ZCode TaskActionMenu 的「动作收进菜单」形态）；展开 chevron 不
- *   常驻——悬停行时浮现在行尾，双击整行切换收起 / 展开；单击项目名仍是
- *   进总览；
+ * - 「项目」：置顶任务带（会话级置顶，ZCode TID_PROJECT_PINNED_TASKS，
+ *   侧栏最顶）→ 置顶项目带（无分组头，ZCode SortableProjects 即无头行
+ *   带；按 lastOpenedAt 倒序）+「项目」分组；项目行 = folder 图标（收起
+ *   合口 / 展开开口双态，置顶行悬停时被钉子图替换）+ 目录名 + 行尾健康
+ *   徽标（仅检查过时出现）；右键 / 键盘 ContextMenu 键弹项目菜单
+ *   （新建会话 / 置顶·取消置顶 / 从列表移除——对齐 ZCode TaskActionMenu
+ *   的「动作收进菜单」形态）；展开 chevron 不常驻——悬停行时浮现在行尾，
+ *   双击整行切换收起 / 展开；单击项目名仍是进总览；
  *   会话子行整块缩进，仅标题 + 前导活动徽标 / 随行徽标，分页呈现（默认
- *   最近 SESSION_LIST_PAGE_SIZE 条，「加载更多」逐页纳新，见 ProjectChildren），
- *   末尾常驻「＋ 新会话」灰行——**空项目也有**，否则新加的项目在树上
- *   没有任何发起对话的入口；
+ *   最近 SESSION_LIST_PAGE_SIZE 条，「加载更多」逐页纳新，见 ProjectChildren）；
  * - 「会话」：跨项目的「最近活跃会话」扁平列表（sessionsByPath 拍平，
  *   按 updatedAt 降序），两行卡显示会话标题 + 所属项目目录名（不显示
  *   时间，#196 定案）。
@@ -53,12 +52,13 @@ import {
  * - 点「＋ 新会话」/ 右键菜单「新建会话」/【+】面板的项目行 →
  *   startNewSession：**真开一条空对话**（forceNew 跳过历史恢复）。见
  *   sessionStart 的说明；
- * - 「收起侧边栏」只在图标窄栏（IconRail）有一处入口，树头不再重复；
- *   「设置 / 诊断」入口同样在窄栏底部。
+ * - 侧栏开关在顶部拖拽带（ZCode project-sidebar 的 h-12 拖拽带同位）；
+ *   「设置 / 诊断」入口在底部 footer（SidebarFooter，ZCode
+ *   WorkspaceSidebarFooter 同位）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
+import { useWorkspaceStore, sessionPinKey } from "../../stores/workspaceStore.ts";
 import { useSessionStore } from "../../stores/sessionStore.ts";
 import {
   SESSION_LIST_PAGE_SIZE,
@@ -72,10 +72,13 @@ import {
   type ContextMenuEntry,
   type MenuPlacement,
 } from "../ContextMenu.tsx";
-import { ChevronDownIcon, ChevronRightIcon, ClockIcon, CornerDownRightIcon, FolderGlyph, ListFilterIcon, LoaderIcon, PlusIcon, StarFilledIcon, StarOutlineIcon, XIcon, EllipsisIcon, MessageCirclePlusIcon, WorkflowIcon } from "../icons.tsx";
+import { ChevronDownIcon, ChevronRightIcon, ClockIcon, CornerDownRightIcon, FolderGlyph, ListFilterIcon, LoaderIcon, PlusIcon, PinIcon, PinOffIcon, XIcon, EllipsisIcon, MessageCirclePlusIcon, WorkflowIcon } from "../icons.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
 import type { SessionSummary } from "../../stores/sessionStore.ts";
 import AddProjectPanel from "./AddProjectPanel.tsx";
+import { NewTaskButtonGroup } from "./NewTaskButtonGroup.tsx";
+import { SidebarFooter } from "./SidebarFooter.tsx";
+import { SidebarToggle } from "./SidebarToggle.tsx";
 import { flattenRecentSessions, openSessionFromEntry } from "./sessionEntry.ts";
 import { startNewSession } from "./sessionStart.ts";
 
@@ -248,25 +251,25 @@ function isContextMenuKey(event: { key: string; shiftKey: boolean }): boolean {
 }
 
 /**
- * 项目节点的一行：folder（双态图标）+ 目录名 + 行尾徽标与 chevron；
- * 收藏 / 移除收进右键菜单（ZCode TaskActionMenu 形态）；展开 chevron
- * 悬停浮现在行尾，双击整行切换收起 / 展开。
+ * 项目节点的一行：folder（双态图标，置顶行悬停时被钉子图替换）+ 目录名 +
+ * 行尾徽标与 chevron；置顶 / 移除收进右键菜单（ZCode TaskActionMenu 形态）；
+ * 展开 chevron 悬停浮现在行尾，双击整行切换收起 / 展开。
  */
 function ProjectNodeRow({
   path,
-  isFavorite,
+  isPinned,
   isExpanded,
   isSelected,
   menu,
 }: {
   readonly path: string;
-  readonly isFavorite: boolean;
+  readonly isPinned: boolean;
   readonly isExpanded: boolean;
   readonly isSelected: boolean;
   readonly menu: SidebarMenuApi;
 }) {
   const selectWorkspace = useWorkspaceStore((state) => state.selectWorkspace);
-  const toggleFavorite = useWorkspaceStore((state) => state.toggleFavorite);
+  const togglePinned = useWorkspaceStore((state) => state.togglePinned);
   const removeFromRecent = useWorkspaceStore((state) => state.removeFromRecent);
   const toggleExpanded = useWorkbenchUiStore((state) => state.toggleExpanded);
   const openProjectOverview = useWorkbenchUiStore(
@@ -275,7 +278,7 @@ function ProjectNodeRow({
   const clearContextIf = useWorkbenchUiStore((state) => state.clearContextIf);
   const name = basenameOf(path);
 
-  // 菜单条目与原行尾按钮逐字同源（toggleFavorite/removeFromRecent/
+  // 菜单条目与原行尾按钮逐字同源（togglePinned/removeFromRecent/
   // clearContextIf），数据流不动
   function buildEntries(): ContextMenuEntry[] {
     return [
@@ -289,15 +292,15 @@ function ProjectNodeRow({
       },
       { type: "separator" },
       {
-        id: "favorite",
-        label: isFavorite ? "取消收藏" : "收藏",
-        icon: isFavorite ? (
-          <StarFilledIcon className="h-4 w-4" />
+        id: "pin",
+        label: isPinned ? "取消置顶" : "置顶",
+        icon: isPinned ? (
+          <PinOffIcon className="h-4 w-4" />
         ) : (
-          <StarOutlineIcon className="h-4 w-4" />
+          <PinIcon className="h-4 w-4" />
         ),
         onSelect: () => {
-          toggleFavorite(path);
+          togglePinned(path);
         },
       },
       {
@@ -336,7 +339,7 @@ function ProjectNodeRow({
           );
         }
       }}
-      className={`group ml-2 flex h-8 min-w-0 items-center gap-1 rounded-lg pr-1 transition-colors ${
+      className={`group group/project-row ml-2 flex h-8 min-w-0 items-center gap-1 rounded-lg pr-1 transition-colors ${
         isSelected ? rowSelectedClass : "hover:bg-surface-hover"
       }`}
     >
@@ -350,7 +353,21 @@ function ProjectNodeRow({
         className={`flex h-8 min-w-0 flex-1 items-center justify-start gap-2 rounded-lg pl-2.5 pr-1 text-left ${focusVisibleRing}`}
         title={path}
       >
-        <FolderIcon isExpanded={isExpanded} />
+        {/* 前导槽（ZCode ProjectNodeContent.tsx:231-255 同构）：置顶提示
+            复用固定槽位，仅悬停时替换图标，避免行尾常驻钉子占位 */}
+        <span
+          className="flex size-4 shrink-0 items-center justify-center"
+          aria-hidden="true"
+        >
+          <span
+            className={isPinned ? "group-hover/project-row:hidden" : "inline-flex"}
+          >
+            <FolderIcon isExpanded={isExpanded} />
+          </span>
+          {isPinned ? (
+            <PinIcon className="hidden size-4 text-ink-subtle group-hover/project-row:block" />
+          ) : null}
+        </span>
         <span className="min-w-0 flex-1 truncate text-ui-base text-ink-subtle transition-colors group-hover:text-ink">
           {name}
         </span>
@@ -561,10 +578,22 @@ function SessionActivityBadge({
   return <span className="shrink-0 text-ui-sm text-ink-mute">已停止</span>;
 }
 
-/** 会话行右键菜单：打开会话（ZCode 会话行菜单的 desktop 有用子集）。 */
+/** 会话的置顶判定（订阅单一键的 includes 布尔，避免整组数组订阅）。 */
+function useSessionPinned(path: string, sessionId: string): boolean {
+  return useWorkspaceStore((state) =>
+    state.pinnedSessions.includes(sessionPinKey(path, sessionId)),
+  );
+}
+
+/**
+ * 会话行右键菜单（ZCode 会话行菜单 TaskActionMenuContent 的 desktop
+ * 等位）：打开会话 + 置顶/取消置顶（ZCode TaskActionMenuContent.tsx:89
+ * 的 pin/unpin 同位——置顶首先是会话级，入口就住在会话菜单里）。
+ */
 function buildSessionMenuEntries(
   path: string,
   session: SessionSummary,
+  isPinned: boolean,
 ): ContextMenuEntry[] {
   return [
     {
@@ -575,11 +604,50 @@ function buildSessionMenuEntries(
         void openSessionFromEntry(path, session.id);
       },
     },
+    { type: "separator" },
+    {
+      id: "pin",
+      label: isPinned ? "取消置顶" : "置顶",
+      icon: isPinned ? (
+        <PinOffIcon className="h-4 w-4" />
+      ) : (
+        <PinIcon className="h-4 w-4" />
+      ),
+      onSelect: () => {
+        useWorkspaceStore.getState().toggleSessionPinned(path, session.id);
+      },
+    },
   ];
 }
 
+/**
+ * 置顶键 → 可渲染的行数据：键里存的是 pathKey 归一路径，展示/打开要用
+ * 会话缓存里的**原样路径**（大小写保真，非 Windows 文件系统不吃小写），
+ * 按归一键反查；缓存缺失（冷启动历史未回填完）时标题回落「会话」，
+ * 行仍可点（openSessionFromEntry 自带失败回滚）。键形状损坏的丢弃。
+ */
+function resolvePinnedSession(
+  key: string,
+  sessionsByPath: Readonly<Record<string, readonly SessionSummary[]>>,
+): { readonly path: string; readonly session: SessionSummary } | null {
+  const separator = key.indexOf("\u0000");
+  if (separator === -1) {
+    return null;
+  }
+  const storedPath = key.slice(0, separator);
+  const sessionId = key.slice(separator + 1);
+  const cached = Object.entries(sessionsByPath).find(
+    ([path]) => pathKey(path) === storedPath,
+  );
+  const session = cached?.[1].find((item) => item.id === sessionId);
+  return {
+    path: cached?.[0] ?? storedPath,
+    session: session ?? { id: sessionId, title: "会话", updatedAt: null },
+  };
+}
+
 /** 会话子行（项目树视角的树叶子）：前导槽 + 标题 + 随行徽标，右键弹
- *  「打开会话」菜单。 */
+ *  「打开会话 / 置顶」菜单（置顶行进侧栏最顶的置顶任务带，原位保留）。 */
 function SessionNode({
   path,
   session,
@@ -590,6 +658,7 @@ function SessionNode({
   readonly menu: SidebarMenuApi;
 }) {
   const isActive = useIsSessionActive(path, session.id);
+  const isPinned = useSessionPinned(path, session.id);
 
   return (
     <li
@@ -599,7 +668,7 @@ function SessionNode({
           event.clientX,
           event.clientY,
           "会话菜单",
-          buildSessionMenuEntries(path, session),
+          buildSessionMenuEntries(path, session, isPinned),
         );
       }}
       onKeyDown={(event) => {
@@ -608,7 +677,7 @@ function SessionNode({
           menu.openAtRect(
             event.currentTarget.getBoundingClientRect(),
             "会话菜单",
-            buildSessionMenuEntries(path, session),
+            buildSessionMenuEntries(path, session, isPinned),
           );
         }
       }}
@@ -719,7 +788,7 @@ function SectionAddButton({
   );
 }
 
-/** 树的一个分组（收藏 / 最近打开）：分组头对照 ZCode
+/** 树的一个分组（项目）：分组头对照 ZCode
  *  WorkspacePurposeSection.tsx:97-114——标题钮带 hover 显现的折叠
  *  chevron（点击收起/展开本组），行尾动作位 hover 显现、面板展开时
  *  常显（has-[[aria-expanded=true]]）。分组头恒在（空组只空行，
@@ -763,9 +832,105 @@ function TreeSection({
   );
 }
 
-/** 项目视角：收藏 / 最近打开两组项目节点。分组头（含【+】动作位）恒在，
- *  新建面板挂树体顶部（ZCode 列表区形态：列表头只有标题与视角菜单，
- *  新建入口在各分组标题行尾）。 */
+/** 置顶任务带的一行：钉子前导槽（本带身份标记）+ 会话标题 + 随行徽标；
+ *  title=所属项目路径（跨项目行带，悬停可见归属），右键菜单与会话行同源
+ *  （打开 / 取消置顶）。 */
+function PinnedSessionRow({
+  path,
+  session,
+  menu,
+}: {
+  readonly path: string;
+  readonly session: SessionSummary;
+  readonly menu: SidebarMenuApi;
+}) {
+  const isActive = useIsSessionActive(path, session.id);
+  const isPinned = useSessionPinned(path, session.id);
+
+  return (
+    <li
+      onContextMenu={(event) => {
+        event.preventDefault();
+        menu.openAtPointer(
+          event.clientX,
+          event.clientY,
+          "会话菜单",
+          buildSessionMenuEntries(path, session, isPinned),
+        );
+      }}
+      onKeyDown={(event) => {
+        if (isContextMenuKey(event)) {
+          event.preventDefault();
+          menu.openAtRect(
+            event.currentTarget.getBoundingClientRect(),
+            "会话菜单",
+            buildSessionMenuEntries(path, session, isPinned),
+          );
+        }
+      }}
+    >
+      <button
+        type="button"
+        aria-current={isActive ? "true" : undefined}
+        title={path}
+        onClick={() => {
+          void openSessionFromEntry(path, session.id);
+        }}
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg py-1 pl-2.5 pr-1 text-left transition-[background-color,border-color,box-shadow] ${
+          isActive ? rowSelectedClass : "hover:bg-surface-hover"
+        } ${focusVisibleRing}`}
+      >
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          <PinIcon className="h-4 w-4 shrink-0 text-ink-subtle" />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-ui-base text-ink">
+          {session.title}
+        </span>
+        <SessionTrailingBadge path={path} id={session.id} />
+      </button>
+    </li>
+  );
+}
+
+/**
+ * 置顶任务带（ZCode project-sidebar/index.tsx:252-257 TID_PROJECT_PINNED_TASKS
+ * 同位）：置顶首先是**会话级**，本带是侧栏最顶的行带，项目级置顶带在其下
+ * （index.tsx:258-262）。无分组头（ZCode SortableProjects 同款形态），仅
+ * 有置顶会话时渲染；序 = 置顶先后（最新置顶在前，store 的 toggleSessionPinned
+ * 前插）。置顶的会话行在项目树原位保留——本带是快捷入口，不搬移树结构。
+ */
+function PinnedSessionsBand({ menu }: { readonly menu: SidebarMenuApi }) {
+  const pinnedSessions = useWorkspaceStore((state) => state.pinnedSessions);
+  const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
+  if (pinnedSessions.length === 0) {
+    return null;
+  }
+  const rows = pinnedSessions
+    .map((key) => resolvePinnedSession(key, sessionsByPath))
+    .filter((row) => row !== null);
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <ul aria-label="置顶任务" className="flex flex-col gap-0.5">
+      {rows.map((row) => (
+        <PinnedSessionRow
+          key={`${row.path}-${row.session.id}`}
+          path={row.path}
+          session={row.session}
+          menu={menu}
+        />
+      ))}
+    </ul>
+  );
+}
+
+/** 项目视角：置顶带（无分组头）+「项目」分组。置顶带对齐 ZCode
+ *  SortableProjects（:24-56）的无头行带形态——仅 pinned.length>0 时渲染，
+ *  按 lastOpenedAt 倒序（desktop 无 dnd 基建，拖拽排序缺口如实标注）；
+ *  「项目」分组头（含【+】动作位）恒在，新建面板挂树体顶部
+ *  （ZCode 列表区形态：新建入口在分组标题行尾 + 顶部新建行）。
+ *  会话级置顶任务带在本带之上（PinnedSessionsBand，ZCode 侧栏同序）。 */
 function ProjectsView({
   treeView,
   menu,
@@ -774,7 +939,7 @@ function ProjectsView({
   readonly menu: SidebarMenuApi;
 }) {
   const recentWorkspaces = useWorkspaceStore((state) => state.recentWorkspaces);
-  const favoritePaths = useWorkspaceStore((state) => state.favoritePaths);
+  const pinnedPaths = useWorkspaceStore((state) => state.pinnedPaths);
   const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
   const contextPath = useWorkbenchUiStore((state) => state.contextPath);
   const expandedOverrides = useWorkbenchUiStore(
@@ -787,16 +952,31 @@ function ProjectsView({
   const lastOpenedByPath = new Map(
     recentWorkspaces.map((entry) => [entry.path, entry.lastOpenedAt] as const),
   );
-  const favorites = favoritePaths.map((path) => ({
-    path,
-    lastOpenedAt: lastOpenedByPath.get(path) ?? null,
-  }));
+  // 置顶带按 lastOpenedAt 倒序（null 沉底）；store 的 pinnedPaths 是
+  // 置顶集合（无序语义），展示序在此派生
+  const pinned = pinnedPaths
+    .map((path) => ({
+      path,
+      lastOpenedAt: lastOpenedByPath.get(path) ?? null,
+    }))
+    .sort((a, b) => {
+      if (a.lastOpenedAt === null && b.lastOpenedAt === null) {
+        return 0;
+      }
+      if (a.lastOpenedAt === null) {
+        return 1;
+      }
+      if (b.lastOpenedAt === null) {
+        return -1;
+      }
+      return a.lastOpenedAt < b.lastOpenedAt ? 1 : -1;
+    });
   const recentOnly = recentWorkspaces.filter(
-    (entry) => !favoritePaths.includes(entry.path),
+    (entry) => !pinnedPaths.includes(entry.path),
   );
-  const knownProjects = [...favorites, ...recentOnly];
+  const knownProjects = [...pinned, ...recentOnly];
 
-  function renderProject(path: string, isFavorite: boolean): React.ReactNode {
+  function renderProject(path: string, isPinned: boolean): React.ReactNode {
     const sessions =
       sessionsByPath[path] ??
       Object.entries(sessionsByPath).find(
@@ -814,10 +994,10 @@ function ProjectsView({
     const isSelected =
       pathKey(contextPath ?? "") === pathKey(path) && treeView !== "session";
     return (
-      <li key={`${isFavorite ? "fav" : "recent"}-${path}`}>
+      <li key={`${isPinned ? "pinned" : "recent"}-${path}`}>
         <ProjectNodeRow
           path={path}
-          isFavorite={isFavorite}
+          isPinned={isPinned}
           isExpanded={isExpanded}
           isSelected={isSelected}
           menu={menu}
@@ -832,23 +1012,24 @@ function ProjectsView({
   return (
     <div className="relative flex flex-col gap-3">
       {/* 新建面板：零高绝对定位壳挂树体顶部，面板从列表顶端下探
-          （触发器在各分组标题行尾，壳与分组头同宽） */}
+          （触发器在分组标题行尾，壳与分组头同宽） */}
       {isAddPanelOpen && (
         <div className="absolute inset-x-0 top-0 z-40">
           <AddProjectPanel onClose={closeAddPanel} triggerRef={addTriggerRef} />
         </div>
       )}
-      <TreeSection
-        title="收藏"
-        action={<SectionAddButton triggerRef={addTriggerRef} />}
-      >
-        {favorites.length === 0
-          ? null
-          : favorites.map((entry) => renderProject(entry.path, true))}
-      </TreeSection>
+      {/* 置顶任务带（ZCode TID_PROJECT_PINNED_TASKS：置顶首先是会话级，
+          本带在项目级置顶带之上） */}
+      <PinnedSessionsBand menu={menu} />
+      {/* 置顶行带（ZCode SortableProjects 同款：无分组头，行带置于最顶） */}
+      {pinned.length > 0 ? (
+        <ul aria-label="置顶" className="flex flex-col gap-0.5">
+          {pinned.map((entry) => renderProject(entry.path, true))}
+        </ul>
+      ) : null}
 
       <TreeSection
-        title="最近打开"
+        title="项目"
         action={<SectionAddButton triggerRef={addTriggerRef} />}
       >
         {recentOnly.length === 0
@@ -878,6 +1059,7 @@ function RecentSessionRow({
   readonly menu: SidebarMenuApi;
 }) {
   const isActive = useIsSessionActive(path, session.id);
+  const isPinned = useSessionPinned(path, session.id);
 
   return (
     <li
@@ -887,7 +1069,7 @@ function RecentSessionRow({
           event.clientX,
           event.clientY,
           "会话菜单",
-          buildSessionMenuEntries(path, session),
+          buildSessionMenuEntries(path, session, isPinned),
         );
       }}
       onKeyDown={(event) => {
@@ -896,7 +1078,7 @@ function RecentSessionRow({
           menu.openAtRect(
             event.currentTarget.getBoundingClientRect(),
             "会话菜单",
-            buildSessionMenuEntries(path, session),
+            buildSessionMenuEntries(path, session, isPinned),
           );
         }
       }}
@@ -1084,9 +1266,22 @@ export function ProjectTree() {
       aria-label="项目树"
       className="flex h-full min-h-0 flex-col overflow-hidden bg-sidebar"
     >
-      {/* 顶部 48px 空区：ZCode 列表区的 h-12 拖拽带等位（纯构图对位，
-          窗口拖拽仍由 ContextBar 的 data-tauri-drag-region 承担） */}
-      <div aria-hidden={true} className="h-12 shrink-0" />
+      {/* 顶部 48px 拖拽带 + 侧栏开关（ZCode project-sidebar/index.tsx
+          :221-223 的 h-12 [app-region:drag] 等位；开关=DesktopTopOverlay
+          的 PanelLeftClose 同位）。空白处可拖动窗口，开关钮自带命中区 */}
+      <div
+        className="flex h-12 shrink-0 items-center gap-1 px-2"
+        data-tauri-drag-region=""
+      >
+        <SidebarToggle collapsed={false} />
+      </div>
+      {/* 顶部导航行（ZCode ProjectSidebarNavigation:28-34 的 NewTaskButtonGroup
+          同位；desktop 无自动化 / 插件能力只迁新建）——侧栏收起后的全局
+          新建入口由顶栏左端承接（ContextBar 的收起态新建钮，ZCode
+          DesktopTopOverlay 的强制显示位） */}
+      <div className="flex flex-col gap-1 px-2 py-3">
+        <NewTaskButtonGroup />
+      </div>
       <div className="flex min-h-0 flex-1 flex-col border-t border-line/50 pt-3">
         <ListHeader
           treeViewMode={treeViewMode}
@@ -1108,6 +1303,9 @@ export function ProjectTree() {
           </div>
         </div>
       </div>
+      {/* 底部 footer（ZCode WorkspaceSidebarFooter 同位）：设置 / 诊断
+          入口沉底，随树列隐藏 */}
+      <SidebarFooter />
       {/* 单例菜单（右键/下拉共用，portal 挂 body 不受 aside 裁剪） */}
       {menu !== null && (
         <ContextMenu

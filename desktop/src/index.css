@@ -221,7 +221,6 @@ html.theme-warm {
      内容区 #161616；侧栏比内容亮一档，靠 1px 白 10% 描边分隔） */
   --color-base: #161616; /* 内容区底：Zai dark background */
   --color-sidebar: #2b2b2b; /* 左列：Zai dark background-win-alt（实测 ZCode 暗色侧栏 = 输入框色） */
-  --color-rail: #1e1e1e; /* 图标窄栏：比侧栏深一档（Codex 式色调分层，不靠硬线） */
   --color-surface: #2b2b2b; /* 卡片 / 面板 / 输入卡：Zai dark card */
   --color-raised: #363636; /* 浮起元素 / 行悬停：Zai dark menu-hover / secondary */
 
@@ -344,6 +343,14 @@ html.theme-warm {
      rgba(255,255,255,0.1)）：菜单描边/分隔线用 border——暗色下 line
      #2e2e2e 叠 #2b2b2b 卡片近不可见，border 按白 10% 合成可辨 */
   --color-border: rgb(255 255 255 / 0.1);
+  /* 危险实底（ZCode --color-destructive = var(--color-red-600)，
+     styles.css:282——仓库未重定义 red-600，落到 Tailwind v4 默认红
+     oklch(57.7% 0.245 27.325)，比 --color-danger 的 #ff5c5c 深一档）。
+     这里写字面值而非 var 引用：默认调色板的 --color-red-600 只有被
+     工具类直接用到才会产出，var 链会悬空。两主题同值（ZCode 未随主题
+     重定义）。注意 --color-danger（#ff5c5c）仍是 Zai 红族的状态灯色，
+     不与 destructive 实底混用 */
+  --color-destructive: oklch(57.7% 0.245 27.325);
   /* 危险实底上的文字（ZCode --color-destructive-foreground zai-dark
      styles.css:785 / zai-light :620，两主题皆白） */
   --color-danger-contrast: #ffffff;
@@ -364,7 +371,6 @@ html.theme-warm {
 html.theme-warm {
   --color-base: #f8f8f8; /* 内容区底：Zai light background */
   --color-sidebar: #ececee; /* 左列：Zai light background-win-alt（实测 ZCode 浅色侧栏） */
-  --color-rail: #e4e4e4; /* 图标窄栏：比侧栏深一档（Codex 式色调分层，不靠硬线） */
   --color-surface: #ffffff; /* 卡片 / 面板：Zai light card */
   --color-raised: #dcdcdc; /* 浮起元素 / 行悬停（随窄栏档位下移，保持悬停可辨） */
 

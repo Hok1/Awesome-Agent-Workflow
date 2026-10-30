@@ -49,7 +49,11 @@ function resetAll(): void {
   });
   useWorkspaceStore.getState().closeWorkspace();
   useWorkspaceStore.getState().clearSelection();
-  useWorkspaceStore.setState({ recentWorkspaces: [], favoritePaths: [] });
+  useWorkspaceStore.setState({
+    recentWorkspaces: [],
+    pinnedPaths: [],
+    pinnedSessions: [],
+  });
   useWorkbenchUiStore.setState({
     treeView: "project-overview",
     contextPath: null,

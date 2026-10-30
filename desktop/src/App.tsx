@@ -1,18 +1,19 @@
 import { attachSessionNotifications } from "./ui/sessionNotifications.ts";
 import { useSessionActivityStore } from "./stores/sessionActivityStore.ts";
 /**
- * 应用主布局（组装层）：图标窄栏 + 树状视图 + 内容区。
+ * 应用主布局（组装层）：树状视图 + 内容区。
  *
- * - 顶栏只有一层：内容区顶部的上下文条（ContextBar，44px）承载视图上下文
- *   （返回 / 项目名 / 连接徽标 / 动作）与行尾全局区（agent 标识 + 「待办」
- *   下拉）。原先「App 顶栏 46px + 上下文条 44px」两层各显示一次项目名，
- *   已合并——项目名只出现一次。功能页（设置 / 诊断）激活时呈全屏语义：
- *   顶栏按钮组与侧边栏树列都隐藏，内容区只剩该页 + 上下文条「← 返回」；
- * - 主体：左缘常驻 48px 图标窄栏（IconRail：侧边栏开关 / 新建会话 /
- *   设置 / 诊断，任何视图下都在）｜项目树列（项目 / 会话双视角，
- *   「收起」直接隐藏整列并持久化，没有第二条窄条；展开时右缘拖宽
- *   热区一并渲染，内容区自动占满）｜内容区（项目总览 / 会话 / 入口
- *   向导 / 设置 / 诊断，随左栏选中项与功能页切换，见 ContentArea）；
+ * - 顶栏只有一层：内容区顶部的顶栏（ContextBar，48px）承载视图上下文
+ *   （返回 / 会话标题 / 项目名 / 动作排）与行尾全局区（帮助 / 终端 /
+ *   分栏 / 窗控）。原先「App 顶栏 46px + 上下文条 44px」两层各显示一次
+ *   项目名，已合并——项目名只出现一次。功能页（设置 / 诊断）激活时呈
+ *   全屏语义：顶栏动作排与侧边栏树列都隐藏，内容区只剩该页 + 顶栏
+ *   「← 返回」；设置 / 诊断入口在侧栏底部 footer（SidebarFooter），侧栏
+ *   开关在树列顶部拖拽带（收起后移入顶栏左端）；
+ * - 主体：项目树列（项目 / 会话双视角，「收起」直接隐藏整列并持久化，
+ *   收起后开关移入顶栏左端；展开时右缘拖宽热区一并渲染，内容区自动
+ *   占满）｜内容区（项目总览 / 会话 / 入口向导 / 设置 / 诊断，随左栏
+ *   选中项与功能页切换，见 ContentArea）；
  * - 模态层：权限审批（ApprovalModal）挂在应用根节点；结构化问答改为
  *   会话内停靠面板（QuestionDock），焦点项由 approvalStore 的 activeId
  *   决定；
@@ -46,7 +47,6 @@ import {
   LEFT_DEFAULT_PX,
   LEFT_MIN_PX,
 } from "./ui/workbench/columnWidths.ts";
-import { IconRail, ICON_RAIL_WIDTH_PX } from "./ui/workbench/IconRail.tsx";
 import { ProjectTree } from "./ui/workbench/ProjectTree.tsx";
 import { hydrateSessionHistory } from "./ui/workbench/sessionHistory.ts";
 import ContentArea from "./ui/workbench/ContentArea.tsx";
@@ -59,9 +59,9 @@ import { ToastHost } from "./ui/ToastHost.tsx";
 applyPersistedColumnWidths();
 
 /**
- * 主体：左缘常驻 48px 图标窄栏 + 项目树列（可整体隐藏）+ 内容区。
- * 功能页覆盖层激活时呈全屏语义：树列隐藏，窄栏保留（入口仍可点），
- * 内容区自身只渲染该页 + 上下文条「← 返回」。
+ * 主体：项目树列（可整体隐藏）+ 内容区。
+ * 功能页覆盖层激活时呈全屏语义：树列隐藏，内容区自身只渲染该页 +
+ * 顶栏「← 返回」。
  */
 function WorkbenchShell() {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
@@ -83,21 +83,19 @@ function WorkbenchShell() {
       style={{
         // 展开态：栏间距由 ColumnResizer 自身（10px 热区）承担，不叠加
         // gap——可抓取面积与视觉分隔一致，看得见的线就是能拖的地方；
-        // 收起态：树列整体隐藏（窄栏本身就是常驻 icon 列，无第二条
-        // 窄条），拖宽热区一并隐藏，内容区自动占满
+        // 收起态：树列整体隐藏（拖宽热区一并隐藏），内容区自动占满
         gridTemplateColumns: hideSidebar
-          ? `${ICON_RAIL_WIDTH_PX}px 0px 0px minmax(0, 1fr)`
-          : `${ICON_RAIL_WIDTH_PX}px min(var(${LEFT_WIDTH_VAR}, ${LEFT_DEFAULT_PX}px), ${sidebarMaximum}px) auto minmax(0, 1fr)`,
+          ? `0px 0px minmax(0, 1fr)`
+          : `min(var(${LEFT_WIDTH_VAR}, ${LEFT_DEFAULT_PX}px), ${sidebarMaximum}px) auto minmax(0, 1fr)`,
       }}
     >
-      <IconRail />
       <div
         hidden={hideSidebar}
-        className="col-start-2 row-start-1 h-full min-h-0 overflow-hidden"
+        className="col-start-1 row-start-1 h-full min-h-0 overflow-hidden"
       >
         <ProjectTree />
       </div>
-      <div hidden={hideSidebar} className="col-start-3 row-start-1 h-full">
+      <div hidden={hideSidebar} className="col-start-2 row-start-1 h-full">
         <ColumnResizer
           cssVarName={LEFT_WIDTH_VAR}
           storageKey={LEFT_WIDTH_STORAGE_KEY}
@@ -109,7 +107,7 @@ function WorkbenchShell() {
         />
       </div>
       <main
-        style={{ gridColumn: 4, gridRow: 1 }}
+        style={{ gridColumn: 3, gridRow: 1 }}
         className="flex min-h-0 min-w-0 flex-col"
       >
         <ContentArea />
@@ -273,7 +271,7 @@ function RealSessionRuntime() {
 function SessionHistoryBinding() {
   // 依赖项取「项目集合」本身：加入新项目即重跑一次（已补充过的项目幂等）
   const knownCount = useWorkspaceStore(
-    (state) => state.recentWorkspaces.length + state.favoritePaths.length,
+    (state) => state.recentWorkspaces.length + state.pinnedPaths.length,
   );
   useEffect(() => {
     void hydrateSessionHistory();
