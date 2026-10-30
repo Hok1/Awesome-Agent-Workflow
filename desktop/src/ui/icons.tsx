@@ -225,6 +225,15 @@ export function HandIcon(props: IconProps) {
   );
 }
 
+/** 对勾（菜单 radio 选中指示，ZCode DropdownMenuRadioItem 的 Lucide Check 同款）。 */
+export function CheckIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </Svg>
+  );
+}
+
 /** 盾牌对勾（设置 · 会话与审批分区标）。 */
 export function ShieldCheckIcon(props: IconProps) {
   return (
@@ -367,6 +376,27 @@ export function FileIcon(props: IconProps) {
     <Svg {...props}>
       <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
       <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+    </Svg>
+  );
+}
+
+/** 视图筛选（Lucide list-filter）。侧栏列表头「切换视角」触发器。 */
+export function ListFilterIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 6h18" />
+      <path d="M7 12h10" />
+      <path d="M10 18h4" />
+    </Svg>
+  );
+}
+
+/** 时钟（Lucide clock）。视角菜单「最近会话」项。 */
+export function ClockIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
     </Svg>
   );
 }

@@ -35,7 +35,6 @@ export function ConversationNavigator({
     estimateSize: () => 10,
     overscan: 6,
     getItemKey: (index) => items[index]?.id ?? index,
-    initialRect: { width: 36, height: 400 },
   });
   const activeIndex = items.findIndex((item) => item.id === activeId);
   const selected = items.find((item) => item.id === previewId);
@@ -61,8 +60,20 @@ export function ConversationNavigator({
   };
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
-    if (activeIndex >= 0 && items.length >= 2)
+    if (activeIndex >= 0 && items.length >= 2) {
       virtualizer.scrollToIndex(activeIndex, { align: "auto" });
+      const element = railRef.current;
+      if (!element) return;
+      // 目录从尾部一次扩展到上千项时，scrollToIndex 与 virtualizer 的
+      // measurement 更新处于同一个 commit，Chromium 可能合并 scroll 通知。
+      // 补发通知只同步 rail observer，确保活动项对应的可视窗口立即挂载；
+      // 缺了这一步虚拟窗口会停在原地——轨道已滚到底却仍渲染顶部刻度，
+      // 底部刻度永远不出现（ZCode ConversationTurnNavigator 同款补丁）。
+      window.queueMicrotask(() => {
+        if (railRef.current !== element) return;
+        element.dispatchEvent(new Event("scroll"));
+      });
+    }
   }, [activeIndex, items.length, virtualizer]);
   useLayoutEffect(() => {
     if (!previewId) return;

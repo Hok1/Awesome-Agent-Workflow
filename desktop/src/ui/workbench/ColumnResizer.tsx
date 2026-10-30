@@ -154,15 +154,16 @@ export function ColumnResizer({
         setWidthVar(cssVarName, defaultWidthPx);
         persistWidth(storageKey, defaultWidthPx);
       }}
-      className="group relative flex h-full w-1.5 shrink-0 cursor-ew-resize touch-none items-stretch bg-transparent"
+      className="group relative flex h-full w-1 shrink-0 cursor-ew-resize touch-none items-stretch bg-transparent outline-none"
     >
-      {/* 指示条(ZCode web 回退色形态):2px 圆头短棒、上下内缩、灰色
-          bg-ink-ghost/60,常态 opacity-0,hover / 拖拽同色淡入——只动
-          透明度,无宽度跳变。钉在真实栏界(左栏 = 热区左缘,右栏 =
-          热区右缘),不存在错位。 */}
+      {/* 指示条(ZCode separator after 形态,WorkspaceShellLayout.tsx:2313-2335):
+          2px 圆头短棒、上下内缩(inset-y-2)、foreground-subtlest/50 灰,
+          常态 opacity-0,hover / 键盘聚焦 / 拖拽同色淡入——只动透明度,
+          无宽度跳变。钉在真实栏界(左栏 = 热区左缘,右栏 = 热区右缘),
+          不存在错位。 */}
       <span
         aria-hidden={true}
-        className={`pointer-events-none absolute top-2 bottom-2 w-0.5 rounded-full bg-ink-ghost/60 opacity-0 transition-opacity group-hover:opacity-100 ${
+        className={`pointer-events-none absolute inset-y-2 w-0.5 rounded-full bg-ink-subtlest/50 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 ${
           isDragging ? "opacity-100" : ""
         } ${growDirection === "end" ? "left-0" : "right-0"}`}
       />
