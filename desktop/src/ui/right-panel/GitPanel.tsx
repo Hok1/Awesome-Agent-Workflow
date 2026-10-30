@@ -17,6 +17,8 @@ import { createGitDiffCache } from "../../core/gitDiffCache.ts";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   FolderGlyph,
   RefreshIcon,
 } from "../../ui/icons.tsx";
@@ -26,6 +28,10 @@ import { GitReviewDiff } from "./GitReviewDiff.tsx";
 import { useRightPanelStore } from "../../stores/rightPanelStore.ts";
 import { pathKey } from "../../core/panelPaths.ts";
 export { GitDiffView } from "./GitDiffView.tsx";
+
+/** 已消费的 reveal 游标（模块级，跨 GitPanel 挂载存续）：区分「新点击」
+ *  与「切页签回来」——前者触发展开波次，后者保留用户整理的树。 */
+let lastSeenRevealRevision = 0;
 
 export function GitPanel({ project }: { project: string }) {
   const result = useProjectGit(project);
@@ -83,15 +89,26 @@ function GitReview({
     untracked: reveal?.source === "untracked",
   });
   // 悬浮卡点击（gitReveal.revision 自增）为一次「展开波次」：对应组的
-  // 文件树按波次重挂载并全量展开。挂载时已存在的 reveal 不算波次，
-  // 避免切页签回来把用户整理好的树重新摊开。
-  const [revealWave, setRevealWave] = useState(0);
+  // 文件树按波次重挂载并全量展开。波次判定用模块级游标——GitPanel 在
+  // 点胶囊时才首次挂载，若只看「挂载后 reveal 是否变化」，首次点击会被
+  // seenReveal 的初始化吞掉（点胶囊永远不展开树的根因）；游标跨挂载
+  // 存续，切页签回来（revision 未变）则不会把整理好的树重新摊开。
+  const [revealWave, setRevealWave] = useState(() =>
+    reveal !== undefined && reveal.revision > lastSeenRevealRevision
+      ? reveal.revision
+      : 0,
+  );
   const [openedUntracked, setOpenedUntracked] = useState<Set<string>>(
     new Set(),
   );
   const treeRef = useRef<HTMLElement>(null);
   const pendingLocation = useRef<string | null>(null);
   const [spin, setSpin] = useState(0);
+  // 文件树整体展开/收起信号（波次计数）：下传两组 GitFileTree 消费
+  const [treeMode, setTreeMode] = useState<{
+    wave: number;
+    expand: boolean;
+  } | null>(null);
   if (seenReveal !== reveal) {
     setSeenReveal(reveal);
     if (reveal) {
@@ -99,7 +116,10 @@ function GitReview({
         ...old,
         [reveal.source === "untracked" ? "untracked" : "changes"]: true,
       }));
-      setRevealWave(reveal.revision);
+      if (reveal.revision > lastSeenRevealRevision) {
+        lastSeenRevealRevision = reveal.revision;
+        setRevealWave(reveal.revision);
+      }
     }
   }
   const revealedGroup = reveal
@@ -115,7 +135,7 @@ function GitReview({
         )
         ?.scrollIntoView?.({ block: "nearest" });
   }, [reveal]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // diff 默认收起（模型反馈）：expandedKey 指向谁就展开谁，其余一律收起
   const [expanded, setExpanded] = useState<string | null>(null);
   const [, setNavigation] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -191,7 +211,7 @@ function GitReview({
     if (!change) return null;
     const key = changeKey(change),
       entry = entries[key],
-      isOpen = expandedKey === key || !collapsed.has(key);
+      isOpen = expandedKey === key;
     const name = change.path.split("/").at(-1) ?? change.path;
     const directory = change.path.includes("/")
       ? change.path.slice(0, change.path.lastIndexOf("/"))
@@ -205,12 +225,6 @@ function GitReview({
           className={`sticky top-0 z-10 flex h-8 w-full items-center gap-3 bg-base px-3 text-left transition-colors hover:bg-surface-hover ${isOpen ? "bg-surface-hover" : ""}`}
           onClick={() => {
             setExpanded(isOpen ? null : key);
-            setCollapsed((old) => {
-              const next = new Set(old);
-              if (isOpen) next.add(key);
-              else next.delete(key);
-              return next;
-            });
           }}
         >
           <span className="min-w-0 flex-1 truncate">
@@ -311,24 +325,54 @@ function GitReview({
         >
           <div className="mb-2 flex items-center justify-between">
             <span className="text-ink-faint">工作区更改</span>
-            <button
-              type="button"
-              title="刷新"
-              aria-label="刷新"
-              className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
-              onClick={() => {
-                onRefresh();
-                setSpin((value) => value + 360);
-              }}
-            >
-              <RefreshIcon
-                className="h-3.5 w-3.5"
-                style={{
-                  transform: `rotate(${spin}deg)`,
-                  transition: "transform 0.5s ease",
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                title="全部展开文件树"
+                aria-label="全部展开文件树"
+                className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+                onClick={() =>
+                  setTreeMode((old) => ({
+                    wave: (old?.wave ?? 0) + 1,
+                    expand: true,
+                  }))
+                }
+              >
+                <ChevronsUpDownIcon className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title="全部收起文件树"
+                aria-label="全部收起文件树"
+                className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+                onClick={() =>
+                  setTreeMode((old) => ({
+                    wave: (old?.wave ?? 0) + 1,
+                    expand: false,
+                  }))
+                }
+              >
+                <ChevronsDownUpIcon className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title="刷新"
+                aria-label="刷新"
+                className="rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+                onClick={() => {
+                  onRefresh();
+                  setSpin((value) => value + 360);
                 }}
-              />
-            </button>
+              >
+                <RefreshIcon
+                  className="h-3.5 w-3.5"
+                  style={{
+                    transform: `rotate(${spin}deg)`,
+                    transition: "transform 0.5s ease",
+                  }}
+                />
+              </button>
+            </div>
           </div>
           {(["changes", "untracked"] as const).map((group) => {
             const all = group === "changes" ? tracked : untracked;
@@ -362,6 +406,9 @@ function GitReview({
                     initiallyExpanded={
                       group === revealedGroup && revealWave > 0
                     }
+                    modeSignal={
+                      group === revealedGroup ? treeMode : null
+                    }
                     changes={all}
                     selectedPath={
                       changes.find(
@@ -376,11 +423,6 @@ function GitReview({
                       if (group === "untracked")
                         setOpenedUntracked((old) => new Set([...old, key]));
                       setExpanded(key);
-                      setCollapsed((old) => {
-                        const next = new Set(old);
-                        next.delete(key);
-                        return next;
-                      });
                       pendingLocation.current = key;
                       setNavigation((old) => old + 1);
                     }}
@@ -413,6 +455,7 @@ function GitFileTree({
   red,
   prefix = "",
   initiallyExpanded = false,
+  modeSignal = null,
 }: {
   changes: GitChange[];
   selectedPath?: string;
@@ -421,6 +464,8 @@ function GitFileTree({
   prefix?: string;
   /** 挂载即全量展开（悬浮卡点击波次的重挂载；逐层下传）。 */
   initiallyExpanded?: boolean;
+  /** 整体展开/收起信号（波次计数），由工具栏按钮下发。 */
+  modeSignal: { wave: number; expand: boolean } | null;
 }) {
   const folders = new Map<string, string[]>();
   const files: string[] = [];
@@ -433,11 +478,54 @@ function GitFileTree({
       folders.set(name, [...(folders.get(name) ?? []), path]);
     }
   }
+  // 单链目录合并（信息密度）：无直属文件且仅一个子目录的文件夹，与子
+  // 目录合并为复合名（a/b/c）。循环到不再可合并。
+  let compressing = true;
+  while (compressing) {
+    compressing = false;
+    for (const [name, children] of [...folders]) {
+      const childPrefix = `${prefix}${name}/`;
+      const tails = children.map((p) => p.slice(childPrefix.length));
+      // 全部子项仍是目录（无直属文件）且只有一条子链才可合并
+      if (tails.every((t) => t.includes("/"))) {
+        const segs = new Set(tails.map((t) => t.slice(0, t.indexOf("/"))));
+        if (segs.size === 1) {
+          folders.delete(name);
+          folders.set(`${name}/${[...segs][0]}`, children);
+          compressing = true;
+          break;
+        }
+      }
+    }
+  }
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
     initiallyExpanded
       ? new Set([...folders.keys()].map((name) => `${prefix}${name}`))
       : new Set(),
   );
+  // 跳转波次的时序兜底：波次到达时数据可能还没来（空树消费不掉展开集），
+  // 数据到达（folders.size 变化）后补一次全量展开；用户手动折叠后
+  // waveApplied 已置位，后续数据刷新不再反复摊开。
+  const [waveApplied, setWaveApplied] = useState(false);
+  useEffect(() => {
+    if (!initiallyExpanded || waveApplied || folders.size === 0) return;
+    setWaveApplied(true);
+    setExpanded(new Set([...folders.keys()].map((name) => `${prefix}${name}`)));
+  }, [initiallyExpanded, folders.size, prefix, waveApplied]);
+  // 整体展开/收起信号：波次消费一次；数据未到时本波作废（可再点重发）
+  const appliedModeRef = useRef(-1);
+  useEffect(() => {
+    if (modeSignal === null || modeSignal.wave === appliedModeRef.current) {
+      return;
+    }
+    appliedModeRef.current = modeSignal.wave;
+    if (folders.size === 0) return;
+    setExpanded(
+      modeSignal.expand
+        ? new Set([...folders.keys()].map((name) => `${prefix}${name}`))
+        : new Set(),
+    );
+  }, [modeSignal?.wave, folders.size, prefix, modeSignal]);
   return (
     <div className="space-y-1">
       {[...folders].map(([name, children]) => {
@@ -473,6 +561,7 @@ function GitFileTree({
                   red={red}
                   onSelect={onSelect}
                   initiallyExpanded={initiallyExpanded}
+                  modeSignal={null}
                 />
               </div>
             )}
