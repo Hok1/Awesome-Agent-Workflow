@@ -93,22 +93,65 @@ fn processes() -> &'static Mutex<HashMap<u32, ProcessEntry>> {
     PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 工作区 → 当前 agent 句柄。webview 整页重载后 JS 侧拿不到旧句柄,
-/// `acp_release` / `acp_kill_tree` 都不会到达——旧 agent 抱着 chrys 会话
-/// 锁不撒手,下一次 `session/load` 撞锁(实测 -32603 Internal error)。
-/// 这里按 cwd 键控:`acp_spawn` 落地新 agent 前先收掉同工作区的上一代;
-/// 前端显式释放 / 杀树时同步摘除映射。
-fn workspace_agents() -> &'static Mutex<HashMap<String, u32>> {
-    static WORKSPACE_AGENTS: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
-    WORKSPACE_AGENTS.get_or_init(|| Mutex::new(HashMap::new()))
+/// 页面拥有连接，项目目录只作为子进程 cwd，不参与连接回收。
+#[derive(Default)]
+struct PageOwner {
+    generation: u64,
+    handles: Vec<u32>,
+    stale: Vec<u32>,
 }
-
-/// 摘除指向 `handle` 的工作区映射(其他工作区的条目不动)。
-fn forget_workspace_handle(handle: u32) {
-    workspace_agents()
-        .lock()
-        .expect("ACP 工作区表锁中毒")
-        .retain(|_, value| *value != handle);
+fn page_owners() -> &'static Mutex<HashMap<String, PageOwner>> {
+    static OWNERS: OnceLock<Mutex<HashMap<String, PageOwner>>> = OnceLock::new();
+    OWNERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+/// 串行化重载清理和 spawn，防止新页面抢占上一代尚未释放的会话锁。
+fn spawn_gate() -> &'static AsyncMutex<()> {
+    static GATE: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| AsyncMutex::new(()))
+}
+fn page_generation(label: &str) -> u64 {
+    page_owners().lock().expect("页面表锁").entry(label.to_owned()).or_default().generation
+}
+fn invalidate_page(label: &str) {
+    let mut owners = page_owners().lock().expect("页面表锁");
+    let owner = owners.entry(label.to_owned()).or_default();
+    owner.generation += 1;
+    owner.stale.append(&mut owner.handles);
+}
+fn register_page_handle(label: &str, generation: u64, handle: u32) -> bool {
+    let mut owners = page_owners().lock().expect("页面表锁");
+    let owner = owners.entry(label.to_owned()).or_default();
+    if owner.generation != generation { return false; }
+    owner.handles.push(handle);
+    true
+}
+fn forget_page_handle(handle: u32) {
+    for owner in page_owners().lock().expect("页面表锁").values_mut() {
+        owner.handles.retain(|value| *value != handle);
+    }
+}
+async fn reclaim_stale_page(label: &str) -> Result<(), String> {
+    let stale = {
+        let mut owners = page_owners().lock().expect("页面表锁");
+        std::mem::take(&mut owners.entry(label.to_owned()).or_default().stale)
+    };
+    for handle in stale {
+        if lookup(handle, "页面回收").is_ok() {
+            acp_kill_tree(handle).await?;
+            acp_release(handle).await?;
+        }
+    }
+    Ok(())
+}
+/// 只由原生页面导航/窗口销毁触发；切换项目或会话不改变代次。
+pub fn retire_page(label: String) {
+    invalidate_page(&label);
+    tauri::async_runtime::spawn(async move {
+        let _guard = spawn_gate().lock().await;
+        if let Err(error) = reclaim_stale_page(&label).await {
+            eprintln!("ACP 旧页面回收失败: {error}");
+        }
+    });
 }
 
 /// 句柄计数器（单调递增）。
@@ -306,7 +349,7 @@ pub async fn acp_spawn(
     args: Vec<String>,
     cwd: Option<String>,
     extra_env: Option<HashMap<String, String>>,
-    isolated: Option<bool>,
+    webview: tauri::WebviewWindow,
 ) -> Result<AcpSpawnResult, String> {
     if program.is_empty() {
         return Err("program 不能为空".to_string());
@@ -324,25 +367,12 @@ pub async fn acp_spawn(
             },
         }
     };
-    // 同工作区回收上一代 agent(见 workspace_agents 注释):必须在新进程
-    // 落地前做,否则新旧两个实例会争抢 chrys 的会话锁。强杀即可——上一代
-    // 是「不该再活着」的滞留进程,且 chrys 会话写盘带 .bak 原子兜底
-    if let Some(dir) = cwd.as_deref().filter(|_| !isolated.unwrap_or(false)) {
-        let previous = workspace_agents()
-            .lock()
-            .expect("ACP 工作区表锁中毒")
-            .remove(dir);
-        if let Some(old_handle) = previous {
-            if let Ok(entry) = lookup(old_handle, "acp_spawn 回收") {
-                if take_exit(&entry).await.is_none() {
-                    eprintln!(
-                        "同工作区重新拉起 agent,回收上一代(cwd {dir}, pid {})",
-                        entry.pid
-                    );
-                    send_tree_signal(entry.pid, SignalStage::Force).await;
-                }
-            }
-        }
+    let label = webview.label().to_owned();
+    let generation = page_generation(&label);
+    let _spawn_guard = spawn_gate().lock().await;
+    reclaim_stale_page(&label).await?;
+    if page_generation(&label) != generation {
+        return Err("ACP 启动页面已失效".to_owned());
     }
     let mut command = tokio::process::Command::new(&program);
     command
@@ -392,13 +422,6 @@ pub async fn acp_spawn(
         .lock()
         .expect("ACP 进程表锁中毒")
         .insert(handle, ProcessEntry { pid, stdin: Arc::clone(&stdin_slot), exit: Arc::clone(&exit_slot) });
-    if let Some(dir) = cwd.as_deref().filter(|_| !isolated.unwrap_or(false)) {
-        workspace_agents()
-            .lock()
-            .expect("ACP 工作区表锁中毒")
-            .insert(dir.to_string(), handle);
-    }
-
     // 三个并发协程：读 stdout 行 / 读 stderr 块 / 等退出。
     // 退出协程先 join 两个读协程（保证 stdout 排空后再报退出，对齐
     // TS NodeStdioTransport 用 'close' 而非 'exit' 的语义），再 wait
@@ -429,6 +452,11 @@ pub async fn acp_spawn(
         *stdin_slot.lock().await = None;
     });
 
+    if !register_page_handle(&label, generation, handle) {
+        acp_kill_tree(handle).await?;
+        acp_release(handle).await?;
+        return Err("ACP 启动期间页面已失效".to_owned());
+    }
     Ok(AcpSpawnResult { handle, pid })
 }
 
@@ -465,7 +493,7 @@ pub async fn acp_stdin_close(handle: u32) -> Result<(), String> {
 /// 强制终止整棵进程树并返回最终退出状态（幂等：已登记终态直接返回）。
 #[tauri::command]
 pub async fn acp_kill_tree(handle: u32) -> Result<AcpExitInfo, String> {
-    forget_workspace_handle(handle);
+    forget_page_handle(handle);
     let entry = lookup(handle, "acp_kill_tree")?;
     if let Some(exit) = take_exit(&entry).await {
         return Ok(exit);
@@ -493,7 +521,7 @@ pub async fn acp_kill_tree(handle: u32) -> Result<AcpExitInfo, String> {
 /// 「反复开关会话」下的无界滞留。
 #[tauri::command]
 pub async fn acp_release(handle: u32) -> Result<(), String> {
-    forget_workspace_handle(handle);
+    forget_page_handle(handle);
     processes()
         .lock()
         .expect("ACP 进程表锁中毒")
@@ -898,37 +926,43 @@ mod tests {
         assert!(!status.success(), "强杀后不应以成功状态退出");
     }
 
-    // ------------------------------------------------------ 工作区登记
-
-    #[test]
-    fn workspace_agents_register_overwrite_and_forget() {
-        // 登记:同一 cwd 二次 spawn 覆盖旧句柄;forget 只摘自己的映射
-        workspace_agents()
-            .lock()
-            .expect("锁")
-            .insert("W:/a".to_string(), 1);
-        workspace_agents()
-            .lock()
-            .expect("锁")
-            .insert("W:/a".to_string(), 2);
-        workspace_agents()
-            .lock()
-            .expect("锁")
-            .insert("W:/b".to_string(), 3);
-        {
-            let map = workspace_agents().lock().expect("锁");
-            assert_eq!(map.get("W:/a"), Some(&2));
-            assert_eq!(map.get("W:/b"), Some(&3));
+    #[tokio::test]
+    async fn page_reload_reclaims_only_its_old_processes() {
+        async fn spawn_owned(label: &str) -> (u32, tokio::process::Child) {
+            let mut child = sleep_command().stdin(std::process::Stdio::piped()).spawn().unwrap();
+            let handle = next_handle();
+            let entry = ProcessEntry {
+                pid: child.id().unwrap(),
+                stdin: Arc::new(AsyncMutex::new(child.stdin.take())),
+                exit: Arc::new(AsyncMutex::new(None)),
+            };
+            processes().lock().unwrap().insert(handle, entry);
+            assert!(register_page_handle(label, page_generation(label), handle));
+            (handle, child)
         }
-        forget_workspace_handle(2);
-        {
-            let map = workspace_agents().lock().expect("锁");
-            assert!(!map.contains_key("W:/a"), "句柄 2 的映射应被摘除");
-            assert_eq!(map.get("W:/b"), Some(&3), "其他工作区不受影响");
+        // 同页面、同 cwd 的两个真实进程允许并存，另一窗口完全隔离。
+        let (a, mut child_a) = spawn_owned("keepalive-test").await;
+        let (b, mut child_b) = spawn_owned("keepalive-test").await;
+        let (other, mut child_other) = spawn_owned("other-window-test").await;
+        assert!(child_a.try_wait().unwrap().is_none());
+        assert!(child_b.try_wait().unwrap().is_none());
+        let old_generation = page_generation("keepalive-test");
+        invalidate_page("keepalive-test");
+        assert!(!register_page_handle("keepalive-test", old_generation, a));
+        let (new, mut child_new) = spawn_owned("keepalive-test").await;
+        reclaim_stale_page("keepalive-test").await.unwrap();
+        assert!(!child_a.wait().await.unwrap().success());
+        assert!(!child_b.wait().await.unwrap().success());
+        assert!(child_other.try_wait().unwrap().is_none());
+        assert!(child_new.try_wait().unwrap().is_none());
+        assert!(lookup(a, "test").is_err());
+        assert!(lookup(b, "test").is_err());
+        for handle in [other, new] {
+            acp_kill_tree(handle).await.unwrap();
+            acp_release(handle).await.unwrap();
         }
-        forget_workspace_handle(3);
-        forget_workspace_handle(999); // 不存在的句柄:幂等
-        assert!(workspace_agents().lock().expect("锁").is_empty());
+        child_other.wait().await.unwrap();
+        child_new.wait().await.unwrap();
     }
 
     // ---------------------------------------------------------- 进程表
