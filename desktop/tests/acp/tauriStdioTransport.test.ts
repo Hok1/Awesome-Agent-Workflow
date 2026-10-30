@@ -75,6 +75,17 @@ beforeEach(() => {
 });
 
 describe("createTauriStdioTransport", () => {
+  it("独立探查标记传到宿主，避免回收项目会话", async () => {
+    await createTauriStdioTransport({
+      command: ["agent", "acp"],
+      cwd: "D:/project",
+      isolated: true,
+    });
+    expect(lastInvoke("acp_spawn")).toMatchObject({
+      cwd: "D:/project",
+      isolated: true,
+    });
+  });
   it("spawn 成功并回传句柄，事件订阅按句柄过滤", async () => {
     const transport = await createTauriStdioTransport({
       command: ["chrys.exe", "acp"],
@@ -124,6 +135,29 @@ describe("createTauriStdioTransport", () => {
     await expect(
       createTauriStdioTransport({ command: ["chrys"] }),
     ).rejects.toThrow("启动 chrys 失败");
+  });
+
+  it("spawn 尚未返回时的早期事件会被回放（启动即打印公告的 agent）", async () => {
+    // 真实时序：进程一启动就打印服务地址，acp_spawn 的 invoke 还没 resolve。
+    // 订阅必须先于 spawn，否则那行公告永远收不到（公告探测会失效）。
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "acp_spawn") {
+        // 在 spawn 返回前塞一条 stdout 事件（句柄尚未知，只能先暂存）
+        emitFromRust("acp://stdout", {
+          handle: 7,
+          data: "[ACP] Server started: http://127.0.0.1:7725/",
+        });
+        return Promise.resolve({ handle: 7, pid: 1234 });
+      }
+      return Promise.resolve(null);
+    });
+
+    const transport = await createTauriStdioTransport({
+      command: ["codeagent", "--acp"],
+    });
+    const lines: string[] = [];
+    transport.onLine((line) => lines.push(line));
+    expect(lines).toEqual(["[ACP] Server started: http://127.0.0.1:7725/"]);
   });
 });
 

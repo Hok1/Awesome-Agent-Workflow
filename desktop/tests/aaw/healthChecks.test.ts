@@ -71,7 +71,7 @@ describe("deriveAawScriptPath", () => {
 });
 
 describe("runWorkspaceHealthChecks", () => {
-  it("全绿：四项通过，含版本摘要", async () => {
+  it("全绿：工作流检查通过", async () => {
     const runner = scriptedRunner({
       run: (command) => {
         const program = command[0] ?? "";
@@ -102,14 +102,8 @@ describe("runWorkspaceHealthChecks", () => {
       runner,
     });
 
-    expect(items.map((item) => item.status)).toEqual([
-      "pass",
-      "pass",
-      "pass",
-      "pass",
-    ]);
-    const chrys = items.find((item) => item.id === "chrys");
-    expect(chrys?.summary).toContain("chrys 0.9.2");
+    expect(items.map((item) => item.status)).toEqual(["pass", "pass", "pass"]);
+    expect(items.some((item) => item.id === "chrys")).toBe(false);
     // 全部通过时不出现修复指引
     expect(items.every((item) => item.fixHint === "")).toBe(true);
   });
@@ -139,23 +133,6 @@ describe("runWorkspaceHealthChecks", () => {
     );
     expect(aawCall?.command).toEqual(["uv", "run", "D:/repo/aaw.py", "--help"]);
     expect(aawCall?.cwd).toBe("D:/dev/demo");
-  });
-
-  it("chrys 启动失败：fail + 指向设置页的修复指引（缺省命令已是 icode）", async () => {
-    const runner = scriptedRunner({
-      run: (command) =>
-        (command[0] ?? "") === "icode" ? spawnFail("ENOENT") : passVersion("x"),
-      existsMap: {},
-    });
-    const items = await runWorkspaceHealthChecks({
-      workspacePath: "D:/dev/demo",
-      toolPaths: { ...defaultToolPaths, aawScriptPath: "D:/repo/aaw.py" },
-      runner,
-    });
-    const chrys = items.find((item) => item.id === "chrys");
-    expect(chrys?.status).toBe("fail");
-    expect(chrys?.fixHint).toContain("设置");
-    expect(chrys?.fixHint).toContain("icode");
   });
 
   it("uv 失败时 aaw 项直接短路（不执行 uv run）并给出依赖指引", async () => {

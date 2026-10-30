@@ -43,7 +43,7 @@
   镜像自 `src/aaw/skills.ts` 领域回调；目标目录由 host 解析缓存；
   源目录由调用方（UI）从设置 store 组装传入，store 间不互相 import。
 - `workspaceStore.ts`：工作区 store。目录选择、最近打开（上限 8，
-  localStorage 持久化）与收藏，以及工具路径（chrys / uv / aaw 脚本的
+  localStorage 持久化）与收藏，以及工具路径（uv / aaw 脚本的
   执行入参，设置页编辑）；健康检查的异步 action（runner 可注入，chrys
   路径由组件层从设置 store 组装成 pathsOverride 传入，不落盘）；回填
   统一走 applyHealthReport 且校验 path 防过期覆盖；`activePath` 是 ACP

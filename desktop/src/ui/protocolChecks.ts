@@ -189,7 +189,11 @@ function handshakeGroup(result: AgentProbeResult): CheckGroup {
     );
   } else {
     rows.push(
-      ok("link", "连接链路", "initialize → new → list → close 全部走通"),
+      ok(
+        "link",
+        "连接链路",
+        "initialize 与 session/new 已完成；列表和关闭结果见下方",
+      ),
     );
   }
   rows.push(

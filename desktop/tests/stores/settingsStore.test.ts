@@ -438,7 +438,6 @@ describe("useSettingsStore", () => {
       "C:/npm-mock/node_modules/opencode-ai/bin/opencode.exe",
     );
   });
-
   it("本机扫描：未命中候选时发现列表为空（不报错）", async () => {
     await useSettingsStore.getState().scanNativeAgents(demoHost);
     expect(useSettingsStore.getState().discoveredAgents).toHaveLength(0);

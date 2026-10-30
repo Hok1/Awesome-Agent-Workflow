@@ -72,6 +72,7 @@ export interface TauriStdioSpawnOptions {
   readonly cwd?: string;
   /** 注入的环境变量（与当前环境合并）。 */
   readonly extraEnv?: Readonly<Record<string, string>>;
+  readonly isolated?: boolean;
 }
 
 /** Rust 事件名与句柄的绑定（三个事件共用 handle 过滤）。 */
@@ -103,6 +104,13 @@ export class TauriStdioTransport implements AcpTransport {
   private reportedExit: TransportExit | null = null;
   private exitWaiterResolve: ((exit: TransportExit) => void) | null = null;
   private readonly exitWaiter: Promise<TransportExit>;
+  /**
+   * 订阅前到达的行/块：进程一启动就可能说话（公告、甚至早到的 JSON-RPC），
+   * 而 onLine 由上层在拿到 transport 之后才挂。暂存到首次订阅时补发，
+   * 否则这段输出会凭空丢失。
+   */
+  private readonly earlyLines: string[] = [];
+  private readonly earlyStderr: string[] = [];
 
   /** 请用 createTauriStdioTransport 工厂创建（spawn + 事件订阅一体）。 */
   constructor(handle: number) {
@@ -148,10 +156,16 @@ export class TauriStdioTransport implements AcpTransport {
 
   onLine(handler: TransportLineHandler): void {
     this.lineSlot.set(handler);
+    for (const line of this.earlyLines.splice(0)) {
+      handler(line);
+    }
   }
 
   onStderr(handler: TransportStderrHandler): void {
     this.stderrSlot.set(handler);
+    for (const chunk of this.earlyStderr.splice(0)) {
+      handler(chunk);
+    }
   }
 
   onExit(handler: TransportExitHandler): void {
@@ -231,6 +245,10 @@ export class TauriStdioTransport implements AcpTransport {
     }
     const data = (payload as AcpIoEventWire).data;
     if (typeof data === "string") {
+      if (!this.lineSlot.isSet) {
+        this.earlyLines.push(data);
+        return;
+      }
       this.lineSlot.emit(data);
     }
   }
@@ -241,6 +259,10 @@ export class TauriStdioTransport implements AcpTransport {
     }
     const data = (payload as AcpIoEventWire).data;
     if (typeof data === "string") {
+      if (!this.stderrSlot.isSet) {
+        this.earlyStderr.push(data);
+        return;
+      }
       this.stderrSlot.emit(data);
     }
   }
@@ -282,8 +304,15 @@ export class TauriStdioTransport implements AcpTransport {
 }
 
 /**
- * 创建 Tauri IPC transport：spawn 进程、订阅三个事件。
- * 非 Tauri 环境或 spawn 失败时 reject（错误信息可直接展示）。
+ * 创建 Tauri IPC transport：订阅三个事件 → spawn 进程 → 回放订阅前的早期事件。
+ *
+ * 订阅必须在 spawn **之前**：事件没有重放机制，而「启动即打印服务地址」的
+ * agent（如 codeagent）在 spawn 返回前就把公告吐出来了——晚订阅就永远收
+ * 不到那一行，公告探测会失效。这里先订阅并把事件暂存，拿到句柄后按句柄
+ * 回放。
+ *
+ * 非 Tauri 环境或 spawn 失败时 reject（错误信息可直接展示）；
+ * 失败路径会先退订，不留悬挂监听。
  */
 export async function createTauriStdioTransport(
   options: TauriStdioSpawnOptions,
@@ -292,39 +321,66 @@ export async function createTauriStdioTransport(
   if (typeof program !== "string" || program.length === 0) {
     throw new Error("TauriStdioTransport：command 不能为空");
   }
-  const spawnWire = await invoke<AcpSpawnResultWire>("acp_spawn", {
-    program,
-    args,
-    cwd: options.cwd ?? null,
-    extraEnv: options.extraEnv ?? null,
-  });
+  let transport: TauriStdioTransport | null = null;
+  const early: { readonly channel: string; readonly payload: unknown }[] = [];
+  const feed = (channel: string, payload: unknown): void => {
+    if (transport === null) {
+      early.push({ channel, payload });
+      return;
+    }
+    route(transport, channel, payload);
+  };
+  const unlisteners = await Promise.all([
+    listen<AcpIoEventWire>(EVENT_STDOUT, (event) => {
+      feed(EVENT_STDOUT, event.payload);
+    }),
+    listen<AcpIoEventWire>(EVENT_STDERR, (event) => {
+      feed(EVENT_STDERR, event.payload);
+    }),
+    listen<AcpExitEventWire>(EVENT_EXIT, (event) => {
+      feed(EVENT_EXIT, event.payload);
+    }),
+  ]);
+
+  let spawnWire: AcpSpawnResultWire;
+  try {
+    spawnWire = await invoke<AcpSpawnResultWire>("acp_spawn", {
+      program,
+      args,
+      cwd: options.cwd ?? null,
+      extraEnv: options.extraEnv ?? null,
+      isolated: options.isolated ?? false,
+    });
+  } catch (error) {
+    for (const unlisten of unlisteners) unlisten();
+    throw error;
+  }
   if (typeof spawnWire.handle !== "number") {
+    for (const unlisten of unlisteners) unlisten();
     throw new Error("acp_spawn 返回形状不合法（缺少 handle）");
   }
-  const transport = new TauriStdioTransport(spawnWire.handle);
-  // 事件订阅失败（非 Tauri 环境等）：杀掉已 spawn 的进程再抛错
-  try {
-    const unlisteners = await Promise.all([
-      listen<AcpIoEventWire>(EVENT_STDOUT, (event) => {
-        transport.handleStdoutEvent(event.payload);
-      }),
-      listen<AcpIoEventWire>(EVENT_STDERR, (event) => {
-        transport.handleStderrEvent(event.payload);
-      }),
-      listen<AcpExitEventWire>(EVENT_EXIT, (event) => {
-        transport.handleExitEvent(event.payload);
-      }),
-    ]);
-    transport.bindUnlisteners(unlisteners);
-  } catch (error) {
-    try {
-      await invoke("acp_kill_tree", { handle: spawnWire.handle });
-    } catch {
-      // 清理失败不掩盖原始错误
-    }
-    throw new Error("订阅 ACP 进程事件失败", { cause: error });
+  transport = new TauriStdioTransport(spawnWire.handle);
+  transport.bindUnlisteners(unlisteners);
+  // 回放：route 内部按句柄过滤，其他进程的事件自动丢弃
+  for (const event of early) {
+    route(transport, event.channel, event.payload);
   }
   return transport;
+}
+
+/** 把一条事件交给 transport 的对应入口（句柄过滤在 transport 内）。 */
+function route(
+  transport: TauriStdioTransport,
+  channel: string,
+  payload: unknown,
+): void {
+  if (channel === EVENT_STDOUT) {
+    transport.handleStdoutEvent(payload);
+  } else if (channel === EVENT_STDERR) {
+    transport.handleStderrEvent(payload);
+  } else {
+    transport.handleExitEvent(payload);
+  }
 }
 
 function delay(ms: number): Promise<void> {

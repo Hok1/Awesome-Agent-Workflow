@@ -11,9 +11,70 @@ import { describe, expect, it } from "vitest";
 import { EchoAgent } from "../../src/acp/mock/echo-agent";
 import { createTransportPair } from "../../src/acp/transport/inMemoryTransport";
 import { chrysAgentAdapter } from "../../src/agents/registry";
-import { runAgentProbe } from "../../src/ui/agentProbe";
+import { runAgentProbe, testAgentConnection } from "../../src/ui/agentProbe";
+import { waitForCodeAgent } from "../../src/ui/agentTransport";
 
 const CWD = "X:/workspaces/demo";
+
+describe("连接测试", () => {
+  it("只握手，不创建会话，收集进程输出并关闭", async () => {
+    const { client, peer } = createTransportPair();
+    const agent = new EchoAgent();
+    agent.attach(peer);
+    const methods: string[] = [];
+    peer.onLine((line) => {
+      methods.push((JSON.parse(line) as { method: string }).method);
+    });
+    const resultPromise = testAgentConnection(
+      chrysAgentAdapter,
+      undefined,
+      undefined,
+      client,
+    );
+    peer.writeStderr("启动提示");
+    const result = await resultPromise;
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("echo-agent");
+    expect(result.stderr).toContain("启动提示");
+    expect(methods).toEqual(["initialize"]);
+    expect(client.isClosed).toBe(true);
+  });
+
+  it("握手失败时保留进程输出", async () => {
+    const { client, peer } = createTransportPair();
+    const pending = testAgentConnection(
+      chrysAgentAdapter,
+      undefined,
+      undefined,
+      client,
+    );
+    peer.writeStderr("示例启动错误");
+    peer.exit(3);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("ACP 握手失败");
+    expect(result.stderr).toContain("示例启动错误");
+  });
+
+  it("CodeAgent 就绪日志分片时才放行，退出时报告原因", async () => {
+    const { client, peer } = createTransportPair();
+    let ready = false;
+    const pending = waitForCodeAgent(client, 1000).then(() => {
+      ready = true;
+    });
+    peer.writeStderr("[ACP] Server ");
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    peer.writeStderr("started: http://127.0.0.1:1234\n");
+    await pending;
+    expect(ready).toBe(true);
+    const other = createTransportPair();
+    const failed = waitForCodeAgent(other.client, 1000);
+    other.peer.writeStderr("启动失败");
+    other.peer.exit(2);
+    await expect(failed).rejects.toThrow("启动失败");
+  });
+});
 
 describe("runAgentProbe（echo-agent 闭环）", () => {
   it("安全探查：声明侧 + 早期通知 + list/close 全走通", async () => {

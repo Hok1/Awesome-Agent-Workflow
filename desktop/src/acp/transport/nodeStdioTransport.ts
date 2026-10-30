@@ -14,7 +14,13 @@
  * 工具脚本）；webview 前端应改用 Tauri IPC 实现的 AcpTransport。
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  spawn,
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptions,
+} from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
 
 import { AcpWriteError } from "../errors.ts";
@@ -61,7 +67,7 @@ export class NodeStdioTransport implements AcpTransport {
   private reportedExit: TransportExit | null = null;
 
   constructor(options: StdioSpawnOptions) {
-    const [file, ...args] = options.command;
+    let [file, ...args] = options.command;
     if (typeof file !== "string" || file.length === 0) {
       throw new Error("NodeStdioTransport：command 不能为空");
     }
@@ -70,14 +76,36 @@ export class NodeStdioTransport implements AcpTransport {
       : options.extraEnv
         ? { ...process.env, ...options.extraEnv }
         : undefined;
-    this.child = spawn(file, args, {
+
+    // Windows：无扩展名的命令先做 PATH+PATHEXT 解析——npm 全局安装的 CLI
+    // 在 PATH 上只有 .cmd shim，shell:false 的 CreateProcess 不认（对照
+    // vscode-acp 的 shell:true）。命中 .exe 直接用；.cmd/.bat 经 cmd.exe。
+    let spawnOptions: SpawnOptions = {
       cwd: options.cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
       // Windows 上 shell:false 直接 CreateProcess；chrys 是控制台程序，
       // 不需要 shell。POSIX 保持默认（不脱离进程组，与 Python 参考一致）。
       shell: false,
-    });
+    };
+    if (process.platform === "win32") {
+      const resolved = resolveWindowsSpawn(
+        file,
+        args,
+        (key) => process.env[key],
+      );
+      file = resolved.file;
+      args = resolved.args;
+      spawnOptions = { ...spawnOptions, ...resolved.options };
+    }
+
+    // stdio 固定三管道（上面的字面量），流必然非空；类型因选项变量放宽，
+    // 这里收窄回来
+    this.child = spawn(
+      file,
+      args,
+      spawnOptions,
+    ) as ChildProcessWithoutNullStreams;
     this.wireStreams();
   }
 
@@ -335,4 +363,66 @@ function delay(ms: number): Promise<void> {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// ---------------------------------------------------------------------------
+// Windows 命令解析（PATH + PATHEXT）
+// ---------------------------------------------------------------------------
+
+/** 解析结果：直接可执行文件，或经 cmd.exe 拉起的批处理。 */
+interface WindowsSpawn {
+  file: string;
+  args: string[];
+  options: SpawnOptions;
+}
+
+function isBareCommandName(file: string): boolean {
+  const lastSegment = file.split(/[\\/]/).pop() ?? file;
+  return !lastSegment.includes(".");
+}
+
+/**
+ * 把无扩展名的命令名解析成可 spawn 的目标（对齐 vscode-acp 的
+ * `shell: true` 语义，但不经整条 shell，避免引号二次解析）：
+ * PATH 上命中 `.exe` → 直接用；只有 `.cmd`/`.bat` → 经
+ * `cmd.exe /d /s /c` 拉起（stdin/stdout 管道会透传给真实进程）。
+ * 都没命中 → 原样返回，让 spawn 报出原本的 ENOENT。
+ */
+export function resolveWindowsSpawn(
+  file: string,
+  args: string[],
+  getEnv: (key: string) => string | undefined,
+  isFile: (path: string) => boolean = (path) => existsSync(path),
+): WindowsSpawn {
+  const scriptSpawn = (script: string): WindowsSpawn => {
+    if ([script, ...args].some((part) => /["%!\r\n]/.test(part))) {
+      throw new Error("批处理路径或参数包含不支持的字符（引号、% 或 !）");
+    }
+    const comspec = getEnv("COMSPEC") ?? "cmd.exe";
+    const tail = `""${script}"${args.map((arg) => ` "${arg}"`).join("")}"`;
+    return {
+      file: comspec,
+      args: ["/d", "/s", "/c", tail],
+      options: { windowsVerbatimArguments: true },
+    };
+  };
+  if (/\.(cmd|bat)$/i.test(file)) return scriptSpawn(file);
+  if (!isBareCommandName(file)) {
+    return { file, args, options: {} };
+  }
+  const pathVar = getEnv("PATH") ?? "";
+  const npmDir = getEnv("APPDATA") ? join(getEnv("APPDATA")!, "npm") : "";
+  for (const dir of [...pathVar.split(";"), npmDir]) {
+    if (dir.trim() === "") continue;
+    const full = join(dir, file);
+    if (isFile(full + ".exe")) {
+      return { file: full + ".exe", args, options: {} };
+    }
+    for (const ext of [".cmd", ".bat"]) {
+      if (isFile(full + ext)) {
+        return scriptSpawn(full + ext);
+      }
+    }
+  }
+  return { file, args, options: {} };
 }

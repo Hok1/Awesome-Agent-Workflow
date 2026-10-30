@@ -1,6 +1,6 @@
 /**
  * 设置页（侧边 Tab 形态）：三个粗分片——通用（语言 / 主题 / 关于）、
- * 工具路径（iCode / uv / aaw 脚本 / skills 源目录 + 内置安装器）、
+ * Agent、工具路径（uv / aaw 脚本 / skills 源目录 + 内置安装器）、
  * 会话与审批（审批默认模式）。
  *
  * 设计语言（与定稿设计稿一致）：
@@ -335,7 +335,6 @@ function SettingsPage() {
   const language = useSettingsStore((state) => state.language);
   const skillsSourceDir = useSettingsStore((state) => state.skillsSourceDir);
   const theme = useSettingsStore((state) => state.theme);
-  const connection = useSettingsStore((state) => state.connection);
   const setApprovalMode = useSettingsStore((state) => state.setApprovalMode);
   const autoAnswerQuestions = useSettingsStore(
     (state) => state.autoAnswerQuestions,
@@ -356,9 +355,6 @@ function SettingsPage() {
   const setMessageStreamShowTodos = useSettingsStore(
     (state) => state.setMessageStreamShowTodos,
   );
-  const testConnection = useSettingsStore((state) => state.testConnection);
-  const isProbingPath = useSettingsStore((state) => state.isProbingChrysPath);
-  const reprobePath = useSettingsStore((state) => state.probeChrysPathIfNeeded);
   const resetToDefaults = useSettingsStore((state) => state.resetToDefaults);
   const activeAgentId = useSettingsStore((state) => state.activeAgentId);
   const agents = useSettingsStore((state) => state.agents);
@@ -520,75 +516,6 @@ function SettingsPage() {
             className="flex flex-col gap-5"
           >
             <SettingCard label={t("settings.toolPathsSection")}>
-              <SettingRow
-                label={t("settings.chrysSection")}
-                desc="ACP 会话的 agent 进程"
-                htmlFor="chrys-path"
-                footer={
-                  <>
-                    {toolPaths.chrysPath.trim() === "" ? (
-                      <p role="alert" className="text-xs text-warn-ink">
-                        未找到 iCode，请手动指定路径
-                      </p>
-                    ) : null}
-                    {connection.status !== "idle" ? (
-                      <p
-                        role="status"
-                        className={`text-xs ${
-                          connection.status === "ok"
-                            ? "text-ok-ink"
-                            : connection.status === "testing"
-                              ? "text-ink-faint"
-                              : "text-danger-ink"
-                        }`}
-                      >
-                        {connection.message}
-                        {connection.checkedAt === null
-                          ? ""
-                          : ` · ${connection.checkedAt.slice(11, 19)}`}
-                      </p>
-                    ) : null}
-                  </>
-                }
-              >
-                <input
-                  id="chrys-path"
-                  type="text"
-                  value={toolPaths.chrysPath}
-                  onChange={(event) => {
-                    toolPaths.setChrysPath(event.target.value);
-                  }}
-                  className={textInputClass}
-                />
-                <button
-                  type="button"
-                  disabled={isProbingPath}
-                  onClick={() => {
-                    void reprobePath(true);
-                  }}
-                  className="shrink-0 rounded-md px-2 py-1 text-xs text-info-ink disabled:opacity-50"
-                >
-                  {isProbingPath ? "正在检测…" : "重新检测路径"}
-                </button>
-                {connection.status === "ok" ? (
-                  <StatusChip tone="ok" title={connection.message}>
-                    已连接
-                  </StatusChip>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    void testConnection();
-                  }}
-                  disabled={connection.status === "testing"}
-                  className="shrink-0 rounded-md px-2 py-1 text-xs text-info-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {connection.status === "testing"
-                    ? t("settings.testing")
-                    : t("settings.testConnection")}
-                </button>
-              </SettingRow>
-
               <SettingRow
                 label="uv 命令"
                 desc="执行 aaw CLI 与工作流脚本的解释器命令（可写绝对路径）"

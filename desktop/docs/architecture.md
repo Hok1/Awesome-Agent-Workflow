@@ -255,6 +255,18 @@ transport 选择），分支以 `import.meta.env.DEV && !import.meta.env.VITEST`
 产物。生命周期纪律：SSE 断开 10s 无回连或 vite 退出 → 杀全部 agent
 进程树，与桌面端孤儿进程治理对齐。详见 HANDBOOK §2。
 
+## Windows agent spawn 与「shell 解析」（2026-10）
+
+Windows 上的 npm CLI 常通过 `.cmd` shim 启动。启动时分别处理程序和
+参数，并按以下规则解析：
+
+- 显式 `.cmd`/`.bat` 路径经 `cmd.exe /d /s /c` 拉起；其他显式路径直接使用；
+- 裸命令按 PATH 和用户 npm 目录查找 `.exe`、`.cmd`、`.bat`；
+- POSIX 不做解析（`spawn` 自带 PATH 查找）。
+
+stdio 链路另有两处已修的稳健性缺口：事件订阅先于 spawn（「启动即打印」
+的 agent 不丢首行），订阅前的早期输出在 transport 内暂存、首次订阅时补发。
+
 ## 参考实现索引（协议细节的权威来源）
 
 - Python ACP 客户端（已在 skill-eval 跑通）：

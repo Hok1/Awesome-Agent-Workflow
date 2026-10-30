@@ -15,10 +15,9 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
   唯一主动作「新建会话」，已连接也一样——会话入口在树上，总览只管
   管理 + 发起）
   - 可折叠的健康检查明细 + 工作流状态（`AawStatusPanel`）；
-- 设置页（`SettingsPage`，侧边 Tab 形态）：三个粗分片——通用（语言
-  （单选项呈静态值）/ 主题 / 关于）、工具路径（chrys / uv / aaw 脚本 +
-  「测试连接」行尾状态 chip + skills 源目录 + 内嵌 `SkillsInstallerSection`
-  安装器）、会话与审批（审批默认模式分段控件 + 说明行，自动拒绝琥珀
+- 设置页（`SettingsPage`，侧边 Tab 形态）：通用（语言 / 主题 / 关于）、
+  Agent（会话 Agent 配置与连接测试）、工具路径（uv / aaw 脚本、skills
+  源目录与 `SkillsInstallerSection` 安装器）、会话与审批（审批默认模式
   警示）；设置行（左标题+说明 / 右控件，发丝线分行）是全页的排版语法；
 - 诊断页（`DiagnosticsPage` = `LogView` + `AcpTrafficView`）：读取
   `stores/logStore`（镜像自 core 环形缓冲）展示日志与 ACP wire 流量；
@@ -101,8 +100,8 @@ React 组件与页面。只消费 `src/stores` 的状态和 action、`src/core` 
 - `MarkdownView.tsx` / `CopyButton.tsx`：Markdown + 代码块高亮与复制
   的共用渲染件。
 - `workspaces/`：项目总览的组成件与项目侧组装工具。
-  - `WorkspaceHealthPanel.tsx`：健康检查明细（chrys / uv / aaw CLI /
-    `.sdd/` 四项的 通过/警告/失败 + 中文修复指引）；摘要 chip 与「重新
+  - `WorkspaceHealthPanel.tsx`：健康检查明细（uv / aaw CLI /
+    `.sdd/` 三项的 通过/警告/失败 + 中文修复指引）；摘要 chip 与「重新
     检查」在项目状态行，路径修改入口在设置页；
   - `pickDirectory.ts`：系统目录选择对话框的薄封装（「添加项目…」入口）；
   - `settingsLinks.ts`：工具路径的组装桥（`settingsPathsOverride` 供执行

@@ -217,6 +217,87 @@ fn assign_kill_on_close_job(child_pid: u32) {
     }
 }
 
+/// Windows 上把无扩展名的命令名解析成可直接拉起的目标。
+///
+/// npm 全局安装的 CLI 在 PATH 上只有 `.cmd`/`.ps1` shim（`codeagent --acp`
+/// 这类自定义命令因此 spawn 失败）——`CreateProcess` 只认 `.exe`，不像
+/// shell 那样会查 PATHEXT。解析规则（对齐 vscode-acp 的 `shell: true`）：
+///
+/// - 显式 `.cmd`/`.bat` 路径经 cmd.exe 启动，其他显式路径原样使用；
+/// - 否则按 PATH 顺序扫 `program.exe` → 直接用；`program.cmd`/`.bat` →
+///   经 `cmd.exe /d /s /c` 拉起；
+/// - 都没命中 → 原样返回（让 CreateProcess 给出原本的错误信息）。
+#[cfg(target_os = "windows")]
+#[derive(Debug, PartialEq)]
+pub enum SpawnTarget {
+    /// 直接以该路径为可执行文件。
+    Direct(String),
+    /// 批处理 shim：经 cmd.exe 拉起（`script` 为 shim 的完整路径）。
+    CmdScript { comspec: String, script: String },
+}
+
+#[cfg(target_os = "windows")]
+pub fn resolve_windows_program(program: &str) -> SpawnTarget {
+    let mut paths = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        paths.push(std::path::PathBuf::from(appdata).join("npm"));
+    }
+    let joined = std::env::join_paths(paths).ok();
+    resolve_windows_program_in(program, joined.as_deref())
+}
+
+/// `path_var` 参数化是为了测试（PATH 是进程级全局，测试里不能互相踩）。
+#[cfg(target_os = "windows")]
+pub fn resolve_windows_program_in(
+    program: &str,
+    path_var: Option<&std::ffi::OsStr>,
+) -> SpawnTarget {
+    let looks_pathed = program.contains('\\') || program.contains('/');
+    let has_extension = std::path::Path::new(program)
+        .extension()
+        .is_some_and(|ext| !ext.is_empty());
+    if has_extension && matches!(std::path::Path::new(program).extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("cmd" | "bat")) {
+        let comspec = std::env::var_os("COMSPEC")
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "cmd.exe".to_string());
+        return SpawnTarget::CmdScript { comspec, script: program.to_string() };
+    }
+    if looks_pathed || has_extension {
+        return SpawnTarget::Direct(program.to_string());
+    }
+    let Some(path_var) = path_var else {
+        return SpawnTarget::Direct(program.to_string());
+    };
+    for dir in std::env::split_paths(path_var) {
+        for extension in [".exe", ".cmd", ".bat"] {
+            let candidate = dir.join(format!("{program}{extension}"));
+            if !candidate.is_file() {
+                continue;
+            }
+            let full = candidate.to_string_lossy().to_string();
+            if extension == ".exe" {
+                return SpawnTarget::Direct(full);
+            }
+            let comspec = std::env::var_os("COMSPEC")
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "cmd.exe".to_string());
+            return SpawnTarget::CmdScript { comspec, script: full };
+        }
+    }
+    SpawnTarget::Direct(program.to_string())
+}
+
+/// 组 cmd.exe 的 `/c` 尾串：脚本和参数分别加引号，外层供 /S 剥离。
+#[cfg(target_os = "windows")]
+pub fn cmd_script_tail(script: &str, args: &[String]) -> String {
+    let mut tail = format!("\"\"{script}\"");
+    for arg in args {
+        tail.push_str(&format!(" \"{arg}\""));
+    }
+    tail.push('"');
+    tail
+}
+
 /// 拉起 ACP agent 子进程并注册进进程表。
 #[tauri::command]
 pub async fn acp_spawn(
@@ -225,14 +306,28 @@ pub async fn acp_spawn(
     args: Vec<String>,
     cwd: Option<String>,
     extra_env: Option<HashMap<String, String>>,
+    isolated: Option<bool>,
 ) -> Result<AcpSpawnResult, String> {
     if program.is_empty() {
         return Err("program 不能为空".to_string());
     }
+    // Windows：无扩展名命令先做 PATH+PATHEXT 解析（见 resolve_windows_program）
+    #[cfg(target_os = "windows")]
+    let (program, args, cmd_tail) = {
+        match resolve_windows_program(&program) {
+            SpawnTarget::Direct(resolved) => (resolved, args, None),
+            SpawnTarget::CmdScript { comspec, script } => {
+                if std::iter::once(&script).chain(args.iter()).any(|s| s.chars().any(|c| matches!(c, '"' | '%' | '!' | '\r' | '\n'))) {
+                    return Err("批处理路径或参数包含不支持的字符（引号、% 或 !）".to_string());
+                }
+                (comspec, vec!["/d".to_string(), "/s".to_string(), "/c".to_string()], Some(cmd_script_tail(&script, &args)))
+            },
+        }
+    };
     // 同工作区回收上一代 agent(见 workspace_agents 注释):必须在新进程
     // 落地前做,否则新旧两个实例会争抢 chrys 的会话锁。强杀即可——上一代
     // 是「不该再活着」的滞留进程,且 chrys 会话写盘带 .bak 原子兜底
-    if let Some(dir) = cwd.as_deref() {
+    if let Some(dir) = cwd.as_deref().filter(|_| !isolated.unwrap_or(false)) {
         let previous = workspace_agents()
             .lock()
             .expect("ACP 工作区表锁中毒")
@@ -251,10 +346,18 @@ pub async fn acp_spawn(
     }
     let mut command = tokio::process::Command::new(&program);
     command
-        .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    // Windows：cmd.exe 的 /c 尾串必须原样进命令行（脚本路径的内层引号不能
+    // 被 Rust 的转义改写，否则 /S 的剥引号规则失效），所以用 raw_arg 追加
+    #[cfg(target_os = "windows")]
+    {
+        command.args(&args);
+        if let Some(tail) = cmd_tail { command.raw_arg(tail); }
+    }
+    #[cfg(not(target_os = "windows"))]
+    command.args(&args);
     if let Some(dir) = cwd.as_deref() {
         command.current_dir(dir);
     }
@@ -289,7 +392,7 @@ pub async fn acp_spawn(
         .lock()
         .expect("ACP 进程表锁中毒")
         .insert(handle, ProcessEntry { pid, stdin: Arc::clone(&stdin_slot), exit: Arc::clone(&exit_slot) });
-    if let Some(dir) = cwd.as_deref() {
+    if let Some(dir) = cwd.as_deref().filter(|_| !isolated.unwrap_or(false)) {
         workspace_agents()
             .lock()
             .expect("ACP 工作区表锁中毒")
@@ -586,6 +689,136 @@ fn signal_name_unix(signal: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ------------------------------------------------ Windows spawn 解析
+
+    /// 建一个带唯一名的临时目录；返回它，清理由调用方负责。
+    #[cfg(target_os = "windows")]
+    fn make_path_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "aaw-spawn-test-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_prefers_exe_on_path() {
+        let dir = make_path_dir("exe");
+        std::fs::write(dir.join("fake-agent.exe"), b"mz").expect("写假 exe");
+        let path_var = std::ffi::OsString::from(dir.to_string_lossy().to_string());
+        let target = resolve_windows_program_in("fake-agent", Some(&path_var));
+        assert!(matches!(
+            target,
+            SpawnTarget::Direct(ref p) if p.ends_with("fake-agent.exe")
+        ));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_uses_cmd_for_batch_shim() {
+        let dir = make_path_dir("cmd");
+        std::fs::write(dir.join("codeagent.cmd"), b"@echo off").expect("写 shim");
+        let path_var = std::ffi::OsString::from(dir.to_string_lossy().to_string());
+        let target = resolve_windows_program_in("codeagent", Some(&path_var));
+        assert!(matches!(
+            target,
+            SpawnTarget::CmdScript { ref script, .. } if script.ends_with("codeagent.cmd")
+        ));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_prefers_exe_over_cmd_in_same_dir() {
+        let dir = make_path_dir("both");
+        std::fs::write(dir.join("dual.cmd"), b"@echo off").expect("写 cmd");
+        std::fs::write(dir.join("dual.exe"), b"mz").expect("写 exe");
+        let path_var = std::ffi::OsString::from(dir.to_string_lossy().to_string());
+        let target = resolve_windows_program_in("dual", Some(&path_var));
+        assert!(matches!(
+            target,
+            SpawnTarget::Direct(ref p) if p.ends_with("dual.exe")
+        ));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_leaves_explicit_paths_and_extensions_alone() {
+        // 带扩展名 / 带分隔符：一律原样返回（显式路径优先，不做解析）
+        assert_eq!(
+            resolve_windows_program_in("C:/tools/agent.exe", None),
+            SpawnTarget::Direct("C:/tools/agent.exe".to_string())
+        );
+        assert!(matches!(resolve_windows_program_in("C:/tools/agent.cmd", None), SpawnTarget::CmdScript { script, .. } if script == "C:/tools/agent.cmd"));
+        assert_eq!(
+            resolve_windows_program_in("agent-tool", None),
+            SpawnTarget::Direct("agent-tool".to_string())
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cmd_script_tail_quotes_script_and_appends_args() {
+        let tail = cmd_script_tail("C:/my tools/codeagent.cmd", &["--acp".to_string()]);
+        assert_eq!(tail, "\"\"C:/my tools/codeagent.cmd\" \"--acp\"\"");
+    }
+
+    /// 端到端：按 acp_spawn 的同一构建方式经 cmd.exe 拉起 .cmd，验证引号
+    /// 规则真的能跑通（自定义命令「只填一条命令」的关键路径）。
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn cmd_script_spawn_runs_and_captures_output() {
+        use std::process::Stdio;
+
+        let dir = make_path_dir("e2e");
+        let spaced = dir.join("path with spaces");
+        std::fs::create_dir(&spaced).expect("创建带空格的目录");
+        let script = spaced.join("spawn-ok.cmd");
+        // 批处理要 CRLF；这里用字面 CR/LF 字节拼，避免源码里混入控制字符
+        // 批处理需要 CRLF 行尾；CR/LF 用字节值拼，避免源码里出现控制字符
+        std::fs::write(
+            &script,
+            b"@echo off"
+                .iter()
+                .copied()
+                .chain([13u8, 10])
+                .chain(b"echo spawn-ok %~1".iter().copied())
+                .chain([13u8, 10])
+                .collect::<Vec<u8>>(),
+        )
+        .expect("写脚本");
+
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = tokio::process::Command::new("cmd.exe");
+        command
+            .raw_arg("/d")
+            .raw_arg("/s")
+            .raw_arg("/c")
+            .raw_arg(cmd_script_tail(
+                &script.to_string_lossy(),
+                &["argument with spaces".to_string()],
+            ))
+            .stdin(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
+        let output = command.output().await.expect("拉起批处理");
+        std::fs::remove_dir_all(dir).ok();
+        assert!(
+            output.status.success(),
+            "status={:?} stdout={} stderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("spawn-ok"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("argument with spaces"));
+    }
 
     // ---------------------------------------------------------------- 分帧
 

@@ -25,7 +25,11 @@ import {
   probeSummary,
   type CheckStatus,
 } from "./protocolChecks.ts";
-import { runAgentProbe } from "./agentProbe.ts";
+import {
+  runAgentProbe,
+  testAgentConnection,
+  type ConnectionTestResult,
+} from "./agentProbe.ts";
 import {
   Badge,
   btnSecondary,
@@ -66,7 +70,7 @@ function probeAgent(
     onStep: useProtocolProbeStore.getState().setStep,
   })
     .then(useProtocolProbeStore.getState().finish)
-    .catch(() => {
+    .catch((error: unknown) => {
       // runner 承诺不抛出；此处仅极端兜底，防状态机卡死
       useProtocolProbeStore.getState().finish({
         agentId,
@@ -76,7 +80,7 @@ function probeAgent(
         elapsedMs: 0,
         ok: false,
         failedStep: "探查执行",
-        failureReason: "探查异常终止",
+        failureReason: error instanceof Error ? error.message : String(error),
         protocolVersion: null,
         agentName: null,
         agentVersion: null,
@@ -135,13 +139,27 @@ function AgentListCard() {
   const isScanningAgents = useSettingsStore((state) => state.isScanningAgents);
   const setActiveAgentId = useSettingsStore((state) => state.setActiveAgentId);
   const addCustomAgent = useSettingsStore((state) => state.addCustomAgent);
+  const updateCustomAgent = useSettingsStore(
+    (state) => state.updateCustomAgent,
+  );
   const removeCustomAgent = useSettingsStore(
     (state) => state.removeCustomAgent,
   );
   const scanNativeAgents = useSettingsStore((state) => state.scanNativeAgents);
   const [nameDraft, setNameDraft] = useState("");
   const [commandDraft, setCommandDraft] = useState("");
+  const [argsDraft, setArgsDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+  const [connectionResults, setConnectionResults] = useState<
+    Record<string, ConnectionTestResult>
+  >({});
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testStep, setTestStep] = useState("");
+  const chrysPath = useSettingsStore((state) => state.chrysPath);
+  const setChrysPath = useSettingsStore((state) => state.setChrysPath);
+  const isProbingPath = useSettingsStore((state) => state.isProbingChrysPath);
+  const reprobePath = useSettingsStore((state) => state.probeChrysPathIfNeeded);
 
   const phase = useProtocolProbeStore((state) => state.phase);
   const step = useProtocolProbeStore((state) => state.step);
@@ -166,7 +184,7 @@ function AgentListCard() {
         name: "iCode",
         source: "内置" as const,
         tone: "ok" as const,
-        command: "icode acp（可执行路径取「工具路径」设置）",
+        command: `${chrysPath || "icode"} acp`,
         removable: false,
       },
       ...discoveredAgents.map((item) => ({
@@ -189,15 +207,65 @@ function AgentListCard() {
         removable: true,
       })),
     ],
-    [discoveredAgents, agents],
+    [discoveredAgents, agents, chrysPath],
   );
 
   const submitAdd = (): void => {
-    const error = addCustomAgent(nameDraft, commandDraft);
+    const program = commandDraft.trim().replace(/^"(.*)"$/, "$1");
+    if (program.includes('"')) {
+      setAddError("程序路径不能包含引号");
+      return;
+    }
+    const base = (program.split(/[\\/]/).pop() ?? "")
+      .replace(/\.(exe|cmd|bat)$/i, "")
+      .toLowerCase();
+    const args =
+      argsDraft.trim() ||
+      (base === "opencode" ? "acp" : base === "codeagent" ? "--acp" : "");
+    const commandText = program ? `"${program}" ${args}` : "";
+    const error =
+      editingId === null
+        ? addCustomAgent(nameDraft, commandText)
+        : updateCustomAgent(editingId, nameDraft, commandText);
     setAddError(error);
     if (error === null) {
+      if (editingId !== null) {
+        setConnectionResults((previous) => {
+          const next = { ...previous };
+          delete next[editingId];
+          return next;
+        });
+      }
       setNameDraft("");
       setCommandDraft("");
+      setArgsDraft("");
+      setEditingId(null);
+    }
+  };
+
+  const testConnection = async (agentId: string): Promise<void> => {
+    const state = useSettingsStore.getState();
+    const resolved = resolveAgentAdapter(
+      agentId,
+      state.agents,
+      state.discoveredAgents,
+    );
+    if (!resolved) return;
+    setTestingId(agentId);
+    setConnectionResults((previous) => {
+      const next = { ...previous };
+      delete next[agentId];
+      return next;
+    });
+    try {
+      const result = await testAgentConnection(
+        resolved.adapter,
+        agentId === DEFAULT_AGENT_ID ? state.chrysPath : undefined,
+        setTestStep,
+      );
+      setConnectionResults((previous) => ({ ...previous, [agentId]: result }));
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -209,12 +277,12 @@ function AgentListCard() {
       <div className="border-b border-line px-5 py-3.5">
         <p className="text-ui-base font-medium text-ink">会话 Agent</p>
         <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">
-          点选切换新会话使用的 agent（已打开的会话不变）。「协议自检」真实
-          拉起该 agent 核验我们的全部接口依赖，结论记在行尾。
+          点选切换新会话使用的 Agent（已打开的会话不变）。测试连接只检查启动和
+          ACP 握手，不发送对话。
         </p>
         {workspacePath === null ? (
           <p role="alert" className="mt-1 text-xs text-warn-ink">
-            尚无可用项目作为探查工作区：请先在项目列表打开一个项目
+            协议自检和深度探查需要先打开项目；测试连接无需项目。
           </p>
         ) : null}
       </div>
@@ -252,11 +320,25 @@ function AgentListCard() {
             ) : probeResult !== undefined ? (
               <ProbeSummaryBadge result={probeResult} />
             ) : (
-              <span className="shrink-0 text-2xs text-ink-ghost">未检测</span>
+              <span className="shrink-0 text-2xs text-ink-ghost">未自检</span>
             )}
             <button
               type="button"
-              disabled={phase === "probing" || workspacePath === null}
+              disabled={testingId !== null || phase === "probing"}
+              onClick={() => {
+                void testConnection(row.key);
+              }}
+              className="shrink-0 rounded-md px-2 py-0.5 text-xs text-info-ink hover:bg-raised disabled:opacity-40"
+            >
+              {testingId === row.key ? `${testStep}…` : "测试连接"}
+            </button>
+            <button
+              type="button"
+              disabled={
+                phase === "probing" ||
+                testingId !== null ||
+                workspacePath === null
+              }
               onClick={() => {
                 if (workspacePath !== null)
                   probeAgent(row.key, "safe", workspacePath);
@@ -267,7 +349,11 @@ function AgentListCard() {
             </button>
             <button
               type="button"
-              disabled={phase === "probing" || workspacePath === null}
+              disabled={
+                phase === "probing" ||
+                testingId !== null ||
+                workspacePath === null
+              }
               title="两轮真实对话（轮 1 轻量回复；轮 2 列目录 + 跑命令，触发思考/工具/计划/审批）——消耗两次模型调用"
               onClick={() => {
                 if (workspacePath !== null)
@@ -278,15 +364,103 @@ function AgentListCard() {
               深度探查
             </button>
             {row.removable ? (
-              <button
-                type="button"
-                onClick={() => {
-                  removeCustomAgent(row.key);
-                }}
-                className="shrink-0 rounded-md px-2 py-0.5 text-xs text-danger-ink transition-colors hover:bg-danger-bg/60"
-              >
-                删除
-              </button>
+              <>
+                <button
+                  type="button"
+                  disabled={testingId === row.key}
+                  onClick={() => {
+                    const entry = agents.find((item) => item.id === row.key);
+                    if (!entry) return;
+                    setEditingId(entry.id);
+                    setNameDraft(entry.name);
+                    setCommandDraft(entry.command[0] ?? "");
+                    setArgsDraft(
+                      entry.command
+                        .slice(1)
+                        .map((part) => (/\s/.test(part) ? `"${part}"` : part))
+                        .join(" "),
+                    );
+                    setAddError(null);
+                  }}
+                  className="shrink-0 rounded-md px-2 py-0.5 text-xs text-info-ink hover:bg-raised"
+                >
+                  编辑
+                </button>
+                <button
+                  type="button"
+                  disabled={testingId === row.key}
+                  onClick={() => {
+                    removeCustomAgent(row.key);
+                  }}
+                  className="shrink-0 rounded-md px-2 py-0.5 text-xs text-danger-ink transition-colors hover:bg-danger-bg/60"
+                >
+                  删除
+                </button>
+              </>
+            ) : null}
+            {row.key === DEFAULT_AGENT_ID ? (
+              <div className="flex w-full items-center gap-2 pl-7">
+                <label
+                  htmlFor="agent-icode-path"
+                  className="shrink-0 text-xs text-ink-faint"
+                >
+                  iCode 路径
+                </label>
+                <input
+                  id="agent-icode-path"
+                  value={chrysPath}
+                  disabled={testingId === row.key}
+                  onChange={(event) => {
+                    setChrysPath(event.currentTarget.value);
+                    setConnectionResults((previous) => {
+                      const next = { ...previous };
+                      delete next[DEFAULT_AGENT_ID];
+                      return next;
+                    });
+                  }}
+                  placeholder="留空时使用 PATH 中的 icode"
+                  className={textInputClass}
+                />
+                <button
+                  type="button"
+                  disabled={isProbingPath || testingId === row.key}
+                  onClick={() => {
+                    setConnectionResults((previous) => {
+                      const next = { ...previous };
+                      delete next[DEFAULT_AGENT_ID];
+                      return next;
+                    });
+                    void reprobePath(true);
+                  }}
+                  className="shrink-0 text-xs text-info-ink"
+                >
+                  {isProbingPath ? "检测中…" : "重新检测路径"}
+                </button>
+              </div>
+            ) : null}
+            {connectionResults[row.key] ? (
+              <div role="status" className="w-full pl-7 text-xs">
+                <p
+                  className={
+                    connectionResults[row.key]?.ok
+                      ? "text-ok-ink"
+                      : "text-danger-ink"
+                  }
+                >
+                  {connectionResults[row.key]?.message}
+                </p>
+                {connectionResults[row.key]?.stderr ? (
+                  <details
+                    open={!connectionResults[row.key]?.ok}
+                    className="mt-1 text-ink-mute"
+                  >
+                    <summary className="cursor-pointer">进程输出</summary>
+                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all">
+                      {connectionResults[row.key]?.stderr}
+                    </pre>
+                  </details>
+                ) : null}
+              </div>
             ) : null}
           </div>
         );
@@ -304,8 +478,8 @@ function AgentListCard() {
         />
         <input
           type="text"
-          aria-label="自定义 Agent 启动命令"
-          placeholder="启动命令（如 opencode acp，双引号可含空格路径）"
+          aria-label="自定义 Agent 程序或路径"
+          placeholder="程序或路径（如 opencode）"
           value={commandDraft}
           onChange={(event) => {
             setCommandDraft(event.currentTarget.value);
@@ -315,13 +489,36 @@ function AgentListCard() {
           }}
           className={`${textInputClass} h-8 flex-1`}
         />
+        <input
+          type="text"
+          aria-label="自定义 Agent 启动参数"
+          placeholder="启动参数（如 acp）"
+          value={argsDraft}
+          onChange={(event) => setArgsDraft(event.currentTarget.value)}
+          className={`${textInputClass} h-8 flex-1`}
+        />
         <button
           type="button"
           onClick={submitAdd}
           className={`${btnSecondary} shrink-0 px-2.5 py-1 text-xs`}
         >
-          添加
+          {editingId === null ? "添加" : "保存修改"}
         </button>
+        {editingId !== null ? (
+          <button
+            type="button"
+            onClick={() => {
+              setEditingId(null);
+              setNameDraft("");
+              setCommandDraft("");
+              setArgsDraft("");
+              setAddError(null);
+            }}
+            className={`${btnSecondary} shrink-0 px-2.5 py-1 text-xs`}
+          >
+            取消
+          </button>
+        ) : null}
       </div>
       {addError !== null ? (
         <p role="alert" className="px-5 pb-3 text-xs text-danger-ink">

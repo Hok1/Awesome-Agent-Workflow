@@ -20,9 +20,9 @@
   依赖 cwd 定位 `.sdd/`）与超时，且非 Tauri 环境仍要真探测（Node
   子进程）；与 `core/host.ts` 的 HostRuntime 分工互补，共用同一组
   Rust command（`run_command` / `path_exists`）。
-- `healthChecks.ts`：工作区健康检查领域逻辑——chrys / uv / aaw CLI
-  （`uv run <aaw.py> --help` 只读探测）/ `.sdd/` 存在性四项，逐项产出
-  通过/警告/失败 + 中文修复指引（三条路径都由设置页配置）；uv 失败时
+- `healthChecks.ts`：工作区健康检查领域逻辑——uv / aaw CLI
+  （`uv run <aaw.py> --help` 只读探测）/ `.sdd/` 存在性三项，逐项产出
+  通过/警告/失败 + 中文修复指引；uv 失败时
   aaw 项短路；含从 skills 源目录推导 aaw.py 路径的 `deriveAawScriptPath`。
 - `aawCli.ts`：aaw CLI 只读查询的统一出站封装（`runAawJsonQuery`：
   命令组装 + stdout → JSON 抽取）与 `extractJsonObject`；命令的组合
