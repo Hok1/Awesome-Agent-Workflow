@@ -34,7 +34,6 @@ import {
 import { btnSecondary } from "../controls.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
 import { XIcon } from "../icons.tsx";
-import { ConnectionBadge } from "./ConnectionBadge.tsx";
 import { WindowControls } from "./WindowControls.tsx";
 
 import { PanelButtons } from "../right-panel/RightPanel.tsx";
@@ -148,7 +147,6 @@ function SessionBar({ path }: { readonly path: string }) {
       <span className="shrink-0 text-xs text-ink-faint">
         {basenameOf(path)}
       </span>
-      <ConnectionBadge path={path} />
       <span aria-hidden={true} className="flex-1" />
     </>
   );

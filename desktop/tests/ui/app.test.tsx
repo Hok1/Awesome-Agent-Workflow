@@ -179,7 +179,7 @@ describe("App 主布局", () => {
       ],
     });
     render(<App />);
-    await userEvent.click(screen.getByText("demo-project"));
+    await userEvent.click(screen.getByRole("button", { name: "工作流" }));
     // 总览的上下文条：项目名 + 返回按钮（全应用唯一顶栏，无 crumb 重影）
     expect(
       screen.getByRole("heading", { name: "demo-project" }),

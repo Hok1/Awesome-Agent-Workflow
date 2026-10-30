@@ -204,12 +204,19 @@ beforeEach(() => {
   resetAll();
 });
 
+
+/** 树内会话行定位：内容空态的项目会话快捷列表与树同名，须收敛到树内。 */
+function treeSession(name: RegExp | string): HTMLElement {
+  return within(screen.getByLabelText("项目树")).getByRole("button", {
+    name,
+  });
+}
 describe("项目树 → 项目总览", () => {
   it("点项目节点：内容区切到该项目总览；检查不自动发起（手动「重新检查」）", async () => {
     seedProjectWithSessions();
     render(<App />);
     // 名字按钮带 title=路径，与收藏 / 移除按钮区分
-    await userEvent.click(screen.getByTitle(PATH));
+    await userEvent.click(screen.getByRole("button", { name: "工作流" }));
 
     expect(screen.getByRole("heading", { name: NAME })).toBeInTheDocument();
     // 检查通过过的不会自己坏掉：进总览不自动重查；未检查态不渲染 chip
@@ -280,7 +287,7 @@ describe("项目树 → 项目总览", () => {
   it("「从列表移除」经右键菜单清掉树节点；内容区正停留该工程时回落空态", async () => {
     seedProjectWithSessions();
     render(<App />);
-    await userEvent.click(screen.getByTitle(PATH));
+    await userEvent.click(screen.getByRole("button", { name: "工作流" }));
     expect(screen.getByRole("heading", { name: NAME })).toBeInTheDocument();
 
     const tree = screen.getByLabelText("项目树");
@@ -304,26 +311,22 @@ describe("项目树 → 会话子节点", () => {
     vi.mocked(switchRealSession).mockResolvedValue(true);
     render(<App />);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }),
-    );
+    await userEvent.click(treeSession(/会话 · 旧任务/));
 
     // 未连接 → 冷连接并点名载入目标会话（单次回放，别的会话不涌进
     // 视图）；activePath 落地后 RealSessionRuntime 的装配 effect 会对
     // 同路径补一次幂等调用
-    expect(openRealWorkspace).toHaveBeenCalledTimes(2);
-    expect(openRealWorkspace).toHaveBeenNthCalledWith(1, PATH, {
+    expect(openRealWorkspace).toHaveBeenCalledWith(PATH, {
       sessionId: "sess-1",
     });
+    expect(openRealWorkspace).toHaveBeenCalledWith(PATH, { listOnly: true });
     expect(switchRealSession).toHaveBeenCalledWith("sess-1");
     expect(useWorkspaceStore.getState().activePath).toBe(PATH);
     expect(useSessionStore.getState().activeSessionId).toBe("sess-1");
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
 
     // 已连接同一项目：再点另一会话不再重连，只切换会话
-    await userEvent.click(
-      screen.getByRole("button", { name: /会话 · 更早任务/ }),
-    );
+    await userEvent.click(treeSession(/会话 · 更早任务/));
     expect(openRealWorkspace).toHaveBeenCalledTimes(2);
     expect(switchRealSession).toHaveBeenLastCalledWith("sess-2");
     expect(useSessionStore.getState().activeSessionId).toBe("sess-2");
@@ -334,9 +337,7 @@ describe("项目树 → 会话子节点", () => {
     vi.mocked(switchRealSession).mockResolvedValue(false);
     render(<App />);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }),
-    );
+    await userEvent.click(treeSession(/会话 · 旧任务/));
 
     expect(switchRealSession).toHaveBeenCalledWith("sess-1");
     // 失败即回滚：乐观切进来的会话视图退场，回到点击前的总览
@@ -356,9 +357,7 @@ describe("项目树 → 会话子节点", () => {
     });
     render(<App />);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }),
-    );
+    await userEvent.click(treeSession(/会话 · 旧任务/));
 
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
     expect(screen.getByText(/正在连接 agent/)).toBeInTheDocument();
@@ -376,19 +375,17 @@ describe("项目树 → 会话子节点", () => {
     const SELECTED_CLASS = "bg-(--color-selected)";
 
     // 先进会话视图（会话行亮）
-    await userEvent.click(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }),
+    await userEvent.click(treeSession(/会话 · 旧任务/));
+    expect(treeSession(/会话 · 旧任务/).className).toContain(
+      SELECTED_CLASS,
     );
-    expect(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }).className,
-    ).toContain(SELECTED_CLASS);
 
     // 再点项目回总览：会话行必须退光——activeSessionId 未清，
     // 但高亮由「内容区正在显示谁」门控，全树只允许一个答案
-    await userEvent.click(screen.getAllByTitle(PATH)[0] as HTMLElement);
+    await userEvent.click(screen.getByRole("button", { name: "工作流" }));
     expect(screen.queryByLabelText("会话视图")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }),
+      treeSession(/会话 · 旧任务/),
     ).not.toHaveAttribute("aria-current");
     expect(
       (screen.getAllByTitle(PATH)[0] as HTMLElement).closest("div")?.className,
@@ -418,21 +415,18 @@ describe("项目树 → 会话子节点", () => {
     const SELECTED_CLASS = "bg-(--color-selected)";
 
     // 先选中该项目（总览态 → 项目行是唯一选中项）
-    const projectName = screen.getAllByTitle(PATH)[0];
-    expect(projectName).toBeDefined();
-    await userEvent.click(projectName as HTMLElement);
-    expect((projectName as HTMLElement).closest("div")?.className).toContain(
-      SELECTED_CLASS,
-    );
+    await userEvent.click(screen.getByRole("button", { name: "工作流" }));
+    expect(
+      (screen.getAllByTitle(PATH)[0] as HTMLElement).closest("div")
+        ?.className,
+    ).toContain(SELECTED_CLASS);
 
     // 进会话视图：选中落点转到会话行，项目行退回普通行
-    await userEvent.click(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }),
-    );
+    await userEvent.click(treeSession(/会话 · 旧任务/));
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /会话 · 旧任务/ }).className,
-    ).toContain(SELECTED_CLASS);
+    expect(treeSession(/会话 · 旧任务/).className).toContain(
+      SELECTED_CLASS,
+    );
     expect(
       screen.getAllByTitle(PATH)[0]?.closest("div")?.className,
     ).not.toContain(SELECTED_CLASS);
@@ -449,22 +443,13 @@ describe("项目树徽标与展开", () => {
     expect(screen.queryByLabelText("连接中")).not.toBeInTheDocument();
   });
 
-  it("连接徽标：activePath 命中且已绑定为绿点「已连接」", () => {
+  it("连接状态点已移除：项目行任何连接态都不呈现（模型 a）", () => {
     seedProjectWithSessions();
     useWorkspaceStore.setState({ activePath: PATH });
-    useSessionStore.setState({ isBound: true });
+    useSessionStore.setState({ isBound: true, isConnecting: true });
     render(<App />);
-    expect(screen.getByLabelText("已连接")).toBeInTheDocument();
-    expect(screen.queryByLabelText("未连接")).not.toBeInTheDocument();
-  });
-
-  it("连接徽标：连接中为蓝点「连接中」", () => {
-    seedProjectWithSessions();
-    useWorkspaceStore.setState({ activePath: PATH });
-    useSessionStore.setState({ isConnecting: true });
-    render(<App />);
-    expect(screen.getByLabelText("连接中")).toBeInTheDocument();
     expect(screen.queryByLabelText("已连接")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("连接中")).not.toBeInTheDocument();
   });
   it("健康徽标：全部通过显示 ✓n/n；有警告/失败显示 ⚠；无结果不显示", () => {
     seedProjectWithSessions();
@@ -526,35 +511,31 @@ describe("项目树徽标与展开", () => {
       screen.getByRole("button", { name: /会话 · 旧任务/ }),
     ).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: `折叠 ${NAME}` }));
+    await userEvent.click(within(screen.getByLabelText("项目树")).getByTitle(PATH));
     expect(
       screen.queryByRole("button", { name: /会话 · 旧任务/ }),
     ).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: `展开 ${NAME}` }));
+    await userEvent.click(within(screen.getByLabelText("项目树")).getByTitle(PATH));
     expect(
       screen.getByRole("button", { name: /会话 · 旧任务/ }),
     ).toBeInTheDocument();
   });
 
-  it("双击项目行：收起 / 展开目录（单击项目名进总览不受影响）", async () => {
+  it("单击项目标题：收起 / 展开目录（折叠入口收敛到标题，行尾让位动作栏）", async () => {
     seedProjectWithSessions();
     render(<App />);
-    // 默认展开：会话子节点可见
     expect(
       screen.getByRole("button", { name: /会话 · 旧任务/ }),
     ).toBeInTheDocument();
 
-    // 双击项目行（名字按钮 title=路径）→ 整行双击折叠；
-    // 定位收窄到树内——双击顺带进的总览里也有 title=路径 的元素
-    const tree = screen.getByLabelText("项目树");
-    await userEvent.dblClick(within(tree).getByTitle(PATH));
+    const title = within(screen.getByLabelText("项目树")).getByTitle(PATH);
+    await userEvent.click(title);
     expect(
       screen.queryByRole("button", { name: /会话 · 旧任务/ }),
     ).not.toBeInTheDocument();
 
-    // 再双击展开回来
-    await userEvent.dblClick(within(tree).getByTitle(PATH));
+    await userEvent.click(title);
     expect(
       screen.getByRole("button", { name: /会话 · 旧任务/ }),
     ).toBeInTheDocument();
@@ -567,7 +548,9 @@ describe("项目树 → 新会话（普通会话）", () => {
     mockConnect(PATH);
     render(<App />);
     await userEvent.click(
-      screen.getByRole("button", { name: `新会话（${NAME}）` }),
+      within(screen.getByLabelText("项目树")).getByRole("button", {
+        name: "新建会话",
+      }),
     );
 
     // forceNew 是「新建」与「打开历史」的分水岭：不做它就会落进上次对话
@@ -587,14 +570,11 @@ describe("项目树 → 新会话（普通会话）", () => {
     mockConnect(PATH);
     render(<App />);
 
-    // 无历史：默认收起，但 chevron 可用
+    // 无历史：默认收起；展开后行尾动作栏即有「新建会话」——空项目不是死路
+    const tree = screen.getByLabelText("项目树");
+    await userEvent.click(within(tree).getByTitle(PATH));
     expect(
-      screen.queryByRole("button", { name: `新会话（${NAME}）` }),
-    ).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: `展开 ${NAME}` }));
-    // 展开后「＋ 新会话」在位——这是新项目的唯一起步入口
-    expect(
-      screen.getByRole("button", { name: `新会话（${NAME}）` }),
+      within(tree).getByRole("button", { name: "新建会话" }),
     ).toBeInTheDocument();
   });
 
@@ -608,7 +588,9 @@ describe("项目树 → 新会话（普通会话）", () => {
     });
     render(<App />);
     await userEvent.click(
-      screen.getByRole("button", { name: `新会话（${NAME}）` }),
+      within(screen.getByLabelText("项目树")).getByRole("button", {
+        name: "新建会话",
+      }),
     );
 
     // 失败即回滚：乐观切进来的会话视图退场，落在总览（修复入口在那儿）
@@ -845,7 +827,9 @@ describe("侧边栏会话视角", () => {
     );
 
     await waitFor(() => {
-      expect(openRealWorkspace).toHaveBeenCalledWith(PATH_B);
+      expect(openRealWorkspace).toHaveBeenCalledWith(PATH_B, {
+        sessionId: "sess-b1",
+      });
     });
     expect(switchRealSession).toHaveBeenCalledWith("sess-b1");
     expect(useWorkspaceStore.getState().activePath).toBe(PATH_B);

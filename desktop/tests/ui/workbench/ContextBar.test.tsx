@@ -106,11 +106,12 @@ describe("ContextBar 会话态", () => {
     seedSessionView();
     render(<ContentArea />);
 
-    expect(screen.getByText("总结 SR-001 的进度")).toBeInTheDocument();
+    expect(screen.getAllByText("总结 SR-001 的进度")[0]!).toBeInTheDocument();
     expect(screen.getByText(NAME)).toBeInTheDocument();
-    expect(screen.getByText("已连接")).toBeInTheDocument();
+    expect(screen.queryByText("已连接")).not.toBeInTheDocument();
+    // SR 快捷按钮属 AAW 面板；空态快捷列表的会话按钮不计入
     expect(
-      screen.queryByRole("button", { name: /SR-001/ }),
+      screen.queryByRole("button", { name: "SR-001 快捷入口" }),
     ).not.toBeInTheDocument();
   });
 
@@ -118,7 +119,7 @@ describe("ContextBar 会话态", () => {
     seedSessionView();
     useSessionStore.setState({ isConnecting: true, isBound: false });
     render(<ContentArea />);
-    expect(screen.getByText("连接中")).toBeInTheDocument();
+    expect(screen.queryByText("连接中")).not.toBeInTheDocument();
     expect(screen.queryByText("已连接")).not.toBeInTheDocument();
   });
 
@@ -219,7 +220,7 @@ describe("ContextBar 连接失败横幅与徽标（P0-1）", () => {
     expect(banner).toHaveTextContent(/连接失败：连接 agent 失败/);
     expect(banner).toHaveTextContent(/请在设置中检查 agent 可执行路径/);
     // 连接徽标进入失败态（badge 文字）
-    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.queryByText("失败")).not.toBeInTheDocument();
     expect(screen.queryByText("已连接")).not.toBeInTheDocument();
 
     await userEvent.click(
@@ -287,13 +288,13 @@ describe("ContextBar 会话改名（双击行内编辑）", () => {
     seedSessionView();
     render(<ContentArea />);
 
-    await userEvent.dblClick(screen.getByText("总结 SR-001 的进度"));
+    await userEvent.dblClick(screen.getAllByText("总结 SR-001 的进度")[0]!);
     const input = screen.getByRole("textbox", { name: "会话名称" });
     await userEvent.clear(input);
     await userEvent.type(input, "我的会话名{Enter}");
 
     // 展示立即更新（顶栏 + 树缓存同源）
-    expect(screen.getByText("我的会话名")).toBeInTheDocument();
+    expect(screen.getAllByText("我的会话名")[0]!).toBeInTheDocument();
     const entry = useSessionStore
       .getState()
       .sessionsByPath[PATH]?.find((session) => session.id === "sess-1");
@@ -305,14 +306,14 @@ describe("ContextBar 会话改名（双击行内编辑）", () => {
     render(<ContentArea />);
 
     // Esc 取消
-    await userEvent.dblClick(screen.getByText("总结 SR-001 的进度"));
+    await userEvent.dblClick(screen.getAllByText("总结 SR-001 的进度")[0]!);
     const input = screen.getByRole("textbox", { name: "会话名称" });
     await userEvent.clear(input);
     await userEvent.type(input, "半截输入{Escape}");
-    expect(screen.getByText("总结 SR-001 的进度")).toBeInTheDocument();
+    expect(screen.getAllByText("总结 SR-001 的进度")[0]!).toBeInTheDocument();
 
     // 手动改名后悬停提示原生名；清空提交恢复
-    await userEvent.dblClick(screen.getByText("总结 SR-001 的进度"));
+    await userEvent.dblClick(screen.getAllByText("总结 SR-001 的进度")[0]!);
     await userEvent.clear(screen.getByRole("textbox", { name: "会话名称" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "会话名称" }),
@@ -322,12 +323,12 @@ describe("ContextBar 会话改名（双击行内编辑）", () => {
       screen.getByTitle(/总结 SR-001 的进度（双击重命名/),
     ).toBeInTheDocument();
 
-    await userEvent.dblClick(screen.getByText("手动名"));
+    await userEvent.dblClick(screen.getAllByText("手动名")[0]!);
     await userEvent.clear(screen.getByRole("textbox", { name: "会话名称" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "会话名称" }),
       "{Enter}",
     );
-    expect(screen.getByText("总结 SR-001 的进度")).toBeInTheDocument();
+    expect(screen.getAllByText("总结 SR-001 的进度")[0]!).toBeInTheDocument();
   });
 });

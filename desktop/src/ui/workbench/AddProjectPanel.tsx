@@ -23,7 +23,6 @@ import {
 import { basenameOf, formatLastOpened } from "../workspaces/workspaceText.ts";
 import { addProjectViaDialog } from "./addProjectFlow.ts";
 import { startNewSession } from "./sessionStart.ts";
-import { ConnectionBadge } from "./ConnectionBadge.tsx";
 
 type AddPanelTab = "new-session" | "add-project";
 
@@ -68,7 +67,6 @@ function KnownProjectRow({
             </span>
           )}
         </span>
-        <ConnectionBadge path={path} />
       </button>
     </li>
   );
