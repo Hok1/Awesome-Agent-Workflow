@@ -2,7 +2,6 @@
  * 工作区健康检查（src/aaw 领域逻辑）。
  *
  * 对所选目录逐项探测：
- * - iCode（原 chrys）可执行（用设置里的路径，`--version` 探测）；
  * - uv 可执行（`uv --version`）；
  * - aaw CLI（`uv run <aaw.py> --help`，在所选目录下执行；只读探测，
  *   不触发 status 的自动更新逻辑）；
@@ -37,8 +36,7 @@ export interface HealthCheckItem {
   readonly durationMs: number;
 }
 
-/** 健康检查所需的外部工具路径。chrys 用设置页的 chrysPath；uv 与 aaw 脚本
- * 路径由 workspace store 持久化；三者都在设置页编辑（见 SettingsPage）。 */
+/** 工具路径；chrysCommand 保留用于已有持久化与会话启动。 */
 export interface WorkspaceToolPaths {
   /** chrys 可执行命令（可含路径），缺省 "chrys"。 */
   readonly chrysCommand: string;
@@ -88,11 +86,8 @@ export async function runWorkspaceHealthChecks(
   const { workspacePath, toolPaths, runner } = options;
   logger.info("项目健康检查开始", { workspacePath });
 
-  // 并行探测：chrys / uv / .sdd 三项互不依赖；aaw CLI 依赖 uv 的结论
-  //（uv 失败则跳过重复探测），在 uv 落地后单独跑——最坏路径与旧串行
-  // 一致，常见路径总耗时从四项之和降为最慢一项
-  const [chrys, uv, sdd] = await Promise.all([
-    checkChrys(toolPaths.chrysCommand, runner),
+  // uv 与 .sdd 并行；aaw CLI 依赖 uv 的结论。
+  const [uv, sdd] = await Promise.all([
     checkUv(toolPaths.uvCommand, runner),
     checkSddDir(workspacePath, runner),
   ]);
@@ -101,7 +96,7 @@ export async function runWorkspaceHealthChecks(
       ? await checkAawCli(workspacePath, toolPaths, runner)
       : skippedAawBecauseUvFailed();
 
-  const items = [chrys, uv, aaw, sdd];
+  const items = [uv, aaw, sdd];
   logger.info("项目健康检查完成", {
     workspacePath,
     result: items.map((item) => `${item.id}:${item.status}`).join(" "),
@@ -110,24 +105,6 @@ export async function runWorkspaceHealthChecks(
 }
 
 // --------------------------------------------------------------------- 项实现
-
-async function checkChrys(
-  chrysCommand: string,
-  runner: ProcessRunner,
-): Promise<HealthCheckItem> {
-  const startedAt = Date.now();
-  const result = await runner.run({
-    command: [chrysCommand, "--version"],
-    timeoutMs: CLI_PROBE_TIMEOUT_MS,
-  });
-  const durationMs = Date.now() - startedAt;
-  return {
-    id: "chrys",
-    label: "iCode 可执行",
-    ...summarizeVersionProbe("chrys", chrysCommand, result, durationMs),
-    durationMs,
-  };
-}
 
 async function checkUv(
   uvCommand: string,

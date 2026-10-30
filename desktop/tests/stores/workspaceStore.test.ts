@@ -271,7 +271,7 @@ describe("useWorkspaceStore", () => {
     });
     const health = useWorkspaceStore.getState().health;
     expect(health?.path).toBe(DEMO_PATH);
-    expect(health?.items).toHaveLength(4);
+    expect(health?.items).toHaveLength(3);
     expect(health?.items.every((item) => item.status === "pass")).toBe(true);
     expect(useWorkspaceStore.getState().isCheckingHealth).toBe(false);
   });

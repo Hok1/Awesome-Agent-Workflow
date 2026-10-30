@@ -34,7 +34,7 @@ const DEEP_TURN1_TEXT = "请只回复两个字：完成。";
 const DEEP_TURN2_TEXT =
   "请依次完成两件事：1) 列出当前目录下的文件，告诉我大约有几个；2) 运行一条命令输出 probe-ok。完成后分别简要汇报。";
 /** 短请求超时：覆盖冷启动 agent（spawn + 握手可能到 10s 量级）。 */
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 /** 安全探查在 session/new 后停收早期通知的时长。 */
 const EARLY_NOTIFICATION_SETTLE_MS = 1_200;
 
@@ -60,6 +60,55 @@ function describeError(error: unknown): string {
   return error instanceof Error
     ? `${error.name}: ${error.message}`
     : String(error);
+}
+
+export interface ConnectionTestResult {
+  readonly ok: boolean;
+  readonly message: string;
+  readonly stderr: string;
+}
+
+/** Start an independent process and check only the ACP handshake. */
+export async function testAgentConnection(
+  adapter: AgentAdapter,
+  executablePath?: string,
+  onStep?: (step: string) => void,
+  suppliedTransport?: AcpTransport,
+): Promise<ConnectionTestResult> {
+  let transport: AcpTransport | null = suppliedTransport ?? null;
+  let stderr = "";
+  let stage = "启动进程";
+  try {
+    onStep?.(stage);
+    transport ??= await createAgentTransport(
+      adapter.buildLaunch({ workspacePath: null, executablePath }),
+      { isolated: true },
+    );
+    if (transport === null) throw new Error("当前环境无法启动 Agent 进程");
+    transport.onStderr((chunk) => {
+      stderr = (stderr + chunk).slice(-8000);
+    });
+    const session = new AcpSession(transport, {
+      requestTimeoutMs: REQUEST_TIMEOUT_MS,
+      clientInfo: adapter.clientInfo,
+    });
+    stage = "ACP 握手";
+    onStep?.(stage);
+    const result = await session.initialize();
+    return {
+      ok: true,
+      message: `连接成功：${result.agentInfo.name}${result.agentInfo.version ? ` ${result.agentInfo.version}` : ""}，ACP v${String(result.protocolVersion)}`,
+      stderr,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `${stage}失败：${describeError(error)}`,
+      stderr,
+    };
+  } finally {
+    if (transport !== null) await transport.close(2_000).catch(() => undefined);
+  }
 }
 
 /** 一次探查的执行现场（计数器可变，结果组装时快照为只读）。 */
@@ -130,7 +179,11 @@ export async function runAgentProbe(
       workspacePath: options.cwd,
       executablePath: options.executablePath,
     });
-    transport = await createAgentTransport(launch);
+    try {
+      transport = await createAgentTransport(launch, { isolated: true });
+    } catch (error) {
+      return failed("启动进程", describeError(error));
+    }
     if (transport === null) {
       return failed(
         "spawn",

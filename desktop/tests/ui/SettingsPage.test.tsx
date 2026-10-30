@@ -28,8 +28,6 @@ async function openTab(name: string): Promise<void> {
   await userEvent.click(screen.getByRole("tab", { name }));
 }
 
-const CHRYS_TEST_PATH = "X:/tools/chrys.exe";
-
 describe("SettingsPage（侧边 Tab 版）", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -89,9 +87,10 @@ describe("SettingsPage（侧边 Tab 版）", () => {
       "内网 Agent",
     );
     await userEvent.type(
-      screen.getByLabelText("自定义 Agent 启动命令"),
-      '"C:/Program Files/intranet/agent.exe" acp',
+      screen.getByLabelText("自定义 Agent 程序或路径"),
+      "C:/Program Files/intranet/agent.exe",
     );
+    await userEvent.type(screen.getByLabelText("自定义 Agent 启动参数"), "acp");
     await userEvent.click(screen.getByRole("button", { name: "添加" }));
 
     const row = await screen.findByLabelText("agent-内网 Agent");
@@ -137,7 +136,7 @@ describe("SettingsPage（侧边 Tab 版）", () => {
     expect(screen.getByText("界面语言")).toBeInTheDocument();
     expect(screen.getByText("版本")).toBeInTheDocument();
     // 工具路径面板 hidden（仍在 DOM，但不可见）
-    expect(screen.getByLabelText("iCode 可执行路径")).not.toBeVisible();
+    expect(screen.getByLabelText("iCode 路径")).not.toBeVisible();
 
     await openTab("Agent");
     expect(screen.getByRole("tab", { name: "Agent" })).toHaveAttribute(
@@ -151,89 +150,63 @@ describe("SettingsPage（侧边 Tab 版）", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByLabelText("iCode 可执行路径")).toBeInTheDocument();
+    expect(screen.getByLabelText("iCode 路径")).not.toBeVisible();
 
     await openTab("会话与审批");
     expect(screen.getByText("审批默认模式")).toBeInTheDocument();
-    expect(screen.getByLabelText("iCode 可执行路径")).not.toBeVisible();
+    expect(screen.getByLabelText("iCode 路径")).not.toBeVisible();
   });
 
-  it("工具路径分片：渲染各字段与默认 chrys 路径（空 + 手动指定提示）", async () => {
+  it("工具路径只显示工作流工具，iCode 路径在 Agent 页保存", async () => {
     await renderSettingsPage();
     await openTab("工具路径");
-    expect(screen.getByLabelText("iCode 可执行路径")).toHaveValue("");
-    expect(screen.getByLabelText("uv 命令")).toBeInTheDocument();
-    expect(screen.getByLabelText("aaw 脚本路径")).toBeInTheDocument();
-    expect(screen.getByLabelText("AAW skills 安装源目录")).toBeInTheDocument();
-    expect(
-      screen.getByText("未找到 iCode，请手动指定路径"),
-    ).toBeInTheDocument();
-    // 内置 skills 安装器作为工具路径分片的区块存在
-    expect(screen.getByText("AAW skills 安装器")).toBeInTheDocument();
-  });
-
-  it("修改 chrys 路径写入 store 并持久化", async () => {
-    await renderSettingsPage();
-    await openTab("工具路径");
-    const input = screen.getByLabelText("iCode 可执行路径");
-    await userEvent.clear(input);
-    await userEvent.type(input, "X:/chrys.exe");
-    expect(useSettingsStore.getState().chrysPath).toBe("X:/chrys.exe");
-    expect(window.localStorage.getItem("aaw-desktop.settings.v1")).toContain(
-      "X:/chrys.exe",
+    expect(screen.getByLabelText("iCode 路径")).not.toBeVisible();
+    expect(screen.getByLabelText("uv 命令")).toBeVisible();
+    expect(screen.getByLabelText("aaw 脚本路径")).toBeVisible();
+    await openTab("Agent");
+    const input = screen.getByLabelText("iCode 路径");
+    await userEvent.type(input, "X:/Program Files/icode.exe");
+    expect(useSettingsStore.getState().chrysPath).toBe(
+      "X:/Program Files/icode.exe",
     );
   });
 
-  it("「测试连接」成功时展示版本（行尾 chip + 状态行）", async () => {
-    useSettingsStore.getState().setChrysPath(CHRYS_TEST_PATH);
-    demoHost.scriptCommand(CHRYS_TEST_PATH, ["--version"], {
-      code: 0,
-      stdout: "0.25.1\n",
-      stderr: "",
-    });
+  it("没有项目时也能测试连接，并直接显示启动错误", async () => {
     await renderSettingsPage();
-    await openTab("工具路径");
-    await userEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    expect(
-      await screen.findByText(/可用（版本 0\.25\.1）/),
-    ).toBeInTheDocument();
+    await openTab("Agent");
+    const row = screen.getByLabelText("agent-iCode");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "测试连接" }),
+    );
+    expect(await within(row).findByText(/启动进程失败/)).toBeInTheDocument();
   });
 
-  it("「测试连接」失败时展示错误", async () => {
-    useSettingsStore.getState().setChrysPath(CHRYS_TEST_PATH);
-    demoHost.scriptCommand(CHRYS_TEST_PATH, ["--version"], {
-      code: 9009,
-      stdout: "",
-      stderr: "系统找不到指定的文件",
-    });
+  it("只填 OpenCode 程序时补上 ACP 参数", async () => {
     await renderSettingsPage();
-    await openTab("工具路径");
-    await userEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    expect(await screen.findByText(/系统找不到指定的文件/)).toBeInTheDocument();
-  });
-
-  it("路径为空时「测试连接」失败收口并提示配置路径", async () => {
-    await renderSettingsPage();
-    await openTab("工具路径");
-    await userEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    expect(
-      await screen.findByText(/未配置 iCode 可执行路径/),
-    ).toBeInTheDocument();
-  });
-
-  it("配置路径后「未找到 iCode」提示消失", async () => {
-    await renderSettingsPage();
-    await openTab("工具路径");
-    expect(
-      screen.getByText("未找到 iCode，请手动指定路径"),
-    ).toBeInTheDocument();
+    await openTab("Agent");
     await userEvent.type(
-      screen.getByLabelText("iCode 可执行路径"),
-      CHRYS_TEST_PATH,
+      screen.getByLabelText("自定义 Agent 名称"),
+      "另一个 OpenCode",
     );
-    expect(
-      screen.queryByText("未找到 iCode，请手动指定路径"),
-    ).not.toBeInTheDocument();
+    await userEvent.type(
+      screen.getByLabelText("自定义 Agent 程序或路径"),
+      "opencode",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "添加" }));
+    expect(useSettingsStore.getState().agents[0]?.command).toEqual([
+      "opencode",
+      "acp",
+    ]);
+    const row = screen.getByLabelText("agent-另一个 OpenCode");
+    await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+    const program = screen.getByLabelText("自定义 Agent 程序或路径");
+    await userEvent.clear(program);
+    await userEvent.type(program, "C:/Agent Tools/opencode.cmd");
+    await userEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(useSettingsStore.getState().agents[0]?.command).toEqual([
+      "C:/Agent Tools/opencode.cmd",
+      "acp",
+    ]);
   });
 
   it("语言仅一项可选时呈静态值，不渲染单选项选单（English 预留未下发）", async () => {

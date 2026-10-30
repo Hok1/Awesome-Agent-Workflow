@@ -1,10 +1,8 @@
 /**
  * 设置页的工具路径桥接（组件层组装，store 之间不互相 import）。
  *
- * 工具路径分散在两个 store：chrys 可执行路径在 settingsStore（与「测试
- * 连接」等 chrys 相关设置同处），uv 命令与 aaw 脚本路径在
- * workspaceStore.toolPaths（健康检查 / 状态查询的执行入参）。本模块把
- * 两处聚成设置页可用的一个读写面：
+ * iCode 路径在 settingsStore 的 Agent 设置中，uv 命令与 aaw 脚本路径在
+ * workspaceStore.toolPaths（工作流健康检查 / 状态查询的执行入参）。
  *
  * - useToolPathSettings()：设置页「工具路径」区块的受控读写；
  * - settingsPathsOverride()：一次诊断 / 查询执行的路径覆盖（chrys 取

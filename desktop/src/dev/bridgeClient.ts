@@ -401,6 +401,9 @@ export class BridgeAcpTransport implements AcpTransport {
   private reportedExit: TransportExit | null = null;
   private readonly exitWaiterResolve: ((exit: TransportExit) => void) | null;
   private readonly exitWaiter: Promise<TransportExit>;
+  /** 订阅前到达的行/块（启动即说话的 agent；首次订阅时补发）。 */
+  private readonly earlyLines: string[] = [];
+  private readonly earlyStderr: string[] = [];
 
   /** 请用 createBridgeAcpTransport 工厂创建（spawn + 总线订阅一体）。 */
   constructor(handle: number) {
@@ -446,10 +449,16 @@ export class BridgeAcpTransport implements AcpTransport {
 
   onLine(handler: TransportLineHandler): void {
     this.lineSlot.set(handler);
+    for (const line of this.earlyLines.splice(0)) {
+      handler(line);
+    }
   }
 
   onStderr(handler: TransportStderrHandler): void {
     this.stderrSlot.set(handler);
+    for (const chunk of this.earlyStderr.splice(0)) {
+      handler(chunk);
+    }
   }
 
   onExit(handler: TransportExitHandler): void {
@@ -534,11 +543,19 @@ export class BridgeAcpTransport implements AcpTransport {
       return;
     }
     if (event.channel === "acp-stdout" && typeof event.data === "string") {
+      if (!this.lineSlot.isSet) {
+        this.earlyLines.push(event.data);
+        return;
+      }
       this.lineSlot.emit(event.data);
     } else if (
       event.channel === "acp-stderr" &&
       typeof event.data === "string"
     ) {
+      if (!this.stderrSlot.isSet) {
+        this.earlyStderr.push(event.data);
+        return;
+      }
       this.stderrSlot.emit(event.data);
     } else if (event.channel === "acp-exit") {
       const exit: TransportExit = {
@@ -557,28 +574,48 @@ export class BridgeAcpTransport implements AcpTransport {
 }
 
 /**
- * 创建 dev bridge transport：先确保 SSE 总线连通（避免丢早期输出），
- * 再 spawn、按 handle 订阅。bridge 不可达 / spawn 失败时 reject。
+ * 创建 dev bridge transport：先确保 SSE 总线连通并**先订阅**（避免丢早期
+ * 输出），再 spawn，最后把订阅期暂存的事件回放。bridge 不可达 / spawn
+ * 失败时 reject。
+ *
+ * 顺序很要紧：「启动即打印服务地址」的 agent（如 codeagent）在 spawn 的
+ * HTTP 响应回来之前就把公告写出去了；先 spawn 后订阅会漏掉那一行。
  */
 export async function createBridgeAcpTransport(
   options: BridgeAcpSpawnOptions,
 ): Promise<BridgeAcpTransport> {
   const bus = ensureBus();
   await bus.ready;
-  const spawnWire = (await request("POST", "/acp/spawn", {
-    command: options.command,
-    cwd: options.cwd ?? null,
-    extraEnv: options.extraEnv ?? null,
-  })) as { handle?: unknown; pid?: unknown };
+  let target: BridgeAcpTransport | null = null;
+  const early: BridgeBusEvent[] = [];
+  const unsubscribe = subscribeBus((event) => {
+    if (target === null) {
+      early.push(event);
+      return;
+    }
+    target.handleBusEvent(event);
+  });
+  let spawnWire: { handle?: unknown; pid?: unknown };
+  try {
+    spawnWire = (await request("POST", "/acp/spawn", {
+      command: options.command,
+      cwd: options.cwd ?? null,
+      extraEnv: options.extraEnv ?? null,
+    })) as { handle?: unknown; pid?: unknown };
+  } catch (error) {
+    unsubscribe();
+    throw error;
+  }
   if (typeof spawnWire.handle !== "number") {
+    unsubscribe();
     throw new Error("acp_spawn 返回形状不合法（缺少 handle）");
   }
   const transport = new BridgeAcpTransport(spawnWire.handle);
-  transport.bindUnlisten(
-    subscribeBus((event) => {
-      transport.handleBusEvent(event);
-    }),
-  );
+  target = transport;
+  transport.bindUnlisten(unsubscribe);
+  for (const event of early) {
+    transport.handleBusEvent(event);
+  }
   return transport;
 }
 

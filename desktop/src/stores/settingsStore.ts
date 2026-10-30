@@ -471,6 +471,11 @@ interface SettingsStoreState {
   setActiveAgentId: (agentId: string) => void;
   /** 添加自定义 agent（名称 + 命令行）；校验失败返回错误文案，成功返回 null。 */
   addCustomAgent: (name: string, commandText: string) => string | null;
+  updateCustomAgent: (
+    id: string,
+    name: string,
+    commandText: string,
+  ) => string | null;
   removeCustomAgent: (agentId: string) => void;
   /** 扫描本机原生 ACP CLI（where/which；命中的进内存态 discoveredAgents）。 */
   scanNativeAgents: (host?: HostRuntime) => Promise<void>;
@@ -604,6 +609,22 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
         agents: [...agents, { id, name: trimmedName, command: argv }],
       });
       logger.info("已添加自定义 agent", { id, command: argv.join(" ") });
+      return null;
+    },
+    updateCustomAgent: (id, name, commandText) => {
+      const trimmedName = name.trim();
+      if (!trimmedName) return "名称不能为空";
+      const command = parseCommandArgv(commandText);
+      if (command.length === 0) return "启动命令不能为空";
+      const agents = get().agents;
+      if (!agents.some((item) => item.id === id)) return "Agent 不存在";
+      if (agents.some((item) => item.id !== id && item.name === trimmedName))
+        return "已存在同名 agent";
+      applySettings({
+        agents: agents.map((item) =>
+          item.id === id ? { ...item, name: trimmedName, command } : item,
+        ),
+      });
       return null;
     },
     removeCustomAgent: (agentId) => {

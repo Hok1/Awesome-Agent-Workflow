@@ -46,8 +46,11 @@
 1. **内置适配项**：在 `agentAdapters` 追加一项（见下）；
 2. **本机发现**：`nativeAcpCandidates` 收录子命令直接说标准 ACP 的 CLI
    （如 `opencode acp`），设置页扫描 PATH 命中即用，无需改代码；
-3. **自定义**：设置页添加（名称 + 命令行，`parseCommandArgv` 切 argv），
-   条目持久化在 settingsStore（`CustomAgentEntry`）。
+3. **自定义**：设置页分别填写程序或路径与启动参数，条目持久化在
+   settingsStore（`CustomAgentEntry`）。OpenCode 和 CodeAgent 未填写参数时
+   分别使用 `acp` 和 `--acp`；程序路径中的空格无需加引号。
+
+上述方式均通过 stdio 连接 ACP agent；暂不支持通过 HTTP 地址连接 ACP。
 
 内置项的扩展约束（docs/architecture.md「扩展第二种 agent」）：接入新
 agent = 在 `agentAdapters` 加一个注册项；`src/acp` 协议层与 `src/ui`

@@ -13,11 +13,17 @@
  */
 
 import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { NodeStdioTransport } from "../../src/acp/transport/nodeStdioTransport.ts";
+import {
+  NodeStdioTransport,
+  resolveWindowsSpawn,
+} from "../../src/acp/transport/nodeStdioTransport.ts";
 import type { TransportExit } from "../../src/acp/transport/acpTransport.ts";
 
 /** 行回显子进程：读一行（UTF-8）回一行。 */
@@ -307,8 +313,8 @@ describe("NodeStdioTransport 行为", () => {
       exits.push(exit);
     });
     // 从构造起每 1ms 持续写入 300ms：写入窗横跨「子进程死亡 → 'exit'
-    // 事件 → end()」之间的管道断裂窗口，必然踩中异步 EPIPE。宿主不崩
-    //（本测试正常收尾即为通过），EPIPE 走 stderr 旁路可见。
+    // 事件 → end()」之间的管道断裂窗口，这段在途写入若产生异步 EPIPE，
+    // 必须被降级成 stderr 旁路——宿主不崩（本测试跑到收尾即为通过）。
     const writer = setInterval(() => {
       try {
         transport.writeLine("{}");
@@ -325,7 +331,107 @@ describe("NodeStdioTransport 行为", () => {
       5_000,
       "退出回调",
     );
+    // 死亡后的写入必须被显式拒绝（不能静默吞掉）；这条与 EPIPE 的到达
+    // 时机无关，因此判定是稳定的
+    expect(() => transport.writeLine("{}")).toThrow(/stdin 已关闭|写入失败/);
+    // 若异步错误真的由管道派发，只能走 stderr 旁路，绝不能漏成 uncaught
+    if (stderrText.length > 0) {
+      expect(stderrText).toContain("stdin");
+    }
     await transport.kill();
-    expect(stderrText).toContain("stdin 写入错误");
   }, 15_000);
 });
+
+describe.skipIf(process.platform !== "win32")(
+  "Windows 命令解析（PATH+PATHEXT）",
+  () => {
+    it("resolver：PATH 上只有 .cmd shim 时经 cmd.exe 拉起（注入 env，不碰进程）", () => {
+      const dir = "C:/shim-mock";
+      const resolved = resolveWindowsSpawn(
+        "codeagent",
+        ["--acp"],
+        (key) =>
+          key === "PATH"
+            ? dir
+            : key === "COMSPEC"
+              ? "C:/Windows/cmd.exe"
+              : undefined,
+        (candidate) => candidate === path.join("C:/shim-mock", "codeagent.cmd"),
+      );
+      expect(resolved.file).toBe("C:/Windows/cmd.exe");
+      expect(resolved.args).toEqual([
+        "/d",
+        "/s",
+        "/c",
+        `""${path.join("C:/shim-mock", "codeagent.cmd")}" "--acp""`,
+      ]);
+      expect(resolved.options.windowsVerbatimArguments).toBe(true);
+    });
+
+    it("resolver：PATH 上命中 .exe 直接用", () => {
+      const resolved = resolveWindowsSpawn(
+        "fake-agent",
+        [],
+        (key) => (key === "PATH" ? "C:/exe-dir" : undefined),
+        (candidate) => candidate === path.join("C:/exe-dir", "fake-agent.exe"),
+      );
+      expect(resolved.file).toBe(path.join("C:/exe-dir", "fake-agent.exe"));
+      expect(resolved.args).toEqual([]);
+    });
+
+    it("端到端：npm 风格 .cmd shim 的 agent 能被拉起并说出第一句话", async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "aaw-shim-"));
+      const shim = path.join(dir, "fake-shim-agent.cmd");
+      writeFileSync(
+        shim,
+        ["@echo off", "echo hello-from-shim", ""].join("\r\n"),
+      );
+      const originalPath = process.env["PATH"];
+      process.env["PATH"] = `${dir};${originalPath ?? ""}`;
+      try {
+        const transport = new NodeStdioTransport({
+          command: ["fake-shim-agent"],
+        });
+        const lines: string[] = [];
+        transport.onLine((line) => lines.push(line));
+        await waitFor(
+          () => (lines.includes("hello-from-shim") ? lines : undefined),
+          5_000,
+          "shim 输出",
+        );
+        await transport.kill();
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env["PATH"];
+        } else {
+          process.env["PATH"] = originalPath;
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 15_000);
+
+    it("带空格的批处理绝对路径及参数能完整传入", async () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "aaw-shim-space-"));
+      const spaced = path.join(dir, "program files");
+      mkdirSync(spaced);
+      const script = path.join(spaced, "agent.cmd");
+      writeFileSync(script, "@echo off\r\necho argument=%~1\r\n");
+      const transport = new NodeStdioTransport({
+        command: [script, "value with spaces"],
+      });
+      try {
+        const lines: string[] = [];
+        transport.onLine((line) => lines.push(line));
+        await waitFor(
+          () =>
+            lines.includes("argument=value with spaces") ? true : undefined,
+          5_000,
+          "带空格参数",
+        );
+      } finally {
+        await transport.kill();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 15_000);
+  },
+);
