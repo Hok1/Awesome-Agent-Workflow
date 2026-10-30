@@ -24,7 +24,11 @@ import { createStoreView } from "./storeView.ts";
 import { create } from "zustand";
 
 import type { AcpSessionEvent } from "../acp/session.ts";
-import type { ChrysRuntime, ChrysUsageUpdateParams } from "../acp/types.ts";
+import type {
+  AgentCommandEntry,
+  ChrysRuntime,
+  ChrysUsageUpdateParams,
+} from "../acp/types.ts";
 
 /** MCP 服务器条目（名字 + 工具数）。 */
 export interface McpServerEntry {
@@ -68,6 +72,14 @@ export type TurnSignal = "thought" | "message" | null;
 export interface RuntimeStatusState {
   readonly runtime: RuntimeSnapshot;
   readonly usage: UsageSnapshot | null;
+  /**
+   * 当前用量快照的来源：chrys 扩展（字段丰富，优先）或标准
+   * usage_update（上下文占用口径，兜底）——两者并存时以扩展版为准，
+   * 标准版不覆盖它。
+   */
+  readonly usageSource: "chrys" | "standard" | null;
+  /** agent 侧斜杠命令清单（available_commands_update 的最新快照）。 */
+  readonly availableCommands: readonly AgentCommandEntry[];
   /** 轮次进行中（beginTurn 到 endTurn 之间）。 */
   readonly isTurnActive: boolean;
   readonly runningToolCount: number;
@@ -100,6 +112,8 @@ const initialRuntime: RuntimeSnapshot = {
 const initialState = {
   runtime: initialRuntime,
   usage: null as UsageSnapshot | null,
+  usageSource: null as "chrys" | "standard" | null,
+  availableCommands: [] as readonly AgentCommandEntry[],
   isTurnActive: false,
   runningToolCount: 0,
   lastSignal: null as TurnSignal,
@@ -278,6 +292,26 @@ function pickUsage(usage: ChrysUsageUpdateParams): UsageSnapshot {
   };
 }
 
+/** 标准 usage_update（上下文占用口径）→ UsageSnapshot；token 明细该通知不提供。 */
+function pickStandardUsage(
+  contextSize: number | null,
+  contextUsed: number | null,
+): UsageSnapshot {
+  const pct =
+    contextSize !== null && contextUsed !== null && contextSize > 0
+      ? Math.round((contextUsed / contextSize) * 1000) / 10
+      : null;
+  return {
+    pct,
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    maxContextTokens: contextSize,
+    totalSessionTokens: contextUsed,
+    cacheHitTokens: null,
+  };
+}
+
 export const createRuntimeStatusStore = () => {
   const runningToolIds = new Set<string>();
   return create<RuntimeStatusState>()((set) => ({
@@ -297,7 +331,33 @@ export const createRuntimeStatusStore = () => {
             usage: isMainAgentUsage(event.usage, event.sessionId)
               ? pickUsage(event.usage)
               : state.usage,
+            ...(isMainAgentUsage(event.usage, event.sessionId)
+              ? { usageSource: "chrys" as const }
+              : {}),
           }));
+          return;
+        }
+        case "usage_update": {
+          // 标准口径兜底：chrys 扩展版（字段更丰富）已写入时不覆盖
+          set((state) => ({
+            lastSessionId: event.sessionId,
+            ...(state.usageSource === "chrys"
+              ? {}
+              : {
+                  usage: pickStandardUsage(
+                    event.contextSize,
+                    event.contextUsed,
+                  ),
+                  usageSource: "standard" as const,
+                }),
+          }));
+          return;
+        }
+        case "available_commands": {
+          set({
+            lastSessionId: event.sessionId,
+            availableCommands: event.commands,
+          });
           return;
         }
         case "tool_call":

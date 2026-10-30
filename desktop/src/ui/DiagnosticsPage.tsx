@@ -3,7 +3,8 @@
  *
  * 数据全部来自 logStore（镜像自 core/logger 的两个环形缓冲——应用日志
  * appLogSink 与协议层逐条登记的 acpTraffic），本页不做任何数据累积，
- * 只做过滤与展示（架构约定：诊断页只读 ring 快照）。
+ * 只做过滤与展示（架构约定：诊断页只读 ring 快照）。协议自检已随多
+ * agent 管理整体移入设置页「Agent」分片（见 ui/AgentsSettings.tsx）。
  */
 import { useState } from "react";
 import { useLogStore } from "../stores/logStore";
@@ -68,7 +69,9 @@ function DiagnosticsPage() {
               tab === item.id ? tabActiveClass : tabInactiveClass
             }`}
           >
-            {item.count === null ? item.label : `${item.label}（${item.count}）`}
+            {item.count === null
+              ? item.label
+              : `${item.label}（${item.count}）`}
           </button>
         ))}
       </div>

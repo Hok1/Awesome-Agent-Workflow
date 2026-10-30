@@ -53,12 +53,39 @@ describe("buildSlashItems / filterSlashItems", () => {
     expect(sr[0]).toMatchObject({ id: "wizard-sr", kind: "action" });
 
     // 归一子串：aaw workflow 命中 aaw-workflow（分隔符不敏感）
-    const aaw = filterSlashItems(buildSlashItems(["aaw-workflow"]), "aawworkflow");
+    const aaw = filterSlashItems(
+      buildSlashItems(["aaw-workflow"]),
+      "aawworkflow",
+    );
     expect(aaw.some((item) => item.id === "skill:aaw-workflow")).toBe(true);
 
     // skill 项是 insert 类，携带提示文本
     const skill = aaw.find((item) => item.kind === "insert");
     expect(skill?.insertText).toBe(skillInsertText("aaw-workflow"));
+  });
+
+  it("agent 命令清单进「Agent 命令」组：插入 /名 尾空格，描述带参数提示", () => {
+    const items = buildSlashItems(
+      [],
+      [
+        { name: "review", description: "审查改动", inputHint: "可选说明" },
+        { name: "plan", description: null, inputHint: null },
+      ],
+    );
+    const agentItems = items.filter((item) => item.group === "Agent 命令");
+    expect(agentItems.map((item) => item.id)).toEqual([
+      "agent:review",
+      "agent:plan",
+    ]);
+    expect(agentItems[0]).toMatchObject({
+      label: "review",
+      kind: "insert",
+      insertText: "/review ",
+      description: "审查改动（参数：可选说明）",
+    });
+    expect(agentItems[1]?.description).toBe("agent 侧命令");
+    // 过滤与静态命令同口径
+    expect(filterSlashItems(items, "rev")[0]?.id).toBe("agent:review");
   });
 
   it("无命中返回空", () => {

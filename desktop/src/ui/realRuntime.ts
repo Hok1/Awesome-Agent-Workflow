@@ -36,12 +36,11 @@ import {
  */
 import { createLogger } from "../core/logger.ts";
 import { readChrysArchive } from "../agents/chrysArchive.ts";
-import { hostRuntime, isTauriEnv } from "../core/host.ts";
+import { hostRuntime } from "../core/host.ts";
 import { AcpSession, type AcpSessionEvent } from "../acp/session.ts";
 import type { SessionInfo } from "../acp/types.ts";
-import { createTauriStdioTransport } from "../acp/transport/tauriStdioTransport.ts";
-import { createBridgeAcpTransport } from "../dev/bridgeClient.ts";
-import { DEFAULT_AGENT_ID, findAgentAdapter } from "../agents/registry.ts";
+import { DEFAULT_AGENT_ID, resolveAgentAdapter } from "../agents/registry.ts";
+import { createAgentTransport } from "./agentTransport.ts";
 import {
   sessionTitleOf,
   useSessionStore,
@@ -335,43 +334,45 @@ async function openWorkspaceNow(
       );
   };
 
-  const adapter = findAgentAdapter(DEFAULT_AGENT_ID);
-  if (adapter === null) {
-    reportFailure("注册表中没有 agent 适配项");
+  // agent 解析：设置里选中的 agent（内置 chrys / 本机发现 / 自定义），
+  // 统一经 agents 层的 resolveAgentAdapter 解析；切换只影响新会话，
+  // 已打开会话保留自己的 agent 与连接（多会话并存机制天然支持）
+  const {
+    agents: customAgents,
+    activeAgentId,
+    discoveredAgents,
+  } = useSettingsStore.getState();
+  const resolved = resolveAgentAdapter(
+    activeAgentId,
+    customAgents,
+    discoveredAgents,
+  );
+  if (resolved === null) {
+    reportFailure("未找到可用的 agent 配置（请到设置页检查 Agent 选择）");
     viewStore.getState().setConnecting(false);
     if (previousRuntime) focusRuntime(previousRuntime);
     return null;
   }
-  // 启动描述全部来自注册表：可执行路径用「设置里的路径」与工具路径
-  // 合并后的 chrysCommand，cwd 即工作区 activePath
-  const override = settingsPathsOverride();
-  const { toolPaths } = useWorkspaceStore.getState();
-  const chrysCommand = override.chrysCommand ?? toolPaths.chrysCommand;
+  const adapter = resolved.adapter;
+  // 启动描述来自适配项：内置 chrys 用「设置里的路径」与工具路径合并后的
+  // chrysCommand（保留既有覆盖链）；native / 自定义 agent 的命令即配置
+  // 本身，不做覆盖；cwd 一律是工作区 activePath
   const launch = adapter.buildLaunch({
     workspacePath,
-    executablePath: chrysCommand,
+    executablePath:
+      adapter.id === DEFAULT_AGENT_ID
+        ? (settingsPathsOverride().chrysCommand ??
+          useWorkspaceStore.getState().toolPaths.chrysCommand)
+        : undefined,
   });
 
   try {
-    // 进程承载：Tauri webview 走 IPC transport；dev 浏览器
-    // （npm run dev:web）走 dev bridge（vite 内嵌插件代为拉起，见
-    // src/dev/bridgeClient.ts）；其余环境如实报告不可用，不伪造会话。
-    // 生产构建把 DEV 折叠为 false，bridge 分支成为死代码。
-    const transport = isTauriEnv()
-      ? await createTauriStdioTransport({
-          command: launch.command,
-          cwd: launch.cwd ?? undefined,
-          extraEnv: launch.extraEnv,
-        })
-      : import.meta.env.DEV && !import.meta.env.VITEST
-        ? await createBridgeAcpTransport({
-            command: launch.command,
-            cwd: launch.cwd ?? undefined,
-            extraEnv: launch.extraEnv,
-          })
-        : null;
+    // 进程承载：Tauri webview 走 IPC transport；dev 浏览器（npm run
+    // dev:web）走 dev bridge；其余环境如实报告不可用，不伪造会话
+    // （与协议自检 agentProbe 共用同一工厂，见 ui/agentTransport.ts）
+    const transport = await createAgentTransport(launch);
     if (transport === null) {
-      reportFailure("当前环境无法启动 iCode 进程（需要桌面宿主或 dev bridge）");
+      reportFailure("当前环境无法启动 agent 进程（需要桌面宿主或 dev bridge）");
       viewStore.getState().setConnecting(false);
       return null;
     }

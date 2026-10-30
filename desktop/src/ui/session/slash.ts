@@ -4,19 +4,22 @@
  *
  * - 触发：**行首** `/`（或中文顿号 `、` 的归一——行首误触顿号是 `/` 的
  *   常见输入法场景）后跟连续非空白非斜杠字符；面板随 query 过滤；
- * - 目录三类：内置命令（选中即执行）、AAW 工作流入口（打开 AAW 面板
+ * - 目录四类：内置命令（选中即执行）、AAW 工作流入口（打开 AAW 面板
  *   并把向导定位到对应入口表单）、skills（插入提示文本——chrys 没有
- *   用户侧 `$` 触发语法，agent 读到提示后自行 load_skill）；
+ *   用户侧 `$` 触发语法，agent 读到提示后自行 load_skill）、agent 侧
+ *   命令（agent 经 available_commands 推送的清单，插入 `/名 ` 由 agent
+ *   自己解析执行——与底座无关，iCode / OpenCode 推了就有）；
  * - 过滤：复用 mention 的归一子串 / 子序列口径（分隔符与大小写不敏感）。
  */
+import type { AgentCommandEntry } from "../../acp/types.ts";
 
 /** slash 命令条目。 */
 export interface SlashItem {
-  /** 唯一 id（`clear` / `wizard-sr` / `skill:aaw-workflow`）。 */
+  /** 唯一 id（`clear` / `wizard-sr` / `skill:aaw-workflow` / `agent:review`）。 */
   readonly id: string;
   /** 显示名（不含斜杠，如 `clear`、`sr`、`aaw-workflow`）。 */
   readonly label: string;
-  readonly group: "命令" | "工作流入口" | "Skills";
+  readonly group: "命令" | "工作流入口" | "Skills" | "Agent 命令";
   readonly description: string;
   /** action=选中即执行；insert=往输入框插入 insertText。 */
   readonly kind: "action" | "insert";
@@ -98,22 +101,40 @@ const STATIC_ITEMS: readonly SlashItem[] = [
   },
 ];
 
-/** 组装完整目录（skills 来自会话运行时已加载的 skill 清单）。 */
+/**
+ * 组装完整目录（skills 来自会话运行时已加载的 skill 清单；agent 命令
+ * 来自 agent 推送的 available_commands——推了就进面板，与底座无关）。
+ */
 export function buildSlashItems(
   skillNames: readonly string[],
+  agentCommands: readonly AgentCommandEntry[] = [],
 ): readonly SlashItem[] {
   return [
     ...STATIC_ITEMS,
-    ...skillNames.map(
-      (name): SlashItem => ({
-        id: `skill:${name}`,
-        label: name,
-        group: "Skills",
-        description: "插入使用该 skill 的提示",
-        kind: "insert",
-        insertText: skillInsertText(name),
-      }),
-    ),
+    ...agentCommands.map((command): SlashItem => ({
+      id: `agent:${command.name}`,
+      label: command.name,
+      group: "Agent 命令",
+      description:
+        command.description === null || command.description.length === 0
+          ? command.inputHint === null
+            ? "agent 侧命令"
+            : `参数：${command.inputHint}`
+          : command.inputHint === null
+            ? command.description
+            : `${command.description}（参数：${command.inputHint}）`,
+      kind: "insert",
+      // 以 `/名 ` 形式插入，参数由用户补——执行在 agent 侧
+      insertText: `/${command.name} `,
+    })),
+    ...skillNames.map((name): SlashItem => ({
+      id: `skill:${name}`,
+      label: name,
+      group: "Skills",
+      description: "插入使用该 skill 的提示",
+      kind: "insert",
+      insertText: skillInsertText(name),
+    })),
   ];
 }
 

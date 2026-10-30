@@ -268,9 +268,9 @@ describe("prompt 轮次与事件派发", () => {
           params: { sessionId: "echo-1", code: "W1", message: "小心" },
         },
         {
-          // 未识别的标准变体 → unknown_notification 透传
+          // agent 侧命令清单变体 → 类型化 available_commands 事件
           sessionUpdate: "available_commands_update",
-          commands: [],
+          availableCommands: [{ name: "review", description: "审查" }],
         },
       ],
       stopReason: "end_turn",
@@ -286,7 +286,7 @@ describe("prompt 轮次与事件派发", () => {
       "session_info_update",
       "chrys_usage",
       "chrys_warning",
-      "unknown_notification",
+      "available_commands",
     ];
     const eventsPromise = collectEvents(session, (list) =>
       wanted.every((type) => list.some((event) => event.type === type)),
@@ -348,13 +348,76 @@ describe("prompt 轮次与事件派发", () => {
       code: "W1",
       message: "小心",
     });
+    // available_commands_update：裸 session/update 变体 → 类型化命令清单事件
     expect(
-      events.find(
-        (event) =>
-          event.type === "unknown_notification" &&
-          event.method === "session/update:available_commands_update",
-      ),
+      events.find((event) => event.type === "available_commands"),
     ).toBeDefined();
+  });
+
+  it("命名空间通知（session/update:*）与裸风格等价翻译", async () => {
+    const { session, peer } = await makeReadySession();
+    const collected = collectEvents(
+      session,
+      (events) =>
+        events.filter((event) => event.type === "available_commands").length >=
+          2 && events.some((event) => event.type === "usage_update"),
+    );
+    // OpenCode 风格：method 用命名空间，params 自带 sessionUpdate 字段
+    peer.writeLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update:available_commands_update",
+        params: {
+          sessionId: session.sessionId,
+          sessionUpdate: "available_commands_update",
+          availableCommands: [
+            {
+              name: "review",
+              description: "Review my current changes",
+              input: { hint: "optional instructions" },
+            },
+          ],
+        },
+      }),
+    );
+    // 极端形状：method 用命名空间，params 不带 sessionUpdate（后缀还原）
+    peer.writeLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update:available_commands_update",
+        params: {
+          sessionId: session.sessionId,
+          availableCommands: [{ name: "plan" }],
+        },
+      }),
+    );
+    // 命名空间的 usage_update（OpenCode 实测口径：size / used）
+    peer.writeLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update:usage_update",
+        params: {
+          sessionId: session.sessionId,
+          sessionUpdate: "usage_update",
+          size: 1_000_000,
+          used: 23_481,
+        },
+      }),
+    );
+    const events = await collected;
+    const commandEvents = events.filter(
+      (event) => event.type === "available_commands",
+    );
+    expect(commandEvents[0]?.commands[0]).toMatchObject({
+      name: "review",
+      description: "Review my current changes",
+      inputHint: "optional instructions",
+    });
+    // 无 sessionUpdate 字段时从 method 后缀还原，同样翻译成功
+    expect(commandEvents[1]?.commands[0]).toMatchObject({ name: "plan" });
+    expect(events.find((event) => event.type === "usage_update")).toMatchObject(
+      { contextSize: 1_000_000, contextUsed: 23_481 },
+    );
   });
 
   it("嵌套 content 形状（skill-eval 夹具）宽容抽取文本", () => {

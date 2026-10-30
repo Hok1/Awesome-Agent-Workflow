@@ -210,6 +210,64 @@ describe("runtimeStatusStore", () => {
     expect(state.lastSignal).toBeNull();
   });
 
+  it("标准 usage_update 落地（上下文占用口径），chrys 扩展版不被覆盖", () => {
+    const store = useRuntimeStatusStore.getState();
+    // 标准版先到：pct 按占用比折算，token 明细为空
+    store.handleSessionEvent({
+      type: "usage_update",
+      sessionId: "s-1",
+      contextSize: 1_000_000,
+      contextUsed: 250_000,
+    });
+    expect(useRuntimeStatusStore.getState().usage).toMatchObject({
+      pct: 25,
+      maxContextTokens: 1_000_000,
+      totalSessionTokens: 250_000,
+      inputTokens: null,
+    });
+    expect(useRuntimeStatusStore.getState().usageSource).toBe("standard");
+
+    // chrys 扩展版后到（字段更丰富）：接管并标记来源
+    store.handleSessionEvent(
+      chrysUsage({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+    );
+    expect(useRuntimeStatusStore.getState().usage).toMatchObject({
+      inputTokens: 10,
+    });
+    expect(useRuntimeStatusStore.getState().usageSource).toBe("chrys");
+
+    // 标准版再来：不覆盖 chrys 版（扩展优先）
+    store.handleSessionEvent({
+      type: "usage_update",
+      sessionId: "s-1",
+      contextSize: 500_000,
+      contextUsed: 100_000,
+    });
+    expect(useRuntimeStatusStore.getState().usage).toMatchObject({
+      inputTokens: 10,
+    });
+    expect(useRuntimeStatusStore.getState().usageSource).toBe("chrys");
+  });
+
+  it("available_commands 落地为命令清单快照，reset 清空", () => {
+    useRuntimeStatusStore.getState().handleSessionEvent({
+      type: "available_commands",
+      sessionId: "s-1",
+      commands: [
+        { name: "review", description: "审查当前改动", inputHint: "可选说明" },
+        { name: "plan", description: null, inputHint: null },
+      ],
+    });
+    expect(useRuntimeStatusStore.getState().availableCommands).toHaveLength(2);
+    expect(useRuntimeStatusStore.getState().availableCommands[0]).toMatchObject(
+      {
+        name: "review",
+      },
+    );
+    useRuntimeStatusStore.getState().reset();
+    expect(useRuntimeStatusStore.getState().availableCommands).toHaveLength(0);
+  });
+
   it("reset 清空 runtime/usage/轮次（会话切换语义）", () => {
     useRuntimeStatusStore
       .getState()

@@ -68,6 +68,8 @@ describe("useSettingsStore", () => {
       chatWidth: "wide",
       uiFontSize: 14,
       messageStreamShowTodos: true,
+      agents: [],
+      activeAgentId: "chrys",
     });
   });
 
@@ -412,5 +414,33 @@ describe("useSettingsStore", () => {
     useSettingsStore.getState().resetToDefaults();
     expect(useSettingsStore.getState().chrysPath).toBe(defaultChrysPath);
     expect(readPersisted()).toMatchObject({ chrysPath: defaultChrysPath });
+  });
+
+  it("本机扫描：where 命中无扩展名 shim 时解析 npm 布局下的真 exe", async () => {
+    // where opencode 命中的是无扩展名 sh shim（Windows npm 安装的常态）；
+    // 真 exe 在 <prefix>/node_modules/opencode-ai/bin/ 下
+    demoHost.scriptCommand("where", ["opencode"], {
+      code: 0,
+      stdout: "C:/npm-mock/opencode\r\nC:/npm-mock/opencode.cmd\r\n",
+      stderr: "",
+    });
+    await demoHost.writeTextFile(
+      "C:/npm-mock/node_modules/opencode-ai/bin/opencode.exe",
+      "",
+    );
+
+    await useSettingsStore.getState().scanNativeAgents(demoHost);
+    const discovered = useSettingsStore.getState().discoveredAgents;
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]?.id).toBe("native-opencode");
+    expect(discovered[0]?.path).toBe("C:/npm-mock/opencode");
+    expect(discovered[0]?.exePath).toBe(
+      "C:/npm-mock/node_modules/opencode-ai/bin/opencode.exe",
+    );
+  });
+
+  it("本机扫描：未命中候选时发现列表为空（不报错）", async () => {
+    await useSettingsStore.getState().scanNativeAgents(demoHost);
+    expect(useSettingsStore.getState().discoveredAgents).toHaveLength(0);
   });
 });

@@ -12,14 +12,14 @@ import { useSettingsStore } from "../../src/stores/settingsStore";
 import { useSkillsStore } from "../../src/stores/skillsStore";
 
 /**
- * 渲染设置页并等待 SkillsInstallerSection 的挂载扫描落定：
- * 挂载即异步扫描（demoHost 默认无 skills 目录，按失败收尾），
+ * 渲染设置页并等待挂载期的异步扫描落定（skills 安装器 + Agent 本机扫描）：
  * 提前结束测试会让 store→组件的更新逃逸 act（RTL 警告 + stderr 噪声）。
  */
 async function renderSettingsPage(): Promise<void> {
   render(<SettingsPage />);
   await waitFor(() => {
     expect(useSkillsStore.getState().isScanning).toBe(false);
+    expect(useSettingsStore.getState().isScanningAgents).toBe(false);
   });
 }
 
@@ -38,10 +38,96 @@ describe("SettingsPage（侧边 Tab 版）", () => {
     useSettingsStore.setState({
       connection: { status: "idle", message: "尚未检测", checkedAt: null },
       isProbingChrysPath: false,
+      discoveredAgents: [],
+      isScanningAgents: false,
     });
   });
 
-  it("三枚 Tab 切换分片；默认落在「通用」", async () => {
+  it("Agent 分片：内置项在列且默认选中 iCode，报告卡呈空态", async () => {
+    await renderSettingsPage();
+    await openTab("Agent");
+    expect(screen.getByText("会话 Agent")).toBeInTheDocument();
+    const row = screen.getByLabelText("agent-iCode");
+    expect(row).toBeInTheDocument();
+    // 内置行带「当前使用」徽标
+    expect(within(row).getByText("当前使用")).toBeInTheDocument();
+    // demo 宿主未脚本化 where：扫描结论为「未发现」
+    expect(screen.getByText(/未发现其他原生 ACP CLI/)).toBeInTheDocument();
+    // 报告卡空态
+    expect(screen.getByLabelText("协议自检报告")).toBeInTheDocument();
+    expect(screen.getByText(/尚未自检/)).toBeInTheDocument();
+  });
+
+  it("本机扫描：where 命中 OpenCode 时列出发现行，点行即切换会话 Agent", async () => {
+    demoHost.scriptCommand("where", ["opencode"], {
+      code: 0,
+      stdout: "C:/Users/demo/npm/opencode.exe\r\n",
+      stderr: "",
+    });
+    await renderSettingsPage();
+    await openTab("Agent");
+    const row = await screen.findByLabelText("agent-OpenCode");
+    expect(within(row).getByText("本机发现")).toBeInTheDocument();
+    // 行内选择按钮含 agent 名与命令（radio 语义，aria-pressed 表选中）
+    const select = within(row).getByRole("button", {
+      name: /OpenCode/,
+    });
+
+    await userEvent.click(select);
+    expect(useSettingsStore.getState().activeAgentId).toBe("native-opencode");
+    expect(window.localStorage.getItem("aaw-desktop.settings.v1")).toContain(
+      "native-opencode",
+    );
+    expect(within(row).getByText("当前使用")).toBeInTheDocument();
+  });
+
+  it("添加自定义 agent：入列、持久化、可删除（删除当前项回落内置）", async () => {
+    await renderSettingsPage();
+    await openTab("Agent");
+    await userEvent.type(
+      screen.getByLabelText("自定义 Agent 名称"),
+      "内网 Agent",
+    );
+    await userEvent.type(
+      screen.getByLabelText("自定义 Agent 启动命令"),
+      '"C:/Program Files/intranet/agent.exe" acp',
+    );
+    await userEvent.click(screen.getByRole("button", { name: "添加" }));
+
+    const row = await screen.findByLabelText("agent-内网 Agent");
+    // 双引号路径成组：首段不带引号
+    expect(
+      within(row).getByText("C:/Program Files/intranet/agent.exe acp"),
+    ).toBeInTheDocument();
+    expect(useSettingsStore.getState().agents).toHaveLength(1);
+
+    // 点行切到自定义项再删除：回落内置 iCode
+    await userEvent.click(
+      within(row).getByRole("button", { name: /内网 Agent/ }),
+    );
+    expect(useSettingsStore.getState().activeAgentId).toBe("custom-agent");
+    await userEvent.click(within(row).getByRole("button", { name: "删除" }));
+    expect(useSettingsStore.getState().agents).toHaveLength(0);
+    expect(useSettingsStore.getState().activeAgentId).toBe("chrys");
+  });
+
+  it("空名称 / 空命令的添加被拒并给出错误文案", async () => {
+    await renderSettingsPage();
+    await openTab("Agent");
+    // 名称留空：先报名称
+    await userEvent.click(screen.getByRole("button", { name: "添加" }));
+    expect(await screen.findByText("名称不能为空")).toBeInTheDocument();
+    // 名称合法、命令留空：报命令
+    await userEvent.type(
+      screen.getByLabelText("自定义 Agent 名称"),
+      "内网 Agent",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "添加" }));
+    expect(await screen.findByText("启动命令不能为空")).toBeInTheDocument();
+    expect(useSettingsStore.getState().agents).toHaveLength(0);
+  });
+
+  it("四枚 Tab 切换分片；默认落在「通用」", async () => {
     await renderSettingsPage();
     // 默认 Tab：通用（语言 / 主题 / 关于在位，工具路径行不可见）
     expect(screen.getByRole("tab", { name: "通用" })).toHaveAttribute(
@@ -52,6 +138,13 @@ describe("SettingsPage（侧边 Tab 版）", () => {
     expect(screen.getByText("版本")).toBeInTheDocument();
     // 工具路径面板 hidden（仍在 DOM，但不可见）
     expect(screen.getByLabelText("iCode 可执行路径")).not.toBeVisible();
+
+    await openTab("Agent");
+    expect(screen.getByRole("tab", { name: "Agent" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("会话 Agent")).toBeInTheDocument();
 
     await openTab("工具路径");
     expect(screen.getByRole("tab", { name: "工具路径" })).toHaveAttribute(

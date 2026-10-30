@@ -25,11 +25,17 @@ import {
 import { createTranslator, languageOptions } from "../core/i18n";
 import { btnDanger, btnSecondary, focusVisibleRing } from "./controls";
 import {
+  resolveAgentAdapter,
+  type CustomAgentEntry,
+} from "../agents/registry.ts";
+import {
+  BrainIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   TerminalIcon,
   type IconProps,
 } from "./icons";
+import { AgentsSettingsSection } from "./AgentsSettings.tsx";
 import { useToolPathSettings } from "./workspaces/settingsLinks";
 import SkillsInstallerSection from "./SkillsInstallerSection";
 
@@ -52,8 +58,8 @@ function ResetConfirm({
       className="flex items-center gap-2 rounded-md border border-line-strong bg-raised px-2 py-1 shadow-elev-2"
     >
       <span className="text-xs text-ink">
-        将清除 iCode 路径、uv / aaw 路径、审批模式、语言、主题与 skills
-        源目录，确认？
+        将清除 iCode 路径、Agent 选择与自定义 Agent、uv / aaw 路径、审批
+        模式、语言、主题与 skills 源目录，确认？
       </span>
       <button
         type="button"
@@ -283,7 +289,7 @@ function AboutRow({ k, v }: { readonly k: string; readonly v: ReactNode }) {
   );
 }
 
-type SettingsTabId = "general" | "tools" | "session";
+type SettingsTabId = "general" | "agents" | "tools" | "session";
 
 /** Tab 定义（图标组件随 Tab 走，导航渲染用）。 */
 const TABS: readonly {
@@ -292,6 +298,7 @@ const TABS: readonly {
   readonly Icon: (props: IconProps) => ReactNode;
 }[] = [
   { id: "general", label: "通用", Icon: SlidersHorizontalIcon },
+  { id: "agents", label: "Agent", Icon: BrainIcon },
   { id: "tools", label: "工具路径", Icon: TerminalIcon },
   { id: "session", label: "会话与审批", Icon: ShieldCheckIcon },
 ];
@@ -308,6 +315,18 @@ const APPROVAL_DESCRIPTIONS: Readonly<Record<ApprovalMode, string>> = {
   "auto-allow":
     "自动放行 — 工具权限请求自动按「允许」应答（先「仅本次」后「始终」）；agent 未提供允许选项时仍会弹窗询问。",
 };
+
+/** 「关于」行的 agent 标识：跟随当前选择（内置注明方言，其余用展示名）。 */
+function agentAboutLabel(
+  activeAgentId: string,
+  agents: readonly CustomAgentEntry[],
+): string {
+  const resolved = resolveAgentAdapter(activeAgentId, agents);
+  if (resolved === null) return activeAgentId;
+  return resolved.source === "builtin"
+    ? `${resolved.adapter.displayName}（chrys 方言 ACP）`
+    : resolved.adapter.displayName;
+}
 
 function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
@@ -341,6 +360,8 @@ function SettingsPage() {
   const isProbingPath = useSettingsStore((state) => state.isProbingChrysPath);
   const reprobePath = useSettingsStore((state) => state.probeChrysPathIfNeeded);
   const resetToDefaults = useSettingsStore((state) => state.resetToDefaults);
+  const activeAgentId = useSettingsStore((state) => state.activeAgentId);
+  const agents = useSettingsStore((state) => state.agents);
   const toolPaths = useToolPathSettings();
 
   const t = useMemo(() => createTranslator(language), [language]);
@@ -476,11 +497,21 @@ function SettingsPage() {
                   <span className="text-info-ink">Awesome-Agent-Workflow</span>
                 }
               />
-              <AboutRow k="agent" v="iCode（chrys 协议）" />
+              <AboutRow k="agent" v={agentAboutLabel(activeAgentId, agents)} />
             </SettingCard>
           </div>
 
-          {/* —— Tab 2：工具路径 —— */}
+          {/* —— Tab 2：Agent（多 agent 管理：切换 / 发现 / 自定义 / 协议自检） —— */}
+          <div
+            id="settings-panel-agents"
+            role="tabpanel"
+            aria-labelledby="settings-tab-agents"
+            hidden={activeTab !== "agents"}
+          >
+            <AgentsSettingsSection />
+          </div>
+
+          {/* —— Tab 3：工具路径 —— */}
           <div
             id="settings-panel-tools"
             role="tabpanel"
@@ -612,7 +643,7 @@ function SettingsPage() {
             <SkillsInstallerSection />
           </div>
 
-          {/* —— Tab 3：会话与审批 —— */}
+          {/* —— Tab 4：会话与审批 —— */}
           <div
             id="settings-panel-session"
             role="tabpanel"

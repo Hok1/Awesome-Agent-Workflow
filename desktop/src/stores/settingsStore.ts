@@ -1,6 +1,7 @@
 /**
- * 设置 store（src/stores）：iCode（原 chrys）路径、审批默认模式、界面语言、
- * skills 安装源目录、界面主题（暗夜/暖白），以及「测试连接」状态。
+ * 设置 store（src/stores）：iCode（原 chrys）路径、Agent 管理（当前选择 +
+ * 自定义条目 + 本机扫描）、审批默认模式、界面语言、skills 安装源目录、
+ * 界面主题（暗夜/暖白），以及「测试连接」状态。
  *
  * 持久化：每项设置变更即写入 localStorage（Tauri WebView 的本地存储，
  * 随应用数据目录落盘），启动时读回并经类型守卫校验——损坏/越界的旧值
@@ -16,6 +17,13 @@ import {
 import { createLogger } from "../core/logger";
 import type { Language } from "../core/i18n";
 import { applyUiFontSizePx, normalizeUiFontSizePx } from "../core/uiFontSize";
+import {
+  DEFAULT_AGENT_ID,
+  customAgentIdOf,
+  nativeAcpCandidates,
+  parseCommandArgv,
+  type CustomAgentEntry,
+} from "../agents/registry.ts";
 
 /**
  * 界面主题：暗夜（默认，深色）或暖白（米白浅色）。
@@ -128,6 +136,10 @@ interface PersistedSettings {
   /** 界面字号基准 px（12–20,text-* 刻度随它 calc 派生）。 */
   readonly uiFontSize: number;
   readonly messageStreamShowTodos: boolean;
+  /** 自定义 agent 条目（本机发现项不落盘，每次扫描现算）。 */
+  readonly agents: readonly CustomAgentEntry[];
+  /** 新会话使用的 agent（内置 / native-* / custom-*）。 */
+  readonly activeAgentId: string;
 }
 
 const defaultSettings: PersistedSettings = {
@@ -140,6 +152,8 @@ const defaultSettings: PersistedSettings = {
   chatWidth: defaultChatWidth,
   uiFontSize: defaultUiFontSize,
   messageStreamShowTodos: false,
+  agents: [],
+  activeAgentId: DEFAULT_AGENT_ID,
 };
 
 const storageKey = "aaw-desktop.settings.v1";
@@ -167,6 +181,41 @@ function isUiFontSize(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+/** 自定义 agent 条目的逐项守卫（坏条目单独丢弃，不整体回落）。 */
+function asCustomAgents(raw: unknown): readonly CustomAgentEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CustomAgentEntry[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Readonly<Record<string, unknown>>;
+    const id = record["id"];
+    const name = record["name"];
+    const command = record["command"];
+    if (
+      typeof id !== "string" ||
+      typeof name !== "string" ||
+      !Array.isArray(command) ||
+      command.length === 0 ||
+      !command.every((part) => typeof part === "string" && part.length > 0)
+    ) {
+      continue;
+    }
+    out.push({ id, name, command });
+  }
+  return out;
+}
+
+/** activeAgentId 守卫：必须能被解析（内置 / native 候选 / 仍在的自定义项）。 */
+function isValidAgentId(
+  value: unknown,
+  agents: readonly CustomAgentEntry[],
+): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (value === DEFAULT_AGENT_ID) return true;
+  if (nativeAcpCandidates.some((item) => item.id === value)) return true;
+  return agents.some((item) => item.id === value);
 }
 
 /** 读取持久化设置：解析失败或字段非法时逐项回落默认。 */
@@ -220,6 +269,13 @@ function loadPersistedSettings(): PersistedSettings {
         typeof record["messageStreamShowTodos"] === "boolean"
           ? record["messageStreamShowTodos"]
           : false,
+      agents: asCustomAgents(record["agents"]),
+      activeAgentId: isValidAgentId(
+        record["activeAgentId"],
+        asCustomAgents(record["agents"]),
+      )
+        ? record["activeAgentId"]
+        : defaultSettings.activeAgentId,
     };
   } catch (error) {
     logger.warn("读取持久化设置失败，使用默认值", {
@@ -249,6 +305,51 @@ function firstOutputLine(stdout: string): string | null {
     .map((part) => part.trim())
     .find((part) => part.length > 0);
   return line ?? null;
+}
+
+/** 路径的目录部分（兼容 / 与 \）。 */
+function dirOf(path: string): string {
+  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return slash === -1 ? "" : path.slice(0, slash);
+}
+
+/**
+ * 解析原生 CLI 的「可直接 spawn 的真 exe」：Windows 上 npm 全局安装的
+ * PATH 命中是无扩展名 sh shim / .cmd（CreateProcess 与 Node spawn 都拉
+ * 不起），真 exe 在 `<where 目录>/node_modules/<pkg>/bin/` 下。优先取
+ * where 输出里现成的 .exe 行，其次按 npm 布局探测。解析不到返回空对象
+ * （调用方回落命令名，类 Unix 环境本就能直接 spawn）。
+ */
+async function resolveNativeExe(
+  host: HostRuntime,
+  candidate: { readonly program: string; readonly npmPackage?: string },
+  whereLines: readonly string[],
+): Promise<{ readonly exePath?: string }> {
+  const exeLine = whereLines.find((line) =>
+    line.toLowerCase().endsWith(".exe"),
+  );
+  if (exeLine !== undefined) return { exePath: exeLine };
+  if (candidate.npmPackage === undefined) return {};
+  const dirs = new Set(
+    whereLines.map((line) => dirOf(line)).filter((dir) => dir.length > 0),
+  );
+  for (const dir of dirs) {
+    const candidatePath = joinPath(
+      dir,
+      "node_modules",
+      candidate.npmPackage,
+      "bin",
+      `${candidate.program}.exe`,
+    );
+    try {
+      if (await host.pathExists(candidatePath)) {
+        return { exePath: candidatePath };
+      }
+    } catch {
+      // pathExists 失败按未命中处理
+    }
+  }
+  return {};
 }
 
 /**
@@ -326,6 +427,16 @@ export interface ConnectionStatus {
   readonly checkedAt: string | null;
 }
 
+/** 本机扫描命中的原生 ACP CLI（不持久化，每次扫描现算）。 */
+export interface DiscoveredAgent {
+  readonly id: string;
+  readonly name: string;
+  /** 扫描展示路径（where/which 的首个命中）。 */
+  readonly path: string;
+  /** 解析出的可直接 spawn 的真 exe（Windows npm shim 之外的）；未解析到省略。 */
+  readonly exePath?: string;
+}
+
 interface SettingsStoreState {
   readonly chrysPath: string;
   readonly approvalMode: ApprovalMode;
@@ -337,6 +448,13 @@ interface SettingsStoreState {
   /** 界面字号基准 px（12–20）;变更即下发根元素并持久化。 */
   readonly uiFontSize: number;
   readonly messageStreamShowTodos: boolean;
+  /** 自定义 agent 条目（持久化）。 */
+  readonly agents: readonly CustomAgentEntry[];
+  /** 新会话使用的 agent id。 */
+  readonly activeAgentId: string;
+  /** 本机扫描命中的原生 ACP CLI（内存态）。 */
+  readonly discoveredAgents: readonly DiscoveredAgent[];
+  readonly isScanningAgents: boolean;
   readonly connection: ConnectionStatus;
   /** chrys 路径自动探测进行中（启动时路径为空才触发一次）。 */
   readonly isProbingChrysPath: boolean;
@@ -349,6 +467,13 @@ interface SettingsStoreState {
   setChatWidth: (width: ChatWidth) => void;
   setUiFontSize: (px: number) => void;
   setMessageStreamShowTodos: (enabled: boolean) => void;
+  /** 切换新会话使用的 agent；非法 id 忽略并记日志。 */
+  setActiveAgentId: (agentId: string) => void;
+  /** 添加自定义 agent（名称 + 命令行）；校验失败返回错误文案，成功返回 null。 */
+  addCustomAgent: (name: string, commandText: string) => string | null;
+  removeCustomAgent: (agentId: string) => void;
+  /** 扫描本机原生 ACP CLI（where/which；命中的进内存态 discoveredAgents）。 */
+  scanNativeAgents: (host?: HostRuntime) => Promise<void>;
   /** 执行 `<chrysPath> --version` 验证路径可用性。 */
   testConnection: () => Promise<void>;
   /** 路径为空时的启动探测（PATH 与常见安装位置；只探一次）。 */
@@ -399,11 +524,15 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
       chatWidth: next.chatWidth,
       uiFontSize: next.uiFontSize,
       messageStreamShowTodos: next.messageStreamShowTodos,
+      agents: next.agents,
+      activeAgentId: next.activeAgentId,
     });
   }
 
   return {
     ...loadPersistedSettings(),
+    discoveredAgents: [],
+    isScanningAgents: false,
     connection: {
       status: "idle",
       message: "尚未检测",
@@ -446,6 +575,86 @@ export const useSettingsStore = create<SettingsStoreState>()((set, get) => {
     },
     setMessageStreamShowTodos: (enabled) => {
       applySettings({ messageStreamShowTodos: enabled });
+    },
+    setActiveAgentId: (agentId) => {
+      if (!isValidAgentId(agentId, get().agents)) {
+        logger.warn("忽略非法的 agent 选择", { agentId });
+        return;
+      }
+      if (agentId === get().activeAgentId) return;
+      applySettings({ activeAgentId: agentId });
+      logger.info("新会话将使用的 agent 已切换", { agentId });
+    },
+    addCustomAgent: (name, commandText) => {
+      const trimmedName = name.trim();
+      if (trimmedName === "") return "名称不能为空";
+      const argv = parseCommandArgv(commandText);
+      if (argv.length === 0) return "启动命令不能为空";
+      const agents = get().agents;
+      if (agents.some((item) => item.name === trimmedName)) {
+        return "已存在同名 agent";
+      }
+      // id 唯一化：slug 冲突时追加序号
+      const base = customAgentIdOf(trimmedName);
+      let id = base;
+      for (let i = 2; agents.some((item) => item.id === id); i += 1) {
+        id = `${base}-${i}`;
+      }
+      applySettings({
+        agents: [...agents, { id, name: trimmedName, command: argv }],
+      });
+      logger.info("已添加自定义 agent", { id, command: argv.join(" ") });
+      return null;
+    },
+    removeCustomAgent: (agentId) => {
+      const agents = get().agents;
+      if (!agents.some((item) => item.id === agentId)) return;
+      // 被删的是当前选中项：回落默认 agent，不悬空
+      const wasActive = get().activeAgentId === agentId;
+      applySettings({
+        agents: agents.filter((item) => item.id !== agentId),
+        ...(wasActive ? { activeAgentId: defaultSettings.activeAgentId } : {}),
+      });
+      logger.info("已移除自定义 agent", { agentId });
+    },
+    scanNativeAgents: async (host = hostRuntime) => {
+      if (get().isScanningAgents) return;
+      set({ isScanningAgents: true });
+      try {
+        const found: DiscoveredAgent[] = [];
+        for (const candidate of nativeAcpCandidates) {
+          for (const lookup of ["where", "which"]) {
+            try {
+              const result = await host.runCommand(lookup, [candidate.program]);
+              if (result.code !== 0) continue;
+              const lines = result.stdout
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+              const first = lines[0];
+              if (first === undefined) continue;
+              found.push({
+                id: candidate.id,
+                name: candidate.name,
+                path: first,
+                ...(await resolveNativeExe(host, candidate, lines)),
+              });
+              break;
+            } catch {
+              // 该查找命令不存在 / 宿主不支持：继续
+            }
+          }
+        }
+        set({ discoveredAgents: found });
+        logger.info("本机原生 ACP CLI 扫描完成", {
+          found: found.map(
+            (item) =>
+              `${item.id}${item.exePath === undefined ? "" : "（已解析 exe）"}`,
+          ),
+        });
+      } finally {
+        set({ isScanningAgents: false });
+      }
     },
     setUiFontSize: (px) => {
       const uiFontSize = normalizeUiFontSizePx(px);

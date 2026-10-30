@@ -86,4 +86,12 @@ describe("DiagnosticsPage", () => {
       useLogStore.getState().setLevel("info");
     });
   });
+
+  it("协议自检已移入设置页「Agent」分片：诊断页只剩三枚 tab", () => {
+    render(<DiagnosticsPage />);
+    expect(
+      screen.queryByRole("tab", { name: "协议自检" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /运行日志/ })).toBeInTheDocument();
+  });
 });

@@ -39,10 +39,21 @@
 
 ## 扩展方式（本项目的硬性要求）
 
-接入第二种 agent = 在注册表加一个 `AgentAdapter` 项 + （若该 agent 有
-私有扩展）在注册项里提供 `createDialect` 方言钩子（协议层的 `AcpDialect`
-挂接点：通知翻译返回 null 则交回协议层兜底，反向请求按 method 精确
-匹配）。`src/acp` 协议层与 `src/ui` 一行不改。
+接入第二种 agent 有**三种形态**，统一经 `resolveAgentAdapter(id, customAgents)`
+解析为 AgentAdapter 形状的启动面（真实运行 realRuntime 与诊断页协议
+探查 agentProbe 共用）：
+
+1. **内置适配项**：在 `agentAdapters` 追加一项（见下）；
+2. **本机发现**：`nativeAcpCandidates` 收录子命令直接说标准 ACP 的 CLI
+   （如 `opencode acp`），设置页扫描 PATH 命中即用，无需改代码；
+3. **自定义**：设置页添加（名称 + 命令行，`parseCommandArgv` 切 argv），
+   条目持久化在 settingsStore（`CustomAgentEntry`）。
+
+内置项的扩展约束（docs/architecture.md「扩展第二种 agent」）：接入新
+agent = 在 `agentAdapters` 加一个注册项；`src/acp` 协议层与 `src/ui`
+一行不改。讲标准 ACP 的 agent 到此即完成；带私有扩展的 agent 在注册项
+里提供 `createDialect`（协议层的 `AcpDialect` 挂接点），私有消息的解析
+留在本层，同样不动协议层。
 
 ## 边界
 

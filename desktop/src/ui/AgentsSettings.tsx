@@ -1,0 +1,488 @@
+/**
+ * 设置页「Agent」分片（多 agent 管理的一等入口，UI 层组装模块）：
+ *
+ * - 会话 Agent 列表卡：内置 / 本机发现 / 自定义三来源；点行切换当前
+ *   agent（只影响新会话）；每行带「协议自检」与该 agent 最近一次自检的
+ *   摘要徽标；自定义项可删除；底部添加表单 + 本机扫描。
+ * - 协议自检报告卡：最近一次自检的完整检查矩阵（握手 / 能力声明 / 会话
+ *   能力 / 事件观测，每行状态徽标 + 依据 + 缺失时的功能影响），深度
+ *   探查（两轮真实对话：轻量回复 + 多步任务）在此发起。
+ *
+ * 执行体是 ui/agentProbe.ts（两级探查，权限/提问一律回「取消」）；检查表
+ * 推导是纯函数 ui/protocolChecks.ts；进度与按 agent 的结论记忆在
+ * stores/protocolProbeStore。
+ */
+import { useEffect, useMemo, useState } from "react";
+import { DEFAULT_AGENT_ID, resolveAgentAdapter } from "../agents/registry.ts";
+import {
+  useProtocolProbeStore,
+  type AgentProbeResult,
+} from "../stores/protocolProbeStore.ts";
+import { useSettingsStore } from "../stores/settingsStore.ts";
+import { useWorkspaceStore } from "../stores/workspaceStore.ts";
+import {
+  deriveProtocolChecks,
+  probeSummary,
+  type CheckStatus,
+} from "./protocolChecks.ts";
+import { runAgentProbe } from "./agentProbe.ts";
+import {
+  Badge,
+  btnSecondary,
+  focusVisibleRing,
+  RadioDot,
+  Spinner,
+} from "./controls";
+import { settingsPathsOverride } from "./workspaces/settingsLinks";
+
+/** 路径 / 命令类输入（与设置页共用视觉）。 */
+const textInputClass =
+  "h-8 w-full min-w-0 rounded-lg border border-line-strong bg-base px-2.5 font-mono text-xs text-ink placeholder:text-ink-ghost focus:border-sky-500/60 focus:outline-none";
+
+// ------------------------------------------------------------- 探查发起
+
+/** 对指定 agent 发起探查（结果进 protocolProbeStore；runner 承诺不抛出）。 */
+function probeAgent(
+  agentId: string,
+  depth: "safe" | "deep",
+  cwd: string,
+): void {
+  const { agents: customAgents, discoveredAgents } =
+    useSettingsStore.getState();
+  const resolved = resolveAgentAdapter(agentId, customAgents, discoveredAgents);
+  if (resolved === null) return;
+  const store = useProtocolProbeStore.getState();
+  store.begin(agentId);
+  void runAgentProbe(resolved.adapter, {
+    depth,
+    cwd,
+    // 内置 chrys 沿用设置里的可执行路径（与真实会话同源）；其余 agent
+    // 命令即配置（native 已带解析出的真 exe）
+    executablePath:
+      resolved.adapter.id === DEFAULT_AGENT_ID
+        ? (settingsPathsOverride().chrysCommand ??
+          useWorkspaceStore.getState().toolPaths.chrysCommand)
+        : undefined,
+    onStep: useProtocolProbeStore.getState().setStep,
+  })
+    .then(useProtocolProbeStore.getState().finish)
+    .catch(() => {
+      // runner 承诺不抛出；此处仅极端兜底，防状态机卡死
+      useProtocolProbeStore.getState().finish({
+        agentId,
+        agentLabel: resolved.adapter.displayName,
+        depth,
+        startedAt: new Date().toISOString(),
+        elapsedMs: 0,
+        ok: false,
+        failedStep: "探查执行",
+        failureReason: "探查异常终止",
+        protocolVersion: null,
+        agentName: null,
+        agentVersion: null,
+        capabilities: null,
+        models: null,
+        modes: null,
+        list: null,
+        closeAck: null,
+        events: {
+          eventTypeCounts: {},
+          toolKindCounts: {},
+          rawMethodCounts: {},
+        },
+        permissionRequests: 0,
+        questionRequests: 0,
+        prompts: [],
+      });
+    });
+}
+
+// ------------------------------------------------------------- 摘要徽标
+
+/** 行尾自检摘要：ok/warn/danger 计数 + 耗时（无结果显示「未检测」）。 */
+function ProbeSummaryBadge({ result }: { readonly result: AgentProbeResult }) {
+  const summary = useMemo(
+    () => probeSummary(deriveProtocolChecks(result)),
+    [result],
+  );
+  const tone = !result.ok ? "danger" : summary.warn > 0 ? "warn" : "ok";
+  return (
+    <Badge tone={tone} title="该 agent 最近一次协议自检结论">
+      {result.ok
+        ? `${String(summary.ok)}✓ ${String(summary.warn)}✗ ${(result.elapsedMs / 1000).toFixed(1)}s`
+        : "自检失败"}
+    </Badge>
+  );
+}
+
+// ------------------------------------------------------------- 列表卡
+
+/** 列表行数据（三来源统一形状）。 */
+interface AgentRow {
+  readonly key: string;
+  readonly name: string;
+  readonly source: "内置" | "本机发现" | "自定义";
+  readonly tone: "ok" | "info" | "neutral";
+  readonly command: string;
+  readonly removable: boolean;
+}
+
+/** 会话 Agent 列表卡：切换 + 自检 + 自定义管理 + 本机扫描。 */
+function AgentListCard() {
+  const agents = useSettingsStore((state) => state.agents);
+  const activeAgentId = useSettingsStore((state) => state.activeAgentId);
+  const discoveredAgents = useSettingsStore((state) => state.discoveredAgents);
+  const isScanningAgents = useSettingsStore((state) => state.isScanningAgents);
+  const setActiveAgentId = useSettingsStore((state) => state.setActiveAgentId);
+  const addCustomAgent = useSettingsStore((state) => state.addCustomAgent);
+  const removeCustomAgent = useSettingsStore(
+    (state) => state.removeCustomAgent,
+  );
+  const scanNativeAgents = useSettingsStore((state) => state.scanNativeAgents);
+  const [nameDraft, setNameDraft] = useState("");
+  const [commandDraft, setCommandDraft] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const phase = useProtocolProbeStore((state) => state.phase);
+  const step = useProtocolProbeStore((state) => state.step);
+  const probingAgentId = useProtocolProbeStore((state) => state.probingAgentId);
+  const resultsByAgent = useProtocolProbeStore((state) => state.resultsByAgent);
+
+  // 探查工作区：选中项目 → 打开中项目 → 最近项目（探查只需真实 cwd）
+  const selectedPath = useWorkspaceStore((state) => state.selectedPath);
+  const activePath = useWorkspaceStore((state) => state.activePath);
+  const recentWorkspaces = useWorkspaceStore((state) => state.recentWorkspaces);
+  const workspacePath =
+    selectedPath ?? activePath ?? recentWorkspaces[0]?.path ?? null;
+
+  useEffect(() => {
+    void scanNativeAgents();
+  }, [scanNativeAgents]);
+
+  const rows: readonly AgentRow[] = useMemo(
+    () => [
+      {
+        key: DEFAULT_AGENT_ID,
+        name: "iCode",
+        source: "内置" as const,
+        tone: "ok" as const,
+        command: "icode acp（可执行路径取「工具路径」设置）",
+        removable: false,
+      },
+      ...discoveredAgents.map((item) => ({
+        key: item.id,
+        name: item.name,
+        source: "本机发现" as const,
+        tone: "info" as const,
+        command:
+          item.exePath === undefined
+            ? `${item.name.toLowerCase()} acp · ${item.path}`
+            : `${item.exePath} acp`,
+        removable: false,
+      })),
+      ...agents.map((item) => ({
+        key: item.id,
+        name: item.name,
+        source: "自定义" as const,
+        tone: "neutral" as const,
+        command: item.command.join(" "),
+        removable: true,
+      })),
+    ],
+    [discoveredAgents, agents],
+  );
+
+  const submitAdd = (): void => {
+    const error = addCustomAgent(nameDraft, commandDraft);
+    setAddError(error);
+    if (error === null) {
+      setNameDraft("");
+      setCommandDraft("");
+    }
+  };
+
+  return (
+    <div
+      aria-label="会话 Agent"
+      className="overflow-hidden rounded-xl border border-line bg-surface"
+    >
+      <div className="border-b border-line px-5 py-3.5">
+        <p className="text-ui-base font-medium text-ink">会话 Agent</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">
+          点选切换新会话使用的 agent（已打开的会话不变）。「协议自检」真实
+          拉起该 agent 核验我们的全部接口依赖，结论记在行尾。
+        </p>
+        {workspacePath === null ? (
+          <p role="alert" className="mt-1 text-xs text-warn-ink">
+            尚无可用项目作为探查工作区：请先在项目列表打开一个项目
+          </p>
+        ) : null}
+      </div>
+      {rows.map((row) => {
+        const isSelected = activeAgentId === row.key;
+        const isProbingThis = phase === "probing" && probingAgentId === row.key;
+        const probeResult = resultsByAgent[row.key];
+        return (
+          <div
+            key={row.key}
+            aria-label={`agent-${row.name}`}
+            className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-t border-line px-5 py-2.5"
+          >
+            <button
+              type="button"
+              aria-pressed={isSelected}
+              onClick={() => {
+                setActiveAgentId(row.key);
+              }}
+              className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-raised/60 ${focusVisibleRing}`}
+            >
+              <RadioDot checked={isSelected} />
+              <span className="shrink-0 text-sm text-ink">{row.name}</span>
+              <Badge tone={row.tone}>{row.source}</Badge>
+              {isSelected ? <Badge tone="ok">当前使用</Badge> : null}
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-faint">
+                {row.command}
+              </span>
+            </button>
+            {isProbingThis ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-ink-faint">
+                <Spinner className="h-3 w-3" />
+                {step ?? "进行中"}
+              </span>
+            ) : probeResult !== undefined ? (
+              <ProbeSummaryBadge result={probeResult} />
+            ) : (
+              <span className="shrink-0 text-2xs text-ink-ghost">未检测</span>
+            )}
+            <button
+              type="button"
+              disabled={phase === "probing" || workspacePath === null}
+              onClick={() => {
+                if (workspacePath !== null)
+                  probeAgent(row.key, "safe", workspacePath);
+              }}
+              className="shrink-0 rounded-md px-2 py-0.5 text-xs text-info-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              协议自检
+            </button>
+            <button
+              type="button"
+              disabled={phase === "probing" || workspacePath === null}
+              title="两轮真实对话（轮 1 轻量回复；轮 2 列目录 + 跑命令，触发思考/工具/计划/审批）——消耗两次模型调用"
+              onClick={() => {
+                if (workspacePath !== null)
+                  probeAgent(row.key, "deep", workspacePath);
+              }}
+              className="shrink-0 rounded-md px-2 py-0.5 text-xs text-info-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              深度探查
+            </button>
+            {row.removable ? (
+              <button
+                type="button"
+                onClick={() => {
+                  removeCustomAgent(row.key);
+                }}
+                className="shrink-0 rounded-md px-2 py-0.5 text-xs text-danger-ink transition-colors hover:bg-danger-bg/60"
+              >
+                删除
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+      <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3">
+        <input
+          type="text"
+          aria-label="自定义 Agent 名称"
+          placeholder="名称（如 内网 Agent）"
+          value={nameDraft}
+          onChange={(event) => {
+            setNameDraft(event.currentTarget.value);
+          }}
+          className="h-8 w-36 min-w-0 rounded-lg border border-line-strong bg-base px-2.5 text-xs text-ink placeholder:text-ink-ghost focus:border-sky-500/60 focus:outline-none"
+        />
+        <input
+          type="text"
+          aria-label="自定义 Agent 启动命令"
+          placeholder="启动命令（如 opencode acp，双引号可含空格路径）"
+          value={commandDraft}
+          onChange={(event) => {
+            setCommandDraft(event.currentTarget.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") submitAdd();
+          }}
+          className={`${textInputClass} h-8 flex-1`}
+        />
+        <button
+          type="button"
+          onClick={submitAdd}
+          className={`${btnSecondary} shrink-0 px-2.5 py-1 text-xs`}
+        >
+          添加
+        </button>
+      </div>
+      {addError !== null ? (
+        <p role="alert" className="px-5 pb-3 text-xs text-danger-ink">
+          {addError}
+        </p>
+      ) : null}
+      <div className="flex items-center gap-3 border-t border-line px-5 py-2.5">
+        <p className="text-xs text-ink-faint">
+          {isScanningAgents
+            ? "正在扫描本机原生 ACP CLI…"
+            : discoveredAgents.length > 0
+              ? `本机发现 ${String(discoveredAgents.length)} 个原生 ACP CLI（OpenCode 等）`
+              : "未发现其他原生 ACP CLI（仅扫描内置候选清单）"}
+        </p>
+        <button
+          type="button"
+          disabled={isScanningAgents}
+          onClick={() => {
+            void scanNativeAgents();
+          }}
+          className="ml-auto shrink-0 rounded-md px-2 py-0.5 text-xs text-info-ink disabled:opacity-50"
+        >
+          重新扫描
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------- 报告卡
+
+/** 检查状态 → 徽标 tone。 */
+const toneOf = (status: CheckStatus) =>
+  status === "ok"
+    ? "ok"
+    : status === "warn"
+      ? "warn"
+      : status === "danger"
+        ? "danger"
+        : status === "info"
+          ? "info"
+          : "neutral";
+
+/** 协议自检报告卡：最近一次自检的完整矩阵 + 深度探查。 */
+function ProtocolReportCard() {
+  const result = useProtocolProbeStore((state) => state.result);
+  const phase = useProtocolProbeStore((state) => state.phase);
+  const step = useProtocolProbeStore((state) => state.step);
+  const probingAgentId = useProtocolProbeStore((state) => state.probingAgentId);
+
+  const selectedPath = useWorkspaceStore((state) => state.selectedPath);
+  const activePath = useWorkspaceStore((state) => state.activePath);
+  const recentWorkspaces = useWorkspaceStore((state) => state.recentWorkspaces);
+  const workspacePath =
+    selectedPath ?? activePath ?? recentWorkspaces[0]?.path ?? null;
+
+  const groups = useMemo(
+    () => (result === null ? [] : deriveProtocolChecks(result)),
+    [result],
+  );
+  const summary = useMemo(() => probeSummary(groups), [groups]);
+
+  return (
+    <div
+      aria-label="协议自检报告"
+      className="overflow-hidden rounded-xl border border-line bg-surface"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line px-5 py-3">
+        <p className="text-ui-base font-medium text-ink">协议自检报告</p>
+        {result !== null ? (
+          <>
+            <span className="text-sm text-ink">
+              {result.agentLabel}
+              {result.agentVersion === null ? "" : ` ${result.agentVersion}`}
+            </span>
+            <Badge tone={result.depth === "deep" ? "info" : "neutral"}>
+              {result.depth === "deep" ? "深度探查" : "安全探查"}
+            </Badge>
+            <span className="text-xs text-ink-faint">
+              {String(summary.ok)} 项能力满足 · {String(summary.warn)}{" "}
+              项缺失/待接入
+              {summary.danger > 0 ? ` · ${String(summary.danger)} 项失败` : ""}
+              {" · 耗时 "}
+              {(result.elapsedMs / 1000).toFixed(1)}s
+            </span>
+          </>
+        ) : null}
+        {result !== null ? (
+          <button
+            type="button"
+            disabled={phase === "probing" || workspacePath === null}
+            onClick={() => {
+              if (workspacePath !== null)
+                probeAgent(result.agentId, "deep", workspacePath);
+            }}
+            className={`${btnSecondary} ml-auto shrink-0 px-2.5 py-1 text-xs`}
+            title="对刚自检的 agent 发两轮真实对话（轮 1 轻量回复；轮 2 列目录 + 跑命令，触发思考/工具/计划/审批）——消耗两次模型调用"
+          >
+            {phase === "probing" && probingAgentId === result.agentId
+              ? (step ?? "深度探查中") + "…"
+              : "深度探查（消耗两次模型调用）"}
+          </button>
+        ) : null}
+      </div>
+      {/* 图例：先回答「我要不要管」——只有缺失/失败需要看，其余明示无需处理 */}
+      <p className="border-b border-line px-5 py-2 text-xs leading-relaxed text-ink-ghost">
+        按「能力」核验，与 agent 底座无关。读法：只看
+        <span className="text-warn-ink">缺失 / 已提供未接入</span>
+        的行（影响写在行内）；<span className="text-ok-ink">支持</span> 与
+        <span className="text-ink-mute">待验证</span>{" "}
+        无需处理（待验证＝安全探查不触发对话，属正常）；想把待验证的行坐实，
+        点右上「深度探查」跑两轮真实对话（轻量回复 + 多步任务）。
+      </p>
+      {result === null ? (
+        <p className="px-5 py-4 text-sm text-ink-faint">
+          尚未自检。对上方某个 agent 点「协议自检」，即可得到它对我们全部
+          接口依赖的支持矩阵——不同底座各跑一次，逐行对比差异与影响。
+        </p>
+      ) : (
+        groups.map((group) => (
+          <section
+            key={group.key}
+            aria-label={group.title}
+            className="border-t border-line first:border-t-0"
+          >
+            <h3 className="px-5 pt-3 pb-1.5 text-sm font-medium text-ink">
+              {group.title}
+            </h3>
+            {group.rows.map((row) => (
+              <div key={row.key} className="px-5 py-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={toneOf(row.status)}>{row.badge}</Badge>
+                  <span className="text-sm text-ink">{row.label}</span>
+                </div>
+                {row.detail.length > 0 || row.impact.length > 0 ? (
+                  <div className="mt-1 space-y-0.5 pl-1">
+                    {row.detail.length > 0 ? (
+                      <p className="text-xs text-ink-mute">{row.detail}</p>
+                    ) : null}
+                    {row.impact.length > 0 ? (
+                      <p className="text-xs text-warn-ink">
+                        影响：{row.impact}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </section>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** 设置页「Agent」分片：列表卡 + 报告卡。 */
+export function AgentsSettingsSection() {
+  return (
+    <div className="flex flex-col gap-5">
+      <AgentListCard />
+      <ProtocolReportCard />
+    </div>
+  );
+}

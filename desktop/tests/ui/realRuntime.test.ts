@@ -561,7 +561,8 @@ describe("openRealWorkspace：失败收口（P0-1）", () => {
     expect(useSessionStore.getState().isConnecting).toBe(false);
     const error = useWorkspaceStore.getState().lastConnectError;
     expect(error?.path).toBe(WORKSPACE);
-    expect(error?.message).toContain("无法启动 iCode 进程");
+    // 多 agent 化后错误文案不再点名具体 agent（iCode），统一说 agent
+    expect(error?.message).toContain("无法启动 agent 进程");
     expect(error?.message).toContain("请在设置中检查 agent 可执行路径");
   });
 

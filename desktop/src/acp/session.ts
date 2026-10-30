@@ -27,6 +27,7 @@ import type { AcpTransport, TransportExit } from "./transport/acpTransport.ts";
 import { ACP_METHOD, ACP_PROTOCOL_VERSION } from "./types.ts";
 import { asNumber, asRecord, asString } from "./parse.ts";
 import type {
+  AgentCommandEntry,
   ChrysRuntime,
   ChrysUsageUpdateParams,
   InitializeResult,
@@ -81,6 +82,12 @@ export type AcpSessionEvent =
       readonly sessionId: string;
       readonly contextSize: number | null;
       readonly contextUsed: number | null;
+    }
+  | {
+      /** agent 侧斜杠命令清单（available_commands_update，含命名空间风格）。 */
+      readonly type: "available_commands";
+      readonly sessionId: string;
+      readonly commands: readonly AgentCommandEntry[];
     }
   | {
       readonly type: "session_info_update";
@@ -508,6 +515,21 @@ export class AcpSession {
     if (method === ACP_METHOD.sessionUpdate) {
       return translateSessionUpdate(params);
     }
+    // 2b) 命名空间风格（`session/update:<variant>`，OpenCode 等生态的 SDK
+    // 形式）：语义等价于裸 session/update，但形状是扁平的（变体字段直接
+    // 挂在 params 顶层）——归一成裸风格的嵌套 update 再翻译。变体名取
+    // params.sessionUpdate，缺省从 method 后缀还原（后缀即变体名）
+    if (method.startsWith("session/update:")) {
+      const variant = method.slice("session/update:".length);
+      const nested = asRecord(params["update"]);
+      const update =
+        nested !== null
+          ? nested
+          : typeof params["sessionUpdate"] === "string"
+            ? params
+            : { ...params, sessionUpdate: variant };
+      return translateSessionUpdate({ ...params, update });
+    }
     // 3) 兜底：原样透传，不丢数据
     return { type: "unknown_notification", method, params };
   }
@@ -663,6 +685,10 @@ function translateSessionUpdate(
         contextSize: asNumber(update["size"]),
         contextUsed: asNumber(update["used"]),
       };
+    case "available_commands_update": {
+      const commands = parseAgentCommands(update["availableCommands"]);
+      return { type: "available_commands", sessionId, commands };
+    }
     case "session_info_update": {
       const updatedAt = asString(update["updatedAt"]);
       return {
@@ -744,6 +770,33 @@ function parsePlanEntries(raw: unknown): PlanEntry[] {
     });
   }
   return entries;
+}
+
+/** 收窄 available_commands_update 的 availableCommands 数组（坏项丢弃）。 */
+function parseAgentCommands(raw: unknown): AgentCommandEntry[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const commands: AgentCommandEntry[] = [];
+  for (const item of raw) {
+    const record = asRecord(item);
+    if (record === null) {
+      continue;
+    }
+    const name = asString(record["name"]);
+    if (name === null) {
+      continue;
+    }
+    const description = asString(record["description"]);
+    const input = asRecord(record["input"]);
+    const inputHint = input === null ? null : asString(input["hint"]);
+    commands.push({
+      name,
+      description,
+      inputHint,
+    });
+  }
+  return commands;
 }
 
 const PLAN_PRIORITIES: readonly PlanEntry["priority"][] = [

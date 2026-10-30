@@ -209,6 +209,9 @@ export function ChatInput({
   const runtimeSkillNames = useRuntimeStatusStore(
     (state) => state.runtime.skillNames,
   );
+  const agentCommands = useRuntimeStatusStore(
+    (state) => state.availableCommands,
+  );
   const skillSources = useRuntimeStatusStore(
     (state) => state.runtime.skillSources,
   );
@@ -278,8 +281,11 @@ export function ChatInput({
     () =>
       slash === null
         ? []
-        : filterSlashItems(buildSlashItems(skillNames), slash.query),
-    [slash, skillNames],
+        : filterSlashItems(
+            buildSlashItems(skillNames, agentCommands),
+            slash.query,
+          ),
+    [slash, skillNames, agentCommands],
   );
 
   /** 面板渲染行：分组变化处带一行组头（与前一项比较，无渲染中可变量）。 */

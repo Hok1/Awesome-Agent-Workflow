@@ -28,7 +28,7 @@ export class AcpTimeoutError extends AcpError {
   ) {
     super(
       "ACP_REQUEST_TIMEOUT",
-      `chrys acp 未在 ${timeoutMs}ms 内应答 ${method}`,
+      `ACP agent 未在 ${timeoutMs}ms 内应答 ${method}`,
     );
     this.name = "AcpTimeoutError";
   }
@@ -44,7 +44,7 @@ export class AcpResponseError extends AcpError {
   ) {
     super(
       "ACP_RESPONSE_ERROR",
-      `chrys acp 对 ${method} 返回错误 ${jsonRpcCode}：${jsonRpcMessage}`,
+      `ACP agent 对 ${method} 返回错误 ${jsonRpcCode}：${jsonRpcMessage}`,
     );
     this.name = "AcpResponseError";
   }

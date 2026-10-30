@@ -349,6 +349,14 @@ export interface SessionInfoUpdate {
   readonly updatedAt?: string;
 }
 
+/** available_commands_update 的单条命令（agent 侧斜杠命令）。 */
+export interface AgentCommandEntry {
+  readonly name: string;
+  readonly description: string | null;
+  /** 参数提示（input.hint；如「optional custom review instructions」）。 */
+  readonly inputHint: string | null;
+}
+
 export interface CurrentModeUpdate {
   readonly sessionUpdate: "current_mode_update";
   readonly currentModeId: string;

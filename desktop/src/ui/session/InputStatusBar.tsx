@@ -58,7 +58,9 @@ export function ContextRing(): React.JSX.Element | null {
   if (usage === null || maxContextTokens === null || maxContextTokens <= 0) {
     return null;
   }
-  const used = usage.totalTokens ?? 0;
+  // 占用数：chrys 源给 totalTokens（最近调用）；标准源给 totalSessionTokens
+  //（会话累计占用口径）——都取最近可用值，绝不显示误导性的 0
+  const used = usage.totalTokens ?? usage.totalSessionTokens ?? 0;
   const pct = usage.pct ?? Math.round((used / maxContextTokens) * 100);
   const clamped = Math.min(100, Math.max(0, pct));
   const ringClass =
