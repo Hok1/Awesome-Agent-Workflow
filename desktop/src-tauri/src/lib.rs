@@ -14,6 +14,7 @@ pub fn run() {
             // WebView 刷新不会保证 React 清理；原生监听随页面代次一并释放。
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<panel_files::PanelWatchers>().clear();
+                acp_process::retire_page(webview.label().to_owned());
             }
         })
         .plugin(tauri_plugin_opener::init())
@@ -53,6 +54,9 @@ pub fn run() {
             // 确认弹窗），前端再经 force_close（destroy）真正关窗——默认
             // 的直接销毁会把 agent 进程树变成孤儿，抱着 chrys 的锁拖慢
             // 下一次启动（Job Object 是它死透时的兜底，不是许可）。
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                acp_process::retire_page(window.label().to_owned());
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.app_handle().emit("aaw://close-requested", ());
                 api.prevent_close();

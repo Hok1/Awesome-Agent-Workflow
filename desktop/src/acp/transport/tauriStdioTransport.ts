@@ -72,6 +72,7 @@ export interface TauriStdioSpawnOptions {
   readonly cwd?: string;
   /** 注入的环境变量（与当前环境合并）。 */
   readonly extraEnv?: Readonly<Record<string, string>>;
+  /** 兼容旧探测调用；宿主现统一按页面归属管理，所有连接均可并存。 */
   readonly isolated?: boolean;
 }
 

@@ -669,6 +669,63 @@ describe("openRealWorkspace：审批默认模式分派（P0-4）", () => {
 });
 
 describe("后台会话执行隔离", () => {
+  it("预热连接在启动新进程前就地消费，不遗留候选进程", async () => {
+    await openRealWorkspace(WORKSPACE, { listOnly: true });
+    const warm = fakeSessionControl.lastInstance;
+    expect(spawnTransport).toHaveBeenCalledTimes(1);
+    await openRealWorkspace(WORKSPACE, { sessionId: "A" });
+    expect(fakeSessionControl.lastInstance).toBe(warm);
+    expect(spawnTransport).toHaveBeenCalledTimes(1);
+    expect(fakeSessionControl.loadCalls).toEqual(["A"]);
+    expect(useSessionStore.getState().isBound).toBe(true);
+    expect(useSessionStore.getState().isConnecting).toBe(false);
+    await closeRealRuntime();
+    expect(fakeSessionControl.closeCount).toBe(1);
+  });
+
+  it("激活项目的 effect 不会把已点开的 B 焦点抢回同项目先打开的 A", async () => {
+    await openRealWorkspace(WORKSPACE, { sessionId: "A" });
+    await openRealWorkspace(WORKSPACE, { sessionId: "B" });
+    await openRealWorkspace(WORKSPACE, { listOnly: true });
+    expect(useSessionStore.getState().activeSessionId).toBe("B");
+    expect(spawnTransport).toHaveBeenCalledTimes(2);
+    expect(fakeSessionControl.closeCount).toBe(0);
+  });
+
+  it.each([WORKSPACE, "D:/another-project"])(
+    "空闲 A 切到 %s 的 B 后再激活 A 项目，复用后台连接且不重放历史",
+    async (projectB) => {
+      await openRealWorkspace(WORKSPACE, { sessionId: "A" });
+      const a = fakeSessionControl.lastInstance;
+      useSessionStore.getState().beginTurn("A 的已有内容");
+      useSessionStore.getState().endTurn({ stopReason: "end_turn" });
+      await openRealWorkspace(projectB, { sessionId: "B" });
+      await openRealWorkspace(WORKSPACE, { listOnly: true });
+      await switchRealSession("A");
+      expect(spawnTransport).toHaveBeenCalledTimes(2);
+      expect(fakeSessionControl.closeCount).toBe(0);
+      expect(fakeSessionControl.loadCalls).toEqual(["A", "B"]);
+      expect(a?.sessionId).toBe("A");
+      expect(useSessionStore.getState().activeSessionId).toBe("A");
+      expect(useSessionStore.getState().items[0]).toMatchObject({
+        text: "A 的已有内容",
+      });
+    },
+  );
+
+  it("预热加载失败只回收预热连接，不关闭另一项目的运行会话", async () => {
+    await openRealWorkspace(WORKSPACE, { sessionId: "A" });
+    useSessionStore.getState().beginTurn("A 正在运行");
+    await openRealWorkspace("D:/warm-project", { listOnly: true });
+    fakeSessionControl.loadShouldFail = true;
+    await openRealWorkspace("D:/warm-project", { sessionId: "expired" });
+    await openRealWorkspace(WORKSPACE, { sessionId: "A" });
+    expect(useSessionStore.getState().isAgentRunning).toBe(true);
+    expect(useSessionStore.getState().items[0]).toMatchObject({
+      text: "A 正在运行",
+    });
+  });
+
   it.each([WORKSPACE, "D:/another-project"])(
     "A 运行时切到 %s 的 B，消息、停止、自动出队均不串线",
     async (projectB) => {
