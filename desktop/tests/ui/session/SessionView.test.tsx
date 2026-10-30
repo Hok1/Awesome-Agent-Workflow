@@ -160,6 +160,113 @@ describe("SessionView 长会话窗口化与空态入口", () => {
     expect(screen.getByText("消息299")).toBeInTheDocument();
   });
 
+  it("发送消息：渐进回补完成后重钉贴底（回归——视口跳到中间、新消息不可见）", () => {
+    const items: SessionItem[] = Array.from({ length: 12 }, (_, index) => ({
+      kind: "user" as const,
+      id: `u${index}`,
+      text: `消息${index}`,
+      createdAt: "2026-10-24T10:00:00Z",
+    }));
+    useSessionStore.setState({ items });
+    // 追赶循环用 rAF 分帧挂载：同步驱动让窗口内回合即刻全量就绪
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const { container } = render(<SessionView />);
+      const scroll = container.querySelector<HTMLElement>(
+        '[aria-label="消息流"]',
+      );
+      if (scroll === null) throw new Error("消息流容器未找到");
+      // jsdom 无布局：以回合数合成高度，发送前后 DOM 高度可区分——真实
+      // 浏览器里这个差值就是被退场-回补的那个最旧回合的高度
+      const heightOf = (): number => scroll.querySelectorAll("li").length * 1000;
+      Object.defineProperty(scroll, "scrollHeight", {
+        configurable: true,
+        get: heightOf,
+      });
+      Object.defineProperty(scroll, "clientHeight", {
+        configurable: true,
+        get: () => 1000,
+      });
+      Object.defineProperty(scroll, "scrollTop", {
+        configurable: true,
+        value: 0,
+        writable: true,
+      });
+      const turnsBefore = scroll.querySelectorAll("li").length;
+
+      act(() => {
+        useSessionStore.getState().beginTurn("这条消息必须在底部可见");
+      });
+
+      // 新回合进窗口（退场-回补：最旧回合下一帧回补）
+      expect(screen.getByText("这条消息必须在底部可见")).toBeInTheDocument();
+      expect(scroll.querySelectorAll("li").length).toBe(turnsBefore + 1);
+      // 回补完成后重钉贴底：scrollTop 与最终内容高度一致
+      expect(scroll.scrollTop).toBe(heightOf());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("追赶挂载期间上滚：阅读位置随前插锚平移，不被拖向会话中部", () => {
+    const items: SessionItem[] = Array.from({ length: 12 }, (_, index) => ({
+      kind: "user" as const,
+      id: `u${index}`,
+      text: `消息${index}`,
+      createdAt: "2026-10-24T10:00:00Z",
+    }));
+    useSessionStore.setState({ items });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const { container } = render(<SessionView />);
+      const scroll = container.querySelector<HTMLElement>(
+        '[aria-label="消息流"]',
+      );
+      if (scroll === null) throw new Error("消息流容器未找到");
+      const heightOf = (): number =>
+        scroll.querySelectorAll("li").length * 1000;
+      Object.defineProperty(scroll, "scrollHeight", {
+        configurable: true,
+        get: heightOf,
+      });
+      Object.defineProperty(scroll, "clientHeight", {
+        configurable: true,
+        get: () => 1000,
+      });
+      Object.defineProperty(scroll, "scrollTop", {
+        configurable: true,
+        value: 0,
+        writable: true,
+      });
+      // 用户上滚：wheel 意图先行（scroll 事件竞态前拿走滚动权），落在离底
+      // 2000px 的阅读位
+      scroll.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -120, bubbles: true, cancelable: true }),
+      );
+      const readingTop = heightOf() - 1000 - 2000;
+      scroll.scrollTop = readingTop;
+      fireEvent.scroll(scroll);
+      expect(screen.getByRole("button", { name: "回到底部" })).toBeInTheDocument();
+
+      // 追加一轮触发渐进回补：内容在顶部撑高，阅读位必须原地保持
+      const anchor = heightOf() - readingTop;
+      act(() => {
+        useSessionStore.getState().beginTurn("这条消息不得拖走阅读位置");
+      });
+      expect(scroll.scrollTop).toBe(heightOf() - anchor);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("空会话给推荐入口 chips；点击预填输入框（不自动发送）", async () => {
     render(<SessionView />);
     await userEvent.click(

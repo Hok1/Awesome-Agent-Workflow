@@ -41,12 +41,16 @@ export function ConnectionBadge({
   const isConnected = activePath === path && !isConnecting && isBound;
 
   if (variant === "dot") {
+    // 点色对齐 ZCode remoteConnectionPresentation.ts 的 TONES：进行中
+    // bg-progress-ink（=--color-progress-surface-foreground blue-300/700）、
+    // 已连接 bg-ok（=--color-success #46bf72/#1e8a3e）、失败 bg-danger
+    // （=--color-destructive #ff5c5c/#e03131）。
     if (isConnectingThis) {
       return (
         <span
           aria-label="连接中"
           title="连接中"
-          className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"
+          className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-progress-ink"
         />
       );
     }
@@ -55,7 +59,7 @@ export function ConnectionBadge({
         <span
           aria-label="连接失败"
           title={`连接失败：${failure.message}`}
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger-ink"
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
         />
       );
     }
@@ -64,7 +68,7 @@ export function ConnectionBadge({
         <span
           aria-label="已连接"
           title="已连接，可继续对话"
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok"
         />
       );
     }
