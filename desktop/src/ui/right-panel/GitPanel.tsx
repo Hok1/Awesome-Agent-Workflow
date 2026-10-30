@@ -29,6 +29,10 @@ import { useRightPanelStore } from "../../stores/rightPanelStore.ts";
 import { pathKey } from "../../core/panelPaths.ts";
 export { GitDiffView } from "./GitDiffView.tsx";
 
+/** 已消费的 reveal 游标（模块级，跨 GitPanel 挂载存续）：区分「新点击」
+ *  与「切页签回来」——前者触发展开波次，后者保留用户整理的树。 */
+let lastSeenRevealRevision = 0;
+
 export function GitPanel({ project }: { project: string }) {
   const result = useProjectGit(project);
   return (
@@ -85,9 +89,15 @@ function GitReview({
     untracked: reveal?.source === "untracked",
   });
   // 悬浮卡点击（gitReveal.revision 自增）为一次「展开波次」：对应组的
-  // 文件树按波次重挂载并全量展开。挂载时已存在的 reveal 不算波次，
-  // 避免切页签回来把用户整理好的树重新摊开。
-  const [revealWave, setRevealWave] = useState(0);
+  // 文件树按波次重挂载并全量展开。波次判定用模块级游标——GitPanel 在
+  // 点胶囊时才首次挂载，若只看「挂载后 reveal 是否变化」，首次点击会被
+  // seenReveal 的初始化吞掉（点胶囊永远不展开树的根因）；游标跨挂载
+  // 存续，切页签回来（revision 未变）则不会把整理好的树重新摊开。
+  const [revealWave, setRevealWave] = useState(() =>
+    reveal !== undefined && reveal.revision > lastSeenRevealRevision
+      ? reveal.revision
+      : 0,
+  );
   const [openedUntracked, setOpenedUntracked] = useState<Set<string>>(
     new Set(),
   );
@@ -106,7 +116,10 @@ function GitReview({
         ...old,
         [reveal.source === "untracked" ? "untracked" : "changes"]: true,
       }));
-      setRevealWave(reveal.revision);
+      if (reveal.revision > lastSeenRevealRevision) {
+        lastSeenRevealRevision = reveal.revision;
+        setRevealWave(reveal.revision);
+      }
     }
   }
   const revealedGroup = reveal
