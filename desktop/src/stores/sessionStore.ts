@@ -939,17 +939,94 @@ export const createSessionStore = () =>
       );
     };
 
-    // 流式分片缓冲（CHUNK_COALESCE_MS 窗口内合并提交）
+    // 流式分片缓冲 + 匀速吐字泵：agent 的分片是突发到达的（停半秒、
+    // 吐一大段），整段直接上屏就是一顿一顿的蹦字。分片先入缓冲，泵按
+    // 显示帧率（rAF 对齐，60Hz 显示器即 60fps）每帧搬「一小段均匀的字
+    // 符」上屏（自适应：积压越多吐越快，保证 ~200ms 内追平）——把到达
+    // 节奏与显示节奏解耦。回合封口、工具事件等仍走 flushPendingChunks
+    // 全量排空，一个字不丢。rAF 不可用（测试环境）回落 16ms 定时器。
     let pendingAssistantText = "";
     let pendingThoughtText = "";
-    let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 取消当前泵帧的闭包（rAF 与 setTimeout 两种调度共用此形状）。 */
+    let chunkPumpCancel: (() => void) | null = null;
 
-    /** 把缓冲中的流式文本一次性拼进对应落笔条目（空缓冲不提交，幂等）。 */
-    const flushPendingChunks = (): void => {
-      if (chunkFlushTimer !== null) {
-        clearTimeout(chunkFlushTimer);
-        chunkFlushTimer = null;
+    /** 泵每帧上屏的最小字符数（1 = 单字符打字机丝滑口径）。 */
+    const PUMP_MIN_CHARS = 1;
+    /** 积压消化预算（帧数）：单帧上屏 ≈ max(积压/预算, 最小值)。 */
+    const PUMP_CATCHUP_FRAMES = 12;
+    /** rAF 不可用时的定时器回落间隔（≈60fps）。 */
+    const PUMP_FALLBACK_INTERVAL_MS = 16;
+
+    /** 调度下一帧泵（rAF 对齐显示帧率；无 rAF 环境回落定时器）。 */
+    const schedulePumpFrame = (tick: () => void): void => {
+      if (typeof requestAnimationFrame === "function") {
+        const frame = requestAnimationFrame(() => {
+          chunkPumpCancel = null;
+          tick();
+        });
+        chunkPumpCancel = () => cancelAnimationFrame(frame);
+      } else {
+        const timer = setTimeout(() => {
+          chunkPumpCancel = null;
+          tick();
+        }, PUMP_FALLBACK_INTERVAL_MS);
+        chunkPumpCancel = () => clearTimeout(timer);
       }
+    };
+
+    /** 泵的一帧：把缓冲开头的一小段拼进对应落笔条目；缓冲未排空则续排。 */
+    const pumpPendingChunks = (): void => {
+      const takeAssistant = Math.min(
+        pendingAssistantText.length,
+        Math.max(
+          PUMP_MIN_CHARS,
+          Math.ceil(pendingAssistantText.length / PUMP_CATCHUP_FRAMES),
+        ),
+      );
+      const takeThought = Math.min(
+        pendingThoughtText.length,
+        Math.max(
+          PUMP_MIN_CHARS,
+          Math.ceil(pendingThoughtText.length / PUMP_CATCHUP_FRAMES),
+        ),
+      );
+      const assistant = pendingAssistantText.slice(0, takeAssistant);
+      const thought = pendingThoughtText.slice(0, takeThought);
+      pendingAssistantText = pendingAssistantText.slice(takeAssistant);
+      pendingThoughtText = pendingThoughtText.slice(takeThought);
+      if (assistant !== "" || thought !== "") {
+        set((state) => ({
+          items: state.items.map((item) => {
+            if (
+              assistant !== "" &&
+              item.kind === "assistant" &&
+              item.id === openAssistantId &&
+              item.isStreaming
+            ) {
+              return { ...item, text: item.text + assistant };
+            }
+            if (
+              thought !== "" &&
+              item.kind === "thought" &&
+              item.id === openThoughtId &&
+              item.isStreaming
+            ) {
+              return { ...item, text: item.text + thought };
+            }
+            return item;
+          }),
+        }));
+      }
+      if (pendingAssistantText !== "" || pendingThoughtText !== "") {
+        schedulePumpFrame(pumpPendingChunks);
+      }
+    };
+
+    /** 把缓冲中的流式文本一次性拼进对应落笔条目（空缓冲不提交，幂等）。
+     *  封口/工具事件前的全量排空入口——语义与泵不同：一个字不剩。 */
+    const flushPendingChunks = (): void => {
+      chunkPumpCancel?.();
+      chunkPumpCancel = null;
       const assistant = pendingAssistantText;
       const thought = pendingThoughtText;
       pendingAssistantText = "";
@@ -982,10 +1059,8 @@ export const createSessionStore = () =>
 
     /** 丢弃未提交的流式缓冲（会话条目整体替换前用——不把旧会话文本拼进新流）。 */
     const dropPendingChunks = (): void => {
-      if (chunkFlushTimer !== null) {
-        clearTimeout(chunkFlushTimer);
-        chunkFlushTimer = null;
-      }
+      chunkPumpCancel?.();
+      chunkPumpCancel = null;
       pendingAssistantText = "";
       pendingThoughtText = "";
     };
@@ -1184,11 +1259,8 @@ export const createSessionStore = () =>
         } else {
           pendingAssistantText += text;
         }
-        if (chunkFlushTimer === null) {
-          chunkFlushTimer = setTimeout(() => {
-            chunkFlushTimer = null;
-            flushPendingChunks();
-          }, CHUNK_COALESCE_MS);
+        if (chunkPumpCancel === null) {
+          schedulePumpFrame(pumpPendingChunks);
         }
         return;
       }

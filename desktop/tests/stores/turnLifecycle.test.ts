@@ -123,6 +123,63 @@ describe("轮次等待与明确终态", () => {
     expect(binding.prompt).toHaveBeenCalledTimes(1);
   });
 
+  it("匀速吐字泵：突发大分片逐帧上屏（先部分后全量），封口不丢字", async () => {
+    const { agent } = await connect();
+    const bigText = "字".repeat(500);
+    agent.script({
+      interDelayMs: 30,
+      // 挂起到取消：turn 活着，泵才有「部分上屏」的表演窗口（短 turn 会
+      // 立即封口全量排空，测不到中间态）
+      hangUntilCancelled: true,
+      updates: [
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "你好" },
+        },
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: bigText },
+        },
+      ],
+    });
+    store.getState().sendPrompt("吐字泵");
+    // 真实时钟轮询「部分上屏」状态：吐字泵逐帧搬运，不会整段砸出来
+    const samples: string[] = [];
+    const startedAt = Date.now();
+    const partial = await new Promise<number | undefined>((resolve) => {
+      const poll = setInterval(() => {
+        const item = store
+          .getState()
+          .items.find((candidate) => candidate.kind === "assistant");
+        const len = item?.text.length ?? 0;
+        samples.push(`${Date.now() - startedAt}ms:${len}`);
+        if (len >= 8 && len < 2 + 500) {
+          clearInterval(poll);
+          resolve(len);
+        } else if (Date.now() - startedAt > 3000) {
+          clearInterval(poll);
+          console.log("[pump-samples]", samples.join(" | "));
+          resolve(undefined);
+        }
+      }, 40);
+    });
+    expect(partial).toBeDefined();
+
+    // 泵持续搬运：缓冲全部上屏（挂起中的 turn 也能吐完，一个字不丢）
+    await vi.waitFor(() => {
+      const item = store
+        .getState()
+        .items.find((candidate) => candidate.kind === "assistant");
+      expect(item?.text).toBe(`你好${bigText}`);
+    }, { timeout: 5000, interval: 50 });
+
+    // 收尾：取消挂起轮次（分片缓冲已排空，取消不影响已上屏内容）
+    store.getState().requestCancel();
+    await vi.waitFor(() => {
+      expect(store.getState().isAgentRunning).toBe(false);
+    });
+  });
+
   it("持续输出超过 90 秒，最终响应仍收尾且没有错误残留", async () => {
     const { agent } = await connect();
     vi.useFakeTimers();
