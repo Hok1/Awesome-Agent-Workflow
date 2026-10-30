@@ -16,6 +16,8 @@ import {
   type ReactNode,
 } from "react";
 import { CopyButton } from "../CopyButton.tsx";
+import { useHintTooltip } from "../../controls/HintTooltip.tsx";
+import { DiagramPreviewDialog } from "./DiagramPreviewDialog.tsx";
 import { MermaidBlock } from "./MermaidBlock.tsx";
 import {
   codeHashOf,
@@ -92,13 +94,14 @@ function CodeBlockIcon({ children }: { readonly children: ReactNode }) {
 /** 换行切换钮(无 lucide 依赖:内联 WrapText 语义图形)。 */
 function CodeBlockWrapButton() {
   const { toggleWrapLongLines, wrapLongLines } = useContext(CodeBlockContext);
+  const hint = useHintTooltip("切换自动换行");
   return (
     <button
       type="button"
       aria-label="切换换行"
       aria-pressed={wrapLongLines}
-      title="切换自动换行"
       onClick={toggleWrapLongLines}
+      {...hint}
       className={`shrink-0 rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink ${
         wrapLongLines ? "bg-raised text-ink" : ""
       }`}
@@ -130,12 +133,13 @@ function CodeBlockPreviewButton({
   readonly disabled: boolean;
   readonly onClick: () => void;
 }) {
+  const hint = useHintTooltip("放大预览(双击图表亦可)");
   return (
     <button
       type="button"
       aria-label="放大预览图表"
-      title="放大预览(双击图表亦可)"
       disabled={disabled}
+      {...hint}
       onClick={onClick}
       className="shrink-0 rounded p-1 text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
     >
@@ -155,78 +159,6 @@ function CodeBlockPreviewButton({
         </svg>
       </CodeBlockIcon>
     </button>
-  );
-}
-
-/** 全屏图表预览:点击 / Esc 关闭,0.5x–2x 缩放循环。 */
-function DiagramPreviewDialog({
-  open,
-  onClose,
-  svg,
-}: {
-  readonly open: boolean;
-  readonly onClose: () => void;
-  readonly svg: string | null;
-}) {
-  const [zoomIndex, setZoomIndex] = useState(1);
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open, onClose]);
-  if (!open || svg === null) {
-    return null;
-  }
-  const scales = [0.5, 1, 2];
-  return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-6"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="图表预览"
-    >
-      <div
-        className="max-h-full w-full overflow-auto rounded-xl bg-surface p-6"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div
-          className="mx-auto w-fit [&_svg]:h-auto"
-          style={{
-            transform: `scale(${scales[zoomIndex]})`,
-            transformOrigin: "center top",
-          }}
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      </div>
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          className="rounded-md border border-white/30 px-3 py-1 text-xs text-white hover:bg-white/10"
-          onClick={(event) => {
-            event.stopPropagation();
-            setZoomIndex((index) => (index + 1) % scales.length);
-          }}
-        >
-          缩放 {scales[zoomIndex]}x(点击循环)
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-white/30 px-3 py-1 text-xs text-white hover:bg-white/10"
-          onClick={onClose}
-        >
-          关闭(Esc)
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -255,6 +187,7 @@ export function CodeBlock({
   useLayoutEffect(() => {
     hashRef.current = codeHashOf(code);
   }, [code]);
+  const closePreview = useCallback(() => setPreviewOpen(false), []);
   const toggleWrapLongLines = useCallback(() => {
     setIsWrapped((current) => !current);
   }, []);
@@ -313,7 +246,7 @@ export function CodeBlock({
     <CodeBlockContext.Provider value={contextValue}>
       <div
         ref={containerRef}
-        className="group relative my-3 w-full overflow-hidden rounded-lg border border-line bg-surface"
+        className="group relative my-3 w-full overflow-hidden rounded-xl border border-line bg-surface"
         data-language={language}
         style={{
           containIntrinsicSize: "auto 200px",
@@ -321,9 +254,25 @@ export function CodeBlock({
         }}
         {...props}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-xs text-ink-faint">
+        <div className="flex items-center justify-between gap-3 px-3 py-2 text-ui-base text-ink">
           <span className="min-w-0 truncate font-mono lowercase">
-            {resolveCodeBlockDisplayFile(language)}
+            {canRenderMermaid ? (
+              <span className="flex items-center gap-2">
+                <svg
+                  aria-hidden="true"
+                  className="size-4 text-info"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <path d="M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6" />
+                </svg>
+                mermaid
+              </span>
+            ) : (
+              resolveCodeBlockDisplayFile(language)
+            )}
           </span>
           <div className="-my-1 -mr-1 flex items-center gap-1">
             {isMermaidLanguage(language) || canRenderMermaid ? (
@@ -358,12 +307,14 @@ export function CodeBlock({
             </pre>
           )}
         </div>
-        <DiagramPreviewDialog
-          key={String(previewOpen)}
-          open={previewOpen}
-          onClose={() => setPreviewOpen(false)}
-          svg={previewSvg}
-        />
+        {previewSvg !== null && (
+          <DiagramPreviewDialog
+            key={String(previewOpen)}
+            open={previewOpen}
+            onClose={closePreview}
+            svg={previewSvg}
+          />
+        )}
       </div>
     </CodeBlockContext.Provider>
   );

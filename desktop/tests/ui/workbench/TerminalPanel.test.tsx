@@ -1,51 +1,61 @@
 /**
- * 底部终端面板（TerminalPanel）测试：开合（isTerminalOpen 驱动 + 关闭钮）、
- * execute 工具输出的只读回放（mock sessionStore items，非 execute 滤除）、
- * 空态、失败样式、高度钳制边界（clamp [140px, 容器 50%]）。
+ * 底部终端面板（TerminalPanel）测试：页签壳（打开面板即创建并激活第一张
+ * shell 页签 / Plus 追加 / 关闭相邻激活与空组落 null）、可见性口径（常驻
+ * 挂载仅 hidden）、高度钳制边界（clamp [140px, 容器 50%]）。
  *
- * 能力口径（与实现一致）：本面板是 execute 输出回放，非 PTY 终端——
- * 无 shell 标签 / 多 tab 断言。
+ * 可见性口径（与实现一致）：面板**常驻挂载**，isTerminalOpen / overlay 只
+ * 驱动根节点 hidden——断言用 toBeVisible（jest-dom 判定含 [hidden] 属性）
+ * 而非 toBeInTheDocument。xterm 三件套以桩类替代（jsdom 无渲染面），
+ * PTY 在非 Tauri 环境按契约抛可读错误（落 connectionErrors，不阻断挂载）。
  */
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// xterm 三件套共用一个桩模块（vi.mock 提升期只能动态 import，见 helper 注释）
+vi.mock("@xterm/xterm", async () => await import("../../helpers/xtermMock.ts"));
+vi.mock(
+  "@xterm/addon-fit",
+  async () => await import("../../helpers/xtermMock.ts"),
+);
+vi.mock(
+  "@xterm/addon-clipboard",
+  async () => await import("../../helpers/xtermMock.ts"),
+);
 
 import {
   TERMINAL_MIN_HEIGHT_PX,
   TerminalPanel,
   clampTerminalHeight,
 } from "../../../src/ui/workbench/TerminalPanel.tsx";
-import {
-  useSessionStore,
-  type ToolCallItem,
-} from "../../../src/stores/sessionStore.ts";
 import { useWorkbenchUiStore } from "../../../src/stores/workbenchUiStore.ts";
+import { useTerminalTabStore } from "../../../src/terminal/terminalTabStore.ts";
+import { createTerminalTabs } from "../../../src/terminal/terminalTabState.ts";
 
 const PATH = "D:/dev/demo-project";
 
-function executeItem(
-  overrides: Partial<ToolCallItem> & { readonly id: string },
-): ToolCallItem {
-  return {
-    kind: "tool",
-    toolCallId: `call-${overrides.id}`,
-    title: "执行命令",
-    toolKind: "execute",
-    status: "completed",
-    rawInput: "npm test",
-    rawOutput: "all passed\n",
-    inputSummary: "",
-    resultSummary: "",
-    startedAt: null,
-    endedAt: null,
-    ...overrides,
-  };
-}
-
 beforeEach(() => {
   window.localStorage.clear();
-  useSessionStore.setState({ items: [] });
   useWorkbenchUiStore.setState({ isTerminalOpen: false });
+  const initial = createTerminalTabs();
+  useTerminalTabStore.setState({
+    tabs: initial.tabs,
+    activeTabId: initial.activeTabId,
+    connectionErrors: {},
+  });
+  // jsdom 无 ResizeObserver：以空桩满足 TerminalSessionView 的挂载路径
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("clampTerminalHeight（高度钳制）", () => {
@@ -57,81 +67,135 @@ describe("clampTerminalHeight（高度钳制）", () => {
   });
 });
 
-describe("TerminalPanel（execute 输出的只读回放）", () => {
-  it("渲染 execute 工具项的命令行与输出；非 execute 工具滤除；末尾 20 条", () => {
-    const items = [
-      executeItem({ id: "read-1", toolKind: "read", rawInput: "D:/x.ts" }),
-      ...Array.from({ length: 22 }, (_, index) =>
-        executeItem({
-          id: `run-${index}`,
-          rawInput: `cmd ${index}`,
-          rawOutput: `out ${index}`,
-        }),
-      ),
-    ];
-    useSessionStore.setState({ items });
-    render(<TerminalPanel project={PATH} />);
-
-    // 只保留末尾 20 条 execute（最早两条被裁掉）
-    expect(screen.queryByText("cmd 0")).not.toBeInTheDocument();
-    expect(screen.queryByText("cmd 1")).not.toBeInTheDocument();
-    expect(screen.getByText("cmd 21")).toBeInTheDocument();
-    // 命令行 + 输出体（TerminalOutput 复用：aria-label=终端输出，共 20 条）
-    expect(screen.getByText("cmd 2")).toBeInTheDocument();
-    const outputs = screen.getAllByLabelText("终端输出");
-    expect(outputs).toHaveLength(20);
-    expect(outputs[outputs.length - 1]).toHaveTextContent("out 21");
-    // 非 execute（read）不进回放
-    expect(screen.queryByText("D:/x.ts")).not.toBeInTheDocument();
+describe("TerminalPanel（打开面板即创建并激活 shell）", () => {
+  it("面板可见即创建第一张 shell 页签并激活（cwd 定格项目名；xterm 宿主挂载）", () => {
+    render(<TerminalPanel project={PATH} visible={true} />);
+    const shell = useTerminalTabStore.getState().tabs[0];
+    expect(shell?.index).toBe(1);
+    expect(shell?.shellLabel).toBe("demo-project");
+    expect(useTerminalTabStore.getState().activeTabId).toBe(shell?.id);
+    expect(screen.getByTestId(`terminal-tab-${shell?.id}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // xterm 宿主常驻挂载（keep-alive）
+    expect(
+      screen.getByTestId(`terminal-session-${shell?.id}`),
+    ).toBeInTheDocument();
   });
 
-  it("空态给一行指引；失败项的输出体呈危险色", () => {
-    useSessionStore.setState({ items: [] });
-    render(<TerminalPanel project={PATH} />);
-    expect(screen.getByText("当前会话暂无命令输出")).toBeInTheDocument();
+  it("面板不可见时不创建 shell；转为可见即创建（visible 只驱动 hidden 与创建时机）", () => {
+    const { rerender } = render(<TerminalPanel project={PATH} visible={false} />);
+    expect(useTerminalTabStore.getState().tabs).toHaveLength(0);
 
-    // store 变更经订阅重渲染：断言失败样式挂在输出体上
-    act(() => {
-      useSessionStore.setState({
-        items: [executeItem({ id: "bad-1", status: "failed" })],
-      });
-    });
-    const output = screen.getByLabelText("终端输出");
-    expect(output.className).toContain("text-danger-ink");
+    rerender(<TerminalPanel project={PATH} visible={true} />);
+    expect(useTerminalTabStore.getState().tabs).toHaveLength(1);
+    expect(useTerminalTabStore.getState().activeTabId).not.toBeNull();
   });
 
-  it("关闭钮与 store 同路：点击 toggleTerminal 翻转 isTerminalOpen（不持久化）", async () => {
+  it("页签组保活：重开面板不重复创建（已有 shell 原样激活）", () => {
+    const { rerender } = render(<TerminalPanel project={PATH} visible={true} />);
+    const first = useTerminalTabStore.getState().tabs[0];
+    rerender(<TerminalPanel project={PATH} visible={false} />);
+    rerender(<TerminalPanel project={PATH} visible={true} />);
+    const state = useTerminalTabStore.getState();
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0]?.id).toBe(first?.id);
+    expect(state.activeTabId).toBe(first?.id);
+  });
+
+  it("Plus 追加第二张 shell 页签（编号顺延，展示名追加 N）并激活", async () => {
+    render(<TerminalPanel project={PATH} visible={true} />);
+    await act(async () => {});
+    await userEvent.click(screen.getByTestId("terminal-new-shell-button"));
+    const shells = useTerminalTabStore.getState().tabs;
+    expect(shells).toHaveLength(2);
+    const second = shells[1];
+    expect(second?.index).toBe(2);
+    expect(second?.shellLabel).toBe("demo-project 2");
+    expect(useTerminalTabStore.getState().activeTabId).toBe(second?.id);
+    await act(async () => {});
+  });
+
+  it("关闭激活页签：相邻先左后右；关到空组激活落 null", async () => {
+    render(<TerminalPanel project={PATH} visible={true} />);
+    await act(async () => {});
+    await userEvent.click(screen.getByTestId("terminal-new-shell-button"));
+    await act(async () => {});
+    const shells = useTerminalTabStore.getState().tabs;
+    const [first, second] = shells;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+
+    // 激活第一张并关闭：无左邻 → 右邻（第二张）激活
+    await userEvent.click(screen.getByTestId(`terminal-tab-${first?.id}`));
+    await userEvent.click(
+      screen.getByTestId(`terminal-tab-close-${first?.id}`),
+    );
+    expect(useTerminalTabStore.getState().activeTabId).toBe(second?.id);
+
+    // 关最后一张：页签组空，激活落 null
+    await userEvent.click(screen.getByTestId(`terminal-tab-${second?.id}`));
+    await userEvent.click(
+      screen.getByTestId(`terminal-tab-close-${second?.id}`),
+    );
+    expect(useTerminalTabStore.getState().tabs).toHaveLength(0);
+    expect(useTerminalTabStore.getState().activeTabId).toBeNull();
+  });
+
+  it("关闭钮与 store 同路：点击 toggleTerminal 翻转 isTerminalOpen（面板常驻，仅 hidden）", async () => {
+    // visible 是 ContentArea 派生的（overlay === null && isTerminalOpen），
+    // 直渲染也要走同一派生，关闭钮翻转才落到 hidden——挂一层最小 harness
+    function PanelHarness() {
+      const isTerminalOpen = useWorkbenchUiStore(
+        (state) => state.isTerminalOpen,
+      );
+      const overlay = useWorkbenchUiStore((state) => state.overlay);
+      return (
+        <TerminalPanel
+          project={PATH}
+          visible={isTerminalOpen && overlay === null}
+        />
+      );
+    }
     useWorkbenchUiStore.setState({ isTerminalOpen: true });
-    render(<TerminalPanel project={PATH} />);
-    expect(screen.getByTestId("terminal-panel")).toBeInTheDocument();
+    render(<PanelHarness />);
+    await act(async () => {});
+    const panel = screen.getByTestId("terminal-panel");
+    expect(panel).toBeInTheDocument();
+    expect(panel).toBeVisible();
 
     await userEvent.click(screen.getByTestId("terminal-close-button"));
     expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(false);
+    // 常驻挂载：面板仍在文档中，只是 hidden
+    expect(panel).toBeInTheDocument();
+    expect(panel).not.toBeVisible();
   });
 
-  it("ContentArea 集成：isTerminalOpen 驱动挂载，全屏覆盖层激活时不渲染", async () => {
-    const { default: ContentArea } = await import(
-      "../../../src/ui/workbench/ContentArea.tsx"
-    );
+  it("ContentArea 集成：面板常驻挂载，isTerminalOpen / overlay 驱动 hidden", async () => {
+    const { default: ContentArea } =
+      await import("../../../src/ui/workbench/ContentArea.tsx");
     useWorkbenchUiStore.setState({
       treeView: "session",
       contextPath: PATH,
       overlay: null,
     });
     render(<ContentArea />);
-    expect(
-      screen.queryByTestId("terminal-panel"),
-    ).not.toBeInTheDocument();
+    const panel = screen.getByTestId("terminal-panel");
+    expect(panel).toBeInTheDocument();
+    expect(panel).not.toBeVisible();
 
     act(() => {
       useWorkbenchUiStore.getState().toggleTerminal();
     });
-    expect(screen.getByTestId("terminal-panel")).toBeInTheDocument();
+    expect(panel).toBeVisible();
 
-    // 全屏功能页激活：面板退场（面板与覆盖层互斥）
+    // 全屏功能页激活：面板退场 = 仅隐藏（互斥语义不变，实例不卸载）
     act(() => {
       useWorkbenchUiStore.getState().toggleOverlay("settings");
     });
-    expect(screen.queryByTestId("terminal-panel")).not.toBeInTheDocument();
+    expect(panel).not.toBeVisible();
+    expect(panel).toBeInTheDocument();
+    await act(async () => {});
   });
 });

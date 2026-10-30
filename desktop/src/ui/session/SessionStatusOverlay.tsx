@@ -15,6 +15,8 @@ import { useSessionStatusUiStore } from "../../stores/sessionStatusUiStore.ts";
 import { useProjectGit } from "../right-panel/useProjectGit.ts";
 import { ScopedErrorBoundary } from "../ErrorBoundary.tsx";
 import { StatusTaskProgress } from "./StatusTaskProgress.tsx";
+import { Minimize2Icon } from "../icons.tsx";
+import { useHintTooltip } from "../controls/HintTooltip.tsx";
 
 function Section({
   title,
@@ -56,6 +58,7 @@ export function SessionStatusOverlay({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  const hintCollapse = useHintTooltip("收起为胶囊");
   const mode = useSessionStatusUiStore((state) => state.mode);
   const setMode = useSessionStatusUiStore((state) => state.setMode);
   const [menu, setMenu] = useState(false);
@@ -213,14 +216,14 @@ export function SessionStatusOverlay({
                   <button
                     type="button"
                     aria-label="收起会话状态"
-                    title="收起为胶囊"
-                    className="rounded px-2 py-0.5 text-ink-faint hover:bg-raised"
+                    className="flex h-5 w-5 items-center justify-center rounded text-ink-faint hover:bg-raised hover:text-ink"
+                    {...hintCollapse}
                     onClick={() => {
                       setMenu(false);
                       setMode("mini");
                     }}
                   >
-                    ↙
+                    <Minimize2Icon className="h-3.5 w-3.5" />
                   </button>
                   {menu && (
                     <div

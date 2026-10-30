@@ -249,13 +249,7 @@ function ProjectPanel({
           </button>
         ))}
         <span className="flex-1" />
-        <button
-          aria-label="收起右侧工具栏"
-          onClick={() => useRightPanelStore.getState().collapse(project)}
-          className="rounded px-2 py-1 hover:bg-raised"
-        >
-          ✕
-        </button>
+
       </div>
       {panel.tabs.length > 0 && (
         <div

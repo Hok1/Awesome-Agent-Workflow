@@ -23,9 +23,7 @@ function ContentArea() {
   const treeView = useWorkbenchUiStore((state) => state.treeView);
   const overlay = useWorkbenchUiStore((state) => state.overlay);
   const contextPath = useWorkbenchUiStore((state) => state.contextPath);
-  const isTerminalOpen = useWorkbenchUiStore(
-    (state) => state.isTerminalOpen,
-  );
+  const isTerminalOpen = useWorkbenchUiStore((state) => state.isTerminalOpen);
   const view = treeView;
 
   let body: React.ReactNode;
@@ -51,11 +49,15 @@ function ContentArea() {
         </PanelWorkspace>
       </div>
       {/* 底部终端面板（ZCode conversation 列底部 ResizablePanel 形态的
-          desktop 简化版：固定高 + 拖拽手柄，不做分栏 ResizablePanelGroup）；
-          全屏功能页激活时不渲染 */}
-      {overlay === null && isTerminalOpen && (
-        <TerminalPanel project={contextPath} />
-      )}
+          desktop 简化版：固定高 + 拖拽手柄，不做分栏 ResizablePanelGroup）。
+          **常驻挂载**：visible 只驱动面板根节点 hidden（Tailwind preflight
+          [hidden]{display:none!important}）——关面板 / 全屏功能页激活都只是
+          display:none，xterm 实例、宿主 DOM 与 PTY 全部存活，重开即见原
+          scrollback；应用启动即挂载（shell 页签仍在面板首见时才懒创建） */}
+      <TerminalPanel
+        project={contextPath}
+        visible={overlay === null && isTerminalOpen}
+      />
       {overlay !== null && (
         <div className="min-h-0 flex-1 overflow-hidden">
           <SettingsPage />

@@ -1014,11 +1014,6 @@ export function SessionView() {
                       caption={
                         connectionPending ? "正在连接 agent…" : "会话已就绪"
                       }
-                      hint={
-                        connectionPending
-                          ? "正在准备你的会话，请稍候"
-                          : "即将进入工作区"
-                      }
                     />
                   </div>
                 ) : items.length === 0 &&

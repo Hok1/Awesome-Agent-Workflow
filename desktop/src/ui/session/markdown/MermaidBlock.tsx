@@ -5,7 +5,15 @@
  * 纯文本而不是错误面板。
  */
 import type { MermaidConfig } from "mermaid";
-import { type CSSProperties, useEffect, useId, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  useRef,
+  useLayoutEffect,
+} from "react";
 import { Spinner } from "../../controls.tsx";
 
 type MermaidRenderState =
@@ -213,12 +221,15 @@ export function MermaidBlock({
     key: string;
     state: MermaidRenderState;
   } | null>(null);
-  const renderState: MermaidRenderState =
-    trimmedCode === ""
-      ? { status: "plaintext" }
-      : result?.key === renderKey
-        ? result.state
-        : { status: "loading" };
+  const renderState: MermaidRenderState = useMemo(
+    () =>
+      trimmedCode === ""
+        ? { status: "plaintext" }
+        : result?.key === renderKey
+          ? result.state
+          : { status: "loading" },
+    [trimmedCode, result, renderKey],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -258,15 +269,27 @@ export function MermaidBlock({
     trimmedCode,
   ]);
 
+  const graphicRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const svg = graphicRef.current?.querySelector("svg");
+    if (!svg || renderState.status !== "ready") return;
+    const box = svg.viewBox?.baseVal;
+    if (box && box.width > 0 && box.height > 0) {
+      // 与 ZCode 一样保留自然尺寸，用容器滚动；不把宽图压缩到消息列宽。
+      svg.style.width = `${box.width}px`;
+      svg.style.height = `${box.height}px`;
+      svg.style.maxWidth = "none";
+    }
+  }, [renderState]);
   const codeStyle: CSSProperties = { fontKerning: "none" };
   return (
     <div
-      className="group/mermaid relative min-h-28 w-full bg-surface"
+      className="group/mermaid relative min-h-32 w-full bg-surface"
       data-mermaid-block=""
     >
       <div className="max-h-[420px] overflow-auto p-3 text-ink">
         {renderState.status === "loading" ? (
-          <div className="flex min-h-24 items-center justify-center gap-2 text-xs text-ink-faint">
+          <div className="flex min-h-28 items-center justify-center gap-2 text-xs text-ink-faint">
             <Spinner className="h-4 w-4 text-info" />
             <span>正在渲染图表…</span>
           </div>
@@ -274,15 +297,16 @@ export function MermaidBlock({
         {renderState.status === "plaintext" ? (
           <pre
             style={codeStyle}
-            className="m-0 min-h-24 min-w-max bg-transparent font-mono text-sm leading-relaxed text-ink"
+            className="m-0 min-h-28 min-w-max bg-transparent font-mono text-sm leading-relaxed text-ink"
           >
             {code}
           </pre>
         ) : null}
         {renderState.status === "ready" ? (
           <div
+            ref={graphicRef}
             aria-label="mermaid 图表"
-            className="flex min-h-24 min-w-max items-center justify-center [&_svg]:h-auto [&_svg]:max-w-none"
+            className="flex min-h-28 min-w-max items-center justify-center [&_svg]:h-auto [&_svg]:max-w-none"
             dangerouslySetInnerHTML={{ __html: renderState.svg }}
             onDoubleClick={onOpenPreview}
             role="img"

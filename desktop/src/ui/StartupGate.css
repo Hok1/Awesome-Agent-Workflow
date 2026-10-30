@@ -18,6 +18,10 @@
   padding-inline: 12px;
 }
 .startup-brand {
+  /* CJK-capable families first so Chinese and Latin use the same typeface. */
+  font-family:
+    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    var(--font-sans);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -64,11 +68,12 @@
   font-weight: 350;
 }
 .startup-caption {
-  margin: 16px 0 0;
-  color: var(--color-ink-soft);
+  margin: 20px 0 0;
+  color: var(--color-ink-mute);
   font-size: 12px;
+  font-weight: 400;
   line-height: 1.6;
-  letter-spacing: 0.12em;
+  letter-spacing: normal;
   animation: startup-text-enter 600ms ease-out both;
 }
 .startup-brand--compact {
@@ -92,16 +97,15 @@
 }
 .startup-brand--compact .startup-caption {
   margin-top: 12px;
-  letter-spacing: 0.04em;
 }
 .startup-brand--immersive {
   padding: 24px 16px;
   transform: none;
 }
 .startup-brand--immersive .startup-mark {
-  width: clamp(160px, 25vh, 240px);
-  height: clamp(160px, 25vh, 240px);
-  margin-bottom: 32px;
+  width: clamp(112px, 16vh, 152px);
+  height: clamp(112px, 16vh, 152px);
+  margin-bottom: 24px;
 }
 .startup-brand--immersive .startup-logo {
   width: 88%;
@@ -109,20 +113,20 @@
   filter: drop-shadow(0 10px 30px rgb(124 58 237 / 22%));
 }
 .startup-brand--immersive .startup-halo {
-  inset: -56px;
+  inset: -32px;
 }
 .startup-brand--immersive .startup-name {
   font-size: clamp(24px, 3.5vw, 42px);
 }
-.startup-brand--immersive .startup-caption {
-  margin-top: 20px;
-  font-size: 14px;
-}
 .startup-hint {
-  margin: 8px 0 0;
+  margin: 16px 0 0;
   color: var(--color-ink-soft);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.8;
+  letter-spacing: normal;
+  max-width: 32em;
+  text-wrap: pretty;
 }
 .startup-workspace-enter {
   animation: startup-workspace-enter 180ms ease-out both;

@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { createLogger } from "../../core/logger.ts";
+import { useHintTooltip } from "../controls/HintTooltip.tsx";
 import { isTauriEnv } from "../../core/host.ts";
 import {
   MinimizeIcon,
@@ -29,6 +30,9 @@ const logger = createLogger("ui");
 
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
+  const hintMinimize = useHintTooltip("最小化窗口");
+  const hintMaximize = useHintTooltip("切换窗口大小");
+  const hintClose = useHintTooltip("关闭窗口（agent 运行中会先确认）");
 
   // 最大化态跟踪：订阅 resize 事件回读 + 挂载读初态（订阅/回读仅 Tauri
   // 环境可用；测试与浏览器提前返回）
@@ -107,11 +111,11 @@ export function WindowControls() {
         type="button"
         data-testid="window-control-minimize"
         aria-label="最小化窗口"
-        title="最小化窗口"
         onClick={() => {
           run("minimize", current.minimize());
         }}
         className={buttonBase}
+        {...hintMinimize}
       >
         <MinimizeIcon className="h-4 w-4" strokeWidth={2} />
       </button>
@@ -119,12 +123,12 @@ export function WindowControls() {
         type="button"
         data-testid="window-control-maximize"
         aria-label="切换窗口大小"
-        title="切换窗口大小"
         data-maximized={maximized}
         onClick={() => {
           run("toggleMaximize", current.toggleMaximize());
         }}
         className={buttonBase}
+        {...hintMaximize}
       >
         {maximized ? (
           <WindowRestoreIcon className="h-4 w-4" />
@@ -136,11 +140,11 @@ export function WindowControls() {
         type="button"
         data-testid="window-control-close"
         aria-label="关闭窗口"
-        title="关闭窗口（agent 运行中会先确认）"
         onClick={() => {
           run("close", current.close());
         }}
         className="press flex size-7 shrink-0 items-center justify-center rounded-lg text-ink transition-colors hover:bg-destructive hover:text-danger-contrast"
+        {...hintClose}
       >
         <XIcon className="h-4 w-4" strokeWidth={2} />
       </button>

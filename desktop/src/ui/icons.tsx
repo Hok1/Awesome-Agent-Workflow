@@ -169,6 +169,18 @@ export function CornerDownRightIcon(props: IconProps) {
 }
 
 /** 最小化（底横线；窗口控制同款几何）。 */
+/** 最小化二段（收起为胶囊：ZCode ConversationStatusPanel 同款 Minimize2）。 */
+export function Minimize2Icon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" x2="14" y1="3" y2="10" />
+      <line x1="3" x2="10" y1="21" y2="14" />
+    </Svg>
+  );
+}
+
 export function MinimizeIcon(props: IconProps) {
   return (
     <Svg {...props}>
@@ -564,6 +576,17 @@ export function CopyIcon(props: IconProps) {
     <Svg strokeWidth={2} {...props}>
       <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </Svg>
+  );
+}
+
+/** 粘贴（自绘：左向箭头落入剪贴板；lucide clipboard-paste 不在依赖内）。 */
+export function ClipboardPasteIcon(props: IconProps) {
+  return (
+    <Svg strokeWidth={2} {...props}>
+      <rect x="9" y="3" width="12" height="18" rx="2" />
+      <path d="M2 12h9" />
+      <path d="m7 8 4 4-4 4" />
     </Svg>
   );
 }

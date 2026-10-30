@@ -93,6 +93,7 @@ import {
   ArchiveIcon,
 } from "../icons.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
+import { useHintTooltip } from "../controls/HintTooltip.tsx";
 import type { SessionSummary } from "../../stores/sessionStore.ts";
 import AddProjectPanel from "./AddProjectPanel.tsx";
 import { NewTaskButtonGroup } from "./NewTaskButtonGroup.tsx";
@@ -306,6 +307,9 @@ function ProjectNodeRow({
   );
   const clearContextIf = useWorkbenchUiStore((state) => state.clearContextIf);
   const name = basenameOf(path);
+  const hintNewSession = useHintTooltip("新建会话");
+  const hintWorkflow = useHintTooltip("打开工作流");
+  const hintMoreActions = useHintTooltip("更多操作");
 
   // 菜单条目与原行尾按钮逐字同源（togglePinned/removeFromRecent/
   // clearContextIf），数据流不动
@@ -410,7 +414,7 @@ function ProjectNodeRow({
         <button
           type="button"
           aria-label="更多操作"
-          title="更多操作"
+          {...hintMoreActions}
           onClick={(event) => {
             event.stopPropagation();
             menu.openAtRect(
@@ -426,7 +430,7 @@ function ProjectNodeRow({
         <button
           type="button"
           aria-label="新建会话"
-          title="新建会话"
+          {...hintNewSession}
           onClick={(event) => {
             event.stopPropagation();
             void startNewSession(path);
@@ -438,7 +442,7 @@ function ProjectNodeRow({
         <button
           type="button"
           aria-label="工作流"
-          title="打开工作流"
+          {...hintWorkflow}
           onClick={(event) => {
             event.stopPropagation();
             selectWorkspace(path);
@@ -486,6 +490,9 @@ function SessionLeadingBadge({
   const activity = useSessionActivityStore(
     (state) => state.entries[sessionActivityKey(path, id)],
   );
+  const hintFailed = useHintTooltip("失败");
+  const hintUnread = useHintTooltip("已完成，未查看");
+  const hintRunning = useHintTooltip("运行中");
   if (!activity || activity.status === "idle") {
     return null;
   }
@@ -494,7 +501,7 @@ function SessionLeadingBadge({
       <span
         role="img"
         aria-label="失败"
-        title="失败"
+        {...hintFailed}
         className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
       />
     );
@@ -504,7 +511,7 @@ function SessionLeadingBadge({
       <span
         role="img"
         aria-label="已完成，未查看"
-        title="已完成，未查看"
+        {...hintUnread}
         className="size-[7px] shrink-0 rounded-full bg-icon-blue"
       />
     ) : null;
@@ -514,7 +521,7 @@ function SessionLeadingBadge({
       <span
         role="img"
         aria-label="运行中"
-        title="运行中"
+        {...hintRunning}
         className="flex size-4 items-center justify-center"
       >
         <LoaderIcon className="h-4 w-4 shrink-0 animate-spin text-ink-subtle" />
@@ -708,13 +715,14 @@ function SessionArchiveAction({
     : activityStatus === "waiting"
       ? "归档任务（会话有待处理审批，暂不可归档）"
       : "归档任务（会话回合运行中，暂不可归档）";
+  const hintProps = useHintTooltip(hint);
   return (
     <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 [@media(hover:none)]:opacity-100">
       <button
         type="button"
         aria-label={hint}
-        title={hint}
-        disabled={liveRuntime}
+        {...hintProps}
+                disabled={liveRuntime}
         onClick={(event) => {
           event.stopPropagation();
           useSessionStore.getState().archiveSession(path, sessionId);
@@ -901,13 +909,14 @@ function SectionAddButton({
 }) {
   const isAddPanelOpen = useWorkbenchUiStore((state) => state.isAddPanelOpen);
   const toggleAddPanel = useWorkbenchUiStore((state) => state.toggleAddPanel);
+  const hint = useHintTooltip("新建会话或添加项目");
   return (
     <button
       type="button"
       aria-label="新建会话或添加项目"
       aria-haspopup="true"
       aria-expanded={isAddPanelOpen}
-      title="新建会话或添加项目"
+      {...hint}
       onClick={(event) => {
         triggerRef.current = event.currentTarget;
         toggleAddPanel();
@@ -1316,6 +1325,7 @@ function ListHeader({
   readonly viewMenuOpen: boolean;
   readonly onToggleViewMenu: (anchor: DOMRect) => void;
 }) {
+  const hint = useHintTooltip("切换视角");
   return (
     <div
       data-testid="sidebar-list-header"
@@ -1329,7 +1339,7 @@ function ListHeader({
         aria-label="切换视角"
         aria-haspopup="menu"
         aria-expanded={viewMenuOpen}
-        title="切换视角"
+        {...hint}
         onClick={(event) => {
           onToggleViewMenu(event.currentTarget.getBoundingClientRect());
         }}

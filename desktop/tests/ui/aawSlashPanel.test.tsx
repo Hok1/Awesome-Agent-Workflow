@@ -70,9 +70,9 @@ describe("斜杠命令打开项目 AAW 向导", () => {
     const input = screen.getByLabelText("消息输入框");
     await userEvent.type(input, "/sr{Enter}");
     await userEvent.type(screen.getByLabelText("SR 编号"), "SR-101");
-    await userEvent.click(
-      screen.getByRole("button", { name: "收起右侧工具栏" }),
-    );
+    act(() => {
+      useRightPanelStore.getState().collapse("D:/slash-project-a");
+    });
     // 关闭后常见的同项目视图/侧栏状态更新不应重放旧的斜杠请求。
     act(() => {
       useWorkbenchUiStore.getState().openSessionView("D:/slash-project-a");

@@ -55,6 +55,7 @@ import {
 } from "../../stores/workbenchUiStore.ts";
 import { openSettingsOverlayTab } from "../SettingsPage.tsx";
 import { btnSecondary } from "../controls.tsx";
+import { useHintTooltip } from "../controls/HintTooltip.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
 import {
   ContextMenu,
@@ -161,6 +162,7 @@ function CollapsedBarControls({
 }: {
   readonly contextPath: string | null;
 }) {
+  const hintNewSession = useHintTooltip("新建会话");
   const newSession = (): void => {
     if (contextPath !== null) {
       // 有项目上下文：直接在该项目开一条新会话（乐观切会话视图，
@@ -185,8 +187,8 @@ function CollapsedBarControls({
       <button
         type="button"
         aria-label="新建会话"
-        title="新建会话"
         onClick={newSession}
+        {...hintNewSession}
         className={BAR_BUTTON_CLASS}
       >
         <MessageCirclePlusIcon className="h-4 w-4" />
@@ -204,13 +206,14 @@ function BackButton({
   /** 悬停提示：说明这一下回到哪（可见文案保持统一的「返回」）。 */
   readonly title: string;
 }) {
+  const hint = useHintTooltip(title);
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label="返回"
-      title={title}
       className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-ink-mute transition-colors hover:bg-raised hover:text-ink"
+      {...hint}
     >
       <svg
         viewBox="0 0 24 24"
@@ -267,6 +270,7 @@ function SessionBar({
   const displayedSessionId = openingSessionId ?? activeSessionId;
   const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
   const renameSession = useSessionStore((state) => state.renameSession);
+  const hintMore = useHintTooltip("更多");
   // 手动改名（双击标题 / 更多菜单「重命名」）：Enter 提交 / Esc 取消 /
   // 清空提交=恢复自动命名
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -379,7 +383,7 @@ function SessionBar({
         aria-label="更多"
         aria-haspopup="menu"
         aria-expanded={menu !== null && menu.id === "more" && !menu.closing}
-        title="更多"
+        {...hintMore}
         onClick={(event) => {
           const anchor = event.currentTarget.getBoundingClientRect();
           if (menu !== null && menu.id === "more" && !menu.closing) {
@@ -488,6 +492,7 @@ function OverlayBar({
  *  的文档 / 社区 / 反馈 / 导出日志 / 检查更新无对应能力，只含「打开诊断」
  *  （toggleOverlay 再点同页取消语义不变）。 */
 function HelpMenuButton() {
+  const hint = useHintTooltip("帮助");
   const { menu, open, dismiss } = useBarMenuController();
   // closing 态（退场动画中）视作已关：aria-expanded 翻 false，触发器
   // 再点即重开（open 已清挂起的退场计时器）
@@ -500,7 +505,7 @@ function HelpMenuButton() {
         aria-label="帮助"
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        title="帮助"
+        {...hint}
         onClick={(event) => {
           if (isOpen) {
             dismiss();
@@ -548,6 +553,7 @@ function HelpMenuButton() {
 /** 终端开关（ZCode WorkspaceTerminalToggleButton :37-63 同构）：开合底部
  *  终端面板，打开时 bg-selected 呈按下态。 */
 function TerminalToggle() {
+  const hint = useHintTooltip("终端");
   const isTerminalOpen = useWorkbenchUiStore((state) => state.isTerminalOpen);
   const toggleTerminal = useWorkbenchUiStore((state) => state.toggleTerminal);
   return (
@@ -556,8 +562,8 @@ function TerminalToggle() {
       data-testid="terminal-toggle"
       aria-label="终端"
       aria-pressed={isTerminalOpen}
-      title="终端"
       onClick={toggleTerminal}
+      {...hint}
       className={`${BAR_BUTTON_CLASS}${isTerminalOpen ? " bg-selected" : ""}`}
     >
       <SquareTerminalIcon className="h-4 w-4" />
@@ -569,12 +575,10 @@ function TerminalToggle() {
  *  右栏打开时**整钮不渲染**（ZCode ActionSection :75-82 同款——右栏自带
  *  ✕ 收起钮），挂载条件与原 PanelButtons 相同（overlay===null 且已选项目）。 */
 function SidePaneToggle({ project }: { readonly project: string }) {
+  const hint = useHintTooltip("展开侧工具栏 / 收起侧工具栏");
   const panel = useRightPanelStore(
     (state) => state.projects[pathKey(project)] ?? emptyPanel,
   );
-  if (panel.open) {
-    return null;
-  }
   const Icon = panel.open ? PanelRightCloseIcon : PanelRightOpenIcon;
   const toggle = (): void => {
     const store = useRightPanelStore.getState();
@@ -591,8 +595,9 @@ function SidePaneToggle({ project }: { readonly project: string }) {
       type="button"
       data-testid="side-pane-toggle"
       aria-label="展开/收起侧工具栏"
-      title="展开/收起侧工具栏"
+      aria-pressed={panel.open}
       onClick={toggle}
+      {...hint}
       className={BAR_BUTTON_CLASS}
     >
       <Icon className="h-4 w-4" />
@@ -606,6 +611,7 @@ function SidePaneToggle({ project }: { readonly project: string }) {
  * 由 store 管理）。连接态与总览态共用，向导 / 全屏页不显示。
  */
 function ConnectErrorBanner({ path }: { readonly path: string }) {
+  const hint = useHintTooltip("关闭错误提示");
   const error = useWorkspaceStore((state) => state.lastConnectError);
   const dismissConnectError = useWorkspaceStore(
     (state) => state.dismissConnectError,
@@ -646,7 +652,7 @@ function ConnectErrorBanner({ path }: { readonly path: string }) {
       <button
         type="button"
         aria-label="关闭错误提示"
-        title="关闭错误提示"
+        {...hint}
         onClick={() => {
           setDismissed({ path: error.path, message: error.message });
           dismissConnectError(path);
