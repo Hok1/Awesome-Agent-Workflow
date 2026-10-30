@@ -52,13 +52,13 @@ export function GitDiffView({
           {change.status} · {change.path}
         </span>
         <button
-          className="rounded border border-line px-2 py-1"
+          className="rounded border border-line px-2 py-1 transition-colors hover:bg-hover"
           onClick={() => onFile(`${repoRoot}/${change.path}`)}
         >
           查看当前文件
         </button>
         <button
-          className="rounded border border-line px-2 py-1"
+          className="rounded border border-line px-2 py-1 transition-colors hover:bg-hover"
           onClick={() => setRevision((old) => old + 1)}
         >
           刷新
@@ -78,22 +78,40 @@ export function GitDiffView({
       {!result.data && !result.error && (
         <p className="p-3 text-ui-base">正在读取差异…</p>
       )}
-      <div className="min-h-0 flex-1 overflow-auto" aria-label="Git 统一差异">
-        <div className="w-max min-w-full font-mono text-xs leading-6">
-          {rows.slice(0, visible).map((row, index) => (
-            <div
-              key={index}
-              className={`flex ${row.kind === "add" ? "bg-ok-bg/50" : row.kind === "del" ? "bg-danger-bg/50" : row.kind === "meta" ? "bg-info-bg/30 text-ink-faint" : ""}`}
-            >
-              <span className="w-12 shrink-0 select-none pr-2 text-right text-ink-faint">
-                {row.old}
-              </span>
-              <span className="w-12 shrink-0 select-none pr-2 text-right text-ink-faint">
-                {row.next}
-              </span>
-              <code className="whitespace-pre pr-3">{row.text || " "}</code>
-            </div>
-          ))}
+      {/* bg-base：同 GitReviewDiff——ZCode lightweight-diff-preview 根容器
+          bg-background，行底 14% mix 合成在内容底而非右栏 surface 上 */}
+      <div
+        className="min-h-0 flex-1 overflow-auto bg-base"
+        aria-label="Git 统一差异"
+      >
+        <div className="w-max min-w-full font-mono text-xs leading-relaxed text-ink">
+          {rows.slice(0, visible).map((row, index) => {
+            // 行号随增删染色（ZCode lightweight-diff-preview lineNumberClassName）
+            const numberClass =
+              row.kind === "add"
+                ? "text-diff-added"
+                : row.kind === "del"
+                  ? "text-diff-removed"
+                  : "text-ink-subtlest";
+            return (
+              <div
+                key={index}
+                className={`flex ${row.kind === "add" ? "bg-diff-added-row shadow-[inset_3px_0_0_var(--color-diff-added)]" : row.kind === "del" ? "bg-diff-removed-row shadow-[inset_3px_0_0_var(--color-diff-removed)]" : row.kind === "meta" ? "text-ink-mute" : ""}`}
+              >
+                <span
+                  className={`w-12 shrink-0 select-none px-2 text-right tabular-nums ${numberClass}`}
+                >
+                  {row.old}
+                </span>
+                <span
+                  className={`w-12 shrink-0 select-none px-2 text-right tabular-nums ${numberClass}`}
+                >
+                  {row.next}
+                </span>
+                <code className="px-3 whitespace-pre">{row.text || " "}</code>
+              </div>
+            );
+          })}
           {rows.length > visible && (
             <button
               className="p-3 text-accent-ink"

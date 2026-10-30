@@ -12,13 +12,22 @@
  * 滚动容器），在 jsdom 里没有真实的样式计算与滚动行为可供断言，读源码
  * 是唯一可靠的收口方式。
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import { describe, expect, it } from "vitest";
 
-// vitest 的工作目录即 desktop/（import.meta.url 在 jsdom 下不是 file: 协议）
-const css = readFileSync(join(process.cwd(), "src", "index.css"), "utf8");
+// vitest 的工作目录可能是 desktop/ 或仓库根（import.meta.url 在 jsdom 下
+// 不是 file: 协议，无法按模块定位）——双候选探测，宿主在哪个目录都命中。
+const cssCandidates = [
+  join(process.cwd(), "src", "index.css"),
+  join(process.cwd(), "desktop", "src", "index.css"),
+];
+const cssPath = cssCandidates.find((candidate) => existsSync(candidate));
+const css = readFileSync(
+  cssPath ?? cssCandidates[0]!,
+  "utf8",
+);
 
 /** 取出声明体包含 `needle` 的那个规则块（按花括号从选择器起配对）。 */
 function blockContaining(needle: string): string | null {

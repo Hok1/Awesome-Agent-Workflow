@@ -14,7 +14,12 @@ import {
 } from "../../core/panelService.ts";
 import { changeKey, reviewChanges } from "../../core/gitReview.ts";
 import { createGitDiffCache } from "../../core/gitDiffCache.ts";
-import { ChevronRightIcon, FolderGlyph, RefreshIcon } from "../../ui/icons.tsx";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  FolderGlyph,
+  RefreshIcon,
+} from "../../ui/icons.tsx";
 import { ColumnResizer } from "../workbench/ColumnResizer.tsx";
 import { useProjectGit } from "./useProjectGit.ts";
 import { GitReviewDiff } from "./GitReviewDiff.tsx";
@@ -197,7 +202,7 @@ function GitReview({
           aria-expanded={isOpen}
           aria-label={`${isOpen ? "收起" : "展开"} ${change.path}`}
           title={`${change.oldPath ? `${change.oldPath} → ` : ""}${change.path} · ${change.status}`}
-          className={`sticky top-0 z-10 flex h-9 w-full items-center gap-2 border-b border-line bg-surface px-3 text-left hover:bg-raised ${isOpen ? "font-medium" : ""}`}
+          className={`sticky top-0 z-10 flex h-8 w-full items-center gap-3 bg-base px-3 text-left transition-colors hover:bg-surface-hover ${isOpen ? "bg-surface-hover" : ""}`}
           onClick={() => {
             setExpanded(isOpen ? null : key);
             setCollapsed((old) => {
@@ -219,18 +224,22 @@ function GitReview({
               {name}
               {change.source === "conflict" ? " · 冲突" : ""}
             </span>
-            <span className="ml-2 text-ink-faint">{directory}</span>
+            <span className="ml-2 text-ink-subtlest">{directory}</span>
           </span>
-          <span className="shrink-0 whitespace-nowrap">
-            <span className="text-ok-ink">+{change.added ?? 0}</span>
-            <span className="ml-2 text-danger-ink">−{change.removed ?? 0}</span>
+          <span className="shrink-0 whitespace-nowrap tabular-nums">
+            <span className="text-diff-added">+{change.added ?? 0}</span>
+            <span className="ml-2 text-diff-removed">
+              -{change.removed ?? 0}
+            </span>
           </span>
-          <span aria-hidden="true">{isOpen ? "▾" : "▸"}</span>
+          <ChevronDownIcon
+            className={`h-4 w-4 shrink-0 text-ink-soft transition-transform ${isOpen ? "rotate-180" : ""}`}
+          />
         </button>
         {isOpen && (
           <div className="border-b border-line">
             {(!entry || (entry.loading && !entry.model)) && (
-              <p className="p-3 text-ink-faint">正在读取差异…</p>
+              <p className="p-3 text-ink-soft">正在读取差异…</p>
             )}
             {entry?.error && (
               <p role="alert" className="p-3 text-danger-ink">
@@ -340,17 +349,19 @@ function GitReview({
                   <span>
                     ({new Set(all.map((change) => change.path)).size})
                   </span>
-                  <span className="ml-auto text-ok-ink">
+                  <span className="ml-auto text-diff-added">
                     +{all.reduce((n, c) => n + (c.added ?? 0), 0)}
                   </span>
-                  <span className="text-danger-ink">
+                  <span className="text-diff-removed">
                     −{all.reduce((n, c) => n + (c.removed ?? 0), 0)}
                   </span>
                 </button>
                 {isOpen && (
                   <GitFileTree
                     key={`${group}-${group === revealedGroup ? revealWave : 0}`}
-                    initiallyExpanded={group === revealedGroup && revealWave > 0}
+                    initiallyExpanded={
+                      group === revealedGroup && revealWave > 0
+                    }
                     changes={all}
                     selectedPath={
                       changes.find(
@@ -383,7 +394,6 @@ function GitReview({
     </div>
   );
 }
-
 
 function toggleFolder(
   expanded: ReadonlySet<string>,
@@ -438,7 +448,9 @@ function GitFileTree({
               type="button"
               aria-expanded={isOpen}
               className="flex w-full items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-raised"
-              onClick={() => toggleFolder(expanded, setExpanded, `${prefix}${name}`)}
+              onClick={() =>
+                toggleFolder(expanded, setExpanded, `${prefix}${name}`)
+              }
             >
               <span
                 aria-hidden={true}
@@ -473,19 +485,19 @@ function GitFileTree({
           title={path}
           aria-label={`定位 ${path}`}
           aria-current={selectedPath === path ? "true" : undefined}
-          className={`flex w-full items-center gap-2 rounded px-1 py-1 text-left hover:bg-raised ${selectedPath === path ? "bg-info-bg" : ""} ${red || changes.some((c) => c.path === path && c.source === "conflict") ? "text-danger-ink" : ""}`}
+          className={`flex w-full items-center gap-2 rounded px-1 py-1 text-left hover:bg-raised ${selectedPath === path ? "bg-selected" : ""} ${red || changes.some((c) => c.path === path && c.source === "conflict") ? "text-danger-ink" : ""}`}
           onClick={() => onSelect(path)}
         >
           <span className="min-w-0 flex-1 truncate">
             {path.slice(prefix.length)}
           </span>
-          <span className="shrink-0 text-ok-ink">
+          <span className="shrink-0 text-diff-added">
             +
             {changes
               .filter((c) => c.path === path)
               .reduce((n, c) => n + (c.added ?? 0), 0)}
           </span>
-          <span className="shrink-0 text-danger-ink">
+          <span className="shrink-0 text-diff-removed">
             −
             {changes
               .filter((c) => c.path === path)

@@ -239,10 +239,59 @@ html.theme-warm {
   --color-ink-faint: #525252; /* 更弱（neutral-600） */
   --color-ink-ghost: #404040; /* 最弱（neutral-700） */
 
-  /* diffstat 专用饱和绿红（ZCode --color-diff-added/removed：暗色取
-     tailwind green/red-500 原值） */
-  --color-diff-added: #22c55e;
-  --color-diff-removed: #ef4444;
+  /* diff 饱和绿红（ZCode --color-diff-added/removed zai-dark 原值
+     styles.css:793/:795）：diffstat 与 diff 行底/行号/±计数同源 */
+  --color-diff-added: #46bf72;
+  --color-diff-removed: #ff5c5c;
+
+  /* 查找高亮（ZCode --color-find-highlight[-active] zai-dark 原值
+     styles.css:693-694；文字用主前景，同 ZCode ::highlight 规则） */
+  --color-find-highlight: #542500;
+  --color-find-highlight-active: #ff8a30;
+
+  /* tooltip（zai-dark styles.css:806-809） */
+  --color-tooltip: #2b2b2b;
+  --color-tooltip-ink: #f8f8f8;
+  --color-tooltip-tag: #363636;
+  --color-tooltip-tag-ink: #adadad;
+
+  /* 行悬停 5% 洗色（zai-dark --color-hover styles.css:697） */
+  --color-hover: rgb(255 255 255 / 0.05);
+
+  /* foreground-subtlest（zai-dark = neutral-300@30%，styles.css:776；
+     neutral-300=#d4d4d4） */
+  --color-ink-subtlest: rgb(212 212 212 / 0.3);
+  --color-surface-hover: color-mix(in oklab, var(--color-neutral-950) 5%, transparent);
+  --color-surface-hover: rgba(255, 255, 255, 0.1);
+
+  /* 发送钮主色 brand（ZCode bg-brand zai-dark #ffffff 白底黑箭头）与
+     text-foreground-inverse（zai-dark #000000，styles.css:778；亮底配黑字，
+     同 success/diff-added-foreground 族 :780/:794） */
+  --color-brand: #ffffff;
+  --color-foreground-inverse: #000000;
+
+  /* diff 行配色（ZCode lightweight-diff-preview.tsx:73-111 公式原值；
+     var 引用惰性解析，公式两主题相同，仍按规则双作用域各写一份） */
+  --color-diff-added-row: color-mix(
+    in srgb,
+    var(--color-diff-added) 14%,
+    transparent
+  );
+  --color-diff-added-gutter: color-mix(
+    in srgb,
+    var(--color-diff-added) 18%,
+    var(--color-base)
+  );
+  --color-diff-removed-row: color-mix(
+    in srgb,
+    var(--color-diff-removed) 14%,
+    transparent
+  );
+  --color-diff-removed-gutter: color-mix(
+    in srgb,
+    var(--color-diff-removed) 18%,
+    var(--color-base)
+  );
 
   /* 流光扫过带两档透明度（ZCode --animated-gradient-text-* 暗色实值：
      strong 纯白、soft 20%） */
@@ -305,9 +354,55 @@ html.theme-warm {
   --color-ink-faint: #a3a3a3;
   --color-ink-ghost: #d4d4d4;
 
-  /* diffstat 专用饱和绿红（ZCode 浅色取 tailwind green/red-600 原值） */
-  --color-diff-added: #16a34a;
-  --color-diff-removed: #dc2626;
+  /* diff 饱和绿红（ZCode zai-light 原值 styles.css:628/:630）：diffstat
+     与 diff 行底/行号/±计数同源 */
+  --color-diff-added: #1e8a3e;
+  --color-diff-removed: #e03131;
+
+  /* 查找高亮（zai-light styles.css:529-530） */
+  --color-find-highlight: #fff4eb;
+  --color-find-highlight-active: #ffb26b;
+
+  /* tooltip（zai-light styles.css:641-644） */
+  --color-tooltip: #f0f0f0;
+  --color-tooltip-ink: #0d0d0d;
+  --color-tooltip-tag: #e6e6e6;
+  --color-tooltip-tag-ink: #5c5c5c;
+
+  /* 行悬停 5% 洗色（zai-light --color-hover styles.css:533） */
+  --color-hover: rgb(13 13 13 / 0.05);
+
+  /* foreground-subtlest（zai-light = neutral-800@40%，styles.css:612；
+     neutral-800=#262626） */
+  --color-ink-subtlest: rgb(38 38 38 / 0.4);
+
+  /* 发送钮主色 brand（ZCode bg-brand zai-light #000000 黑底白字）与
+     text-foreground-inverse（zai-light #ffffff，styles.css:614） */
+  --color-brand: #000000;
+  --color-foreground-inverse: #ffffff;
+
+  /* diff 行配色（同暗夜公式：lightweight-diff-preview.tsx:73-111；
+     双作用域各写一份，与既有 token 覆盖机制一致） */
+  --color-diff-added-row: color-mix(
+    in srgb,
+    var(--color-diff-added) 14%,
+    transparent
+  );
+  --color-diff-added-gutter: color-mix(
+    in srgb,
+    var(--color-diff-added) 18%,
+    var(--color-base)
+  );
+  --color-diff-removed-row: color-mix(
+    in srgb,
+    var(--color-diff-removed) 14%,
+    transparent
+  );
+  --color-diff-removed-gutter: color-mix(
+    in srgb,
+    var(--color-diff-removed) 18%,
+    var(--color-base)
+  );
 
   /* 流光扫过带两档透明度（ZCode 浅色实值：strong 近黑、soft 22%） */
   --turn-status-shimmer-strong: rgb(10 10 10 / 1);
@@ -566,17 +661,51 @@ html.theme-warm body::before {
   filter: drop-shadow(0 0 6px rgb(245 158 11 / 0.45));
 }
 
-/** 输入卡聚焦响应（ZCode 式扁平：只变描边色，不发蓝光、不加投影）。 */
+/** 输入卡悬停/聚焦（ZCode 壳 ChatPromptEditor.tsx:410 hover:border-input-border-hover
+    focus-within:!border-input-border-focused；zai 主题两者皆 = border-hover 15%，
+    styles.css:550-551/:714-715；扁平：只变描边，不发蓝光、不加投影）。
+    line-strong #3d3d3d/#d3d3d3 即白/黑 15% 等效实色，单条规则双主题通用。 */
 .composer-card {
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease;
 }
-.composer-card:focus-within {
-  border-color: rgb(255 255 255 / 0.15);
+.composer-card:hover {
+  border-color: var(--color-line-strong);
 }
-html.theme-warm .composer-card:focus-within {
-  border-color: rgb(13 13 13 / 0.15);
+.composer-card:focus-within {
+  border-color: var(--color-line-strong);
+}
+
+/** 弹层入场（对齐 ZCode Popover/Select duration-100 fade+zoom-95+
+    slide-in-from-bottom-2，select.tsx:106/popover.tsx:30）。 */
+@keyframes composer-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.composer-pop {
+  animation: composer-pop-in 100ms ease-out;
+}
+/* StatusChipMenu 面板用 inline translateY(-100%) 定位（StatusChipMenu.tsx:136），
+   入场帧把该位移烘进关键帧；无 forwards，动画结束回落 inline 值，无跳变 */
+@keyframes composer-pop-up-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-100% + 8px)) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-100%) scale(1);
+  }
+}
+.composer-pop-up {
+  animation: composer-pop-up-in 100ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -592,7 +721,9 @@ html.theme-warm .composer-card:focus-within {
   }
   .chip-in,
   .toast-in,
-  .modal-in {
+  .modal-in,
+  .composer-pop,
+  .composer-pop-up {
     animation: none;
   }
 }

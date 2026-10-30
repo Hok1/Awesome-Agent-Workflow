@@ -190,6 +190,30 @@ it("左右差异将不等长修改块配对留空，搜索只标记目标侧", (
     "data-current-hit",
     "true",
   );
+  expect(within(after).getByText("new")).toHaveClass(
+    "bg-find-highlight-active",
+  );
   expect(before.firstElementChild?.children).toHaveLength(2);
   expect(after.firstElementChild?.children).toHaveLength(2);
+});
+
+it("查找命中按 ZCode 原值 token 高亮：当前命中 active 档，其余命中普通档", () => {
+  const model = reviewModel({
+    patch: "@@ -1,2 +1 @@\n-old\n+new new\n",
+    beforeContent: "old\n",
+    afterContent: "new new\n",
+    notice: null,
+  });
+  render(
+    <GitReviewDiff
+      model={model}
+      query="new"
+      match={{ key: "x", row: 1, start: 4, length: 3, side: "next" }}
+    />,
+  );
+  const after = screen.getByLabelText("修改后");
+  const hits = within(after).getAllByText("new");
+  expect(hits).toHaveLength(2);
+  expect(hits[0]).toHaveClass("bg-find-highlight");
+  expect(hits[1]).toHaveClass("bg-find-highlight-active");
 });

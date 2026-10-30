@@ -656,7 +656,7 @@ export function SessionView() {
                     onCancel={requestCancel}
                   />
                   {showDraftChips ? (
-                    <div className="mt-3 px-5">
+                    <div className="mt-3 px-4">
                       <DraftPromptChips
                         currentSr={currentSr}
                         widthClass={widthClass}
