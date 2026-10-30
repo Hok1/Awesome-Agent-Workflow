@@ -103,6 +103,19 @@ html.theme-warm {
 }
 
 /**
+ * xterm 宿主的视口滚动条整体隐藏：xterm 有自己的缓冲滚动语义（键入 /
+ * 输出自动贴底，滚动区即缓冲），面板内再露一条 8px 滚动条是双份视觉。
+ * 全局 8px 滚动条规则（本文件上方 `*` 与 `::-webkit-scrollbar`）先命中，
+ * 这里以更高特异性覆盖。
+ */
+.terminal-xterm-shell .xterm-viewport {
+  scrollbar-width: none;
+}
+.terminal-xterm-shell .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+/**
  * 内部滚动容器：
  * - 滚到自己尽头就停（overscroll-behavior: contain），手势不继续传给
  *   祖先，也就不会「滚完列表接着把整页带走」；
@@ -361,6 +374,33 @@ html.theme-warm {
      zai-dark rgba(70,191,114,0.16) styles.css:767；配文 text-ok-ink，
      其值即 ZCode interaction-confirmation-foreground :768 原值） */
   --color-interaction-confirmation-surface: rgb(70 191 114 / 0.16);
+
+  /* 终端 ANSI 主题（xterm ITheme 经 src/terminal/terminalTheme.ts 读取）。
+     ZCode dark 同值（zai styles.css:380-404）：bg/fg/cursor 取 neutral
+     950/50，ANSI 16 槽 red/green/yellow/sky/fuchsia/cyan 的 600 档 +
+     black/white/brightBlack 取 neutral 800/200/500。 */
+  --terminal-bg: #0a0a0a;
+  --terminal-fg: #fafafa;
+  --terminal-cursor: #fafafa;
+  --terminal-cursor-accent: #0a0a0a;
+  --terminal-selection-bg: rgb(14 165 233 / 0.26);
+  --terminal-selection-inactive-bg: rgb(250 250 250 / 0.16);
+  --terminal-black: #262626;
+  --terminal-red: #dc2626;
+  --terminal-green: #16a34a;
+  --terminal-yellow: #ca8a04;
+  --terminal-blue: #0284c7;
+  --terminal-magenta: #c026d3;
+  --terminal-cyan: #0891b2;
+  --terminal-white: #e5e5e5;
+  --terminal-bright-black: #737373;
+  --terminal-bright-red: #dc2626;
+  --terminal-bright-green: #16a34a;
+  --terminal-bright-yellow: #ca8a04;
+  --terminal-bright-blue: #0284c7;
+  --terminal-bright-magenta: #c026d3;
+  --terminal-bright-cyan: #0891b2;
+  --terminal-bright-white: #fafafa;
 }
 
 /**
@@ -485,6 +525,32 @@ html.theme-warm {
   --color-danger-contrast: #ffffff; /* ZCode zai-light :620 */
   --color-progress-ink: #1d4ed8; /* ZCode zai-light blue-700 :271 */
   --color-interaction-confirmation-surface: #eaf7ee; /* ZCode zai-light :603 */
+
+  /* 终端 ANSI 主题（浅色）：ZCode light 同值（zai styles.css:212-230）：
+     bg/fg/cursor 取 neutral 50/950，ANSI 16 槽取 red/green/yellow/sky/
+     fuchsia/cyan 的 500 档 + black/white/brightBlack 取 neutral 700/500。 */
+  --terminal-bg: #fafafa;
+  --terminal-fg: #0a0a0a;
+  --terminal-cursor: #0a0a0a;
+  --terminal-cursor-accent: #fafafa;
+  --terminal-selection-bg: rgb(14 165 233 / 0.32);
+  --terminal-selection-inactive-bg: rgb(14 165 233 / 0.22);
+  --terminal-black: #404040;
+  --terminal-red: #ef4444;
+  --terminal-green: #22c55e;
+  --terminal-yellow: #eab308;
+  --terminal-blue: #0ea5e9;
+  --terminal-magenta: #d946ef;
+  --terminal-cyan: #06b6d4;
+  --terminal-white: #737373;
+  --terminal-bright-black: #737373;
+  --terminal-bright-red: #ef4444;
+  --terminal-bright-green: #22c55e;
+  --terminal-bright-yellow: #eab308;
+  --terminal-bright-blue: #0ea5e9;
+  --terminal-bright-magenta: #d946ef;
+  --terminal-bright-cyan: #06b6d4;
+  --terminal-bright-white: #0a0a0a;
 
   /* 海拔阴影换中性边光（暖金边光配纯中性灰会显脏） */
   --shadow-elev-2:

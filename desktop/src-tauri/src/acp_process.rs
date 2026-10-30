@@ -175,7 +175,7 @@ fn next_handle() -> u32 {
 ///
 /// 手写 FFI：只差五个函数，不值得为此引入 windows-sys 依赖。
 #[cfg(target_os = "windows")]
-fn assign_kill_on_close_job(child_pid: u32) {
+pub fn assign_kill_on_close_job(child_pid: u32) {
     type Handle = *mut core::ffi::c_void;
 
     #[repr(C)]
@@ -562,7 +562,7 @@ async fn wait_exit(entry: &ProcessEntry, timeout_ms: u64) -> Option<AcpExitInfo>
 }
 
 /// 进程树终止的信号阶段。
-enum SignalStage {
+pub enum SignalStage {
     /// Windows：taskkill /T /F（一次到位）；POSIX：SIGTERM。
     Graceful,
     /// 第二阶段：Windows 重复 taskkill（罕见失败的重试）；POSIX：SIGKILL。
@@ -572,7 +572,7 @@ enum SignalStage {
 /// 向整棵进程树发终止信号。Windows 走 `taskkill /PID <pid> /T /F`
 /// （taskkill 自带等待）；POSIX 走外部 `kill` 命令（避免引入 libc 依赖）。
 /// 只负责发信号；回收与终态登记由退出协程完成。
-async fn send_tree_signal(pid: u32, stage: SignalStage) {
+pub async fn send_tree_signal(pid: u32, stage: SignalStage) {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut cmd = tokio::process::Command::new("taskkill");

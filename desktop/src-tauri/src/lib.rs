@@ -3,6 +3,7 @@ mod acp_process;
 mod commands;
 mod panel_files;
 mod panel_git;
+mod terminal_pty;
 
 use tauri::{Emitter, Manager};
 
@@ -15,6 +16,7 @@ pub fn run() {
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<panel_files::PanelWatchers>().clear();
                 acp_process::retire_page(webview.label().to_owned());
+                terminal_pty::retire_page(webview.label().to_owned());
             }
         })
         .plugin(tauri_plugin_opener::init())
@@ -46,7 +48,13 @@ pub fn run() {
             acp_process::acp_stdin_write,
             acp_process::acp_stdin_close,
             acp_process::acp_kill_tree,
-            acp_process::acp_release
+            acp_process::acp_release,
+            // 终端 PTY 会话（terminal_pty.rs，ConPTY/openpty，事件经 app.emit 广播）
+            terminal_pty::pty_spawn,
+            terminal_pty::pty_write,
+            terminal_pty::pty_resize,
+            terminal_pty::pty_kill,
+            terminal_pty::pty_release
         ])
         .on_window_event(|window, event| {
             // 关闭守卫的 Rust 半边：CloseRequested 一律拦下转交前端裁决
@@ -56,6 +64,7 @@ pub fn run() {
             // 下一次启动（Job Object 是它死透时的兜底，不是许可）。
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 acp_process::retire_page(window.label().to_owned());
+                terminal_pty::retire_page(window.label().to_owned());
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.app_handle().emit("aaw://close-requested", ());

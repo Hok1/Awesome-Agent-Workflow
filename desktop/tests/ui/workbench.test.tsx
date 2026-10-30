@@ -659,9 +659,7 @@ describe("会话内 AAW 面板", () => {
     // 对话仍在：面板是右侧并列栏，不是替换
     expect(screen.getByLabelText("会话视图")).toBeInTheDocument();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "收起右侧工具栏" }),
-    );
+    await userEvent.click(screen.getByTestId("side-pane-toggle"));
     expect(screen.queryByLabelText("AAW 面板")).not.toBeInTheDocument();
   });
 

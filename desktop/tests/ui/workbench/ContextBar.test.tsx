@@ -18,12 +18,26 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// xterm 三件套以桩类替代（底部终端面板常驻挂载，ContentArea 渲染即带上
+// shell 页签的 TerminalSessionView；jsdom 无渲染面，见 helper 注释）
+vi.mock("@xterm/xterm", async () => await import("../../helpers/xtermMock.ts"));
+vi.mock(
+  "@xterm/addon-fit",
+  async () => await import("../../helpers/xtermMock.ts"),
+);
+vi.mock(
+  "@xterm/addon-clipboard",
+  async () => await import("../../helpers/xtermMock.ts"),
+);
+
 import { useRightPanelStore } from "../../../src/stores/rightPanelStore.ts";
 import ContentArea from "../../../src/ui/workbench/ContentArea.tsx";
 import { useAawStatusStore } from "../../../src/stores/aawStatusStore.ts";
 import { useSessionStore } from "../../../src/stores/sessionStore.ts";
 import { useWorkspaceStore } from "../../../src/stores/workspaceStore.ts";
 import { useWorkbenchUiStore } from "../../../src/stores/workbenchUiStore.ts";
+import { useTerminalTabStore } from "../../../src/terminal/terminalTabStore.ts";
+import { createTerminalTabs } from "../../../src/terminal/terminalTabState.ts";
 import type {
   CliRunResult,
   ProcessRunner,
@@ -93,6 +107,23 @@ function resetAll(): void {
   useAawStatusStore.getState().reset();
   useAawStatusStore.setState({ loader: null });
   useWorkbenchUiStore.setState({ isAawOpen: false });
+  // 终端面板：常驻挂载，重置开合态与页签组（懒创建 shell 从零开始）
+  useWorkbenchUiStore.setState({ isTerminalOpen: false });
+  const initialTerminalTabs = createTerminalTabs();
+  useTerminalTabStore.setState({
+    tabs: initialTerminalTabs.tabs,
+    activeTabId: initialTerminalTabs.activeTabId,
+    connectionErrors: {},
+  });
+  // jsdom 无 ResizeObserver：以空桩满足 TerminalSessionView 的挂载路径
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  );
 }
 
 /** 预置会话态：树选中该项目 + 活跃会话 + 已连接。 */
@@ -213,38 +244,47 @@ describe("ContextBar 顶栏动作排（ZCode WorkspaceHeaderActionSection 形态
     expect(writeText).toHaveBeenCalledWith(PATH);
   });
 
-  it("terminal-toggle：aria-pressed 翻转并开合底部终端面板（面板关闭钮同路）", async () => {
+  it("terminal-toggle：aria-pressed 翻转并开合底部终端面板（面板常驻挂载，仅 hidden）", async () => {
     seedSessionView();
     render(<ContentArea />);
     const toggle = screen.getByTestId("terminal-toggle");
     expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByTestId("terminal-panel")).not.toBeInTheDocument();
+    // 常驻挂载：面板恒在文档中，关闭态呈 hidden（不再断言不渲染）
+    const panel = screen.getByTestId("terminal-panel");
+    expect(panel).toBeInTheDocument();
+    expect(panel).not.toBeVisible();
 
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("terminal-panel")).toBeInTheDocument();
+    expect(panel).toBeVisible();
     expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(true);
 
+    // 面板关闭钮同路：再点只切 hidden，实例不卸载
     await userEvent.click(screen.getByTestId("terminal-close-button"));
-    expect(screen.queryByTestId("terminal-panel")).not.toBeInTheDocument();
+    expect(panel).not.toBeVisible();
+    expect(panel).toBeInTheDocument();
     expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(false);
   });
 
-  it("side-pane-toggle：点钮打开右栏；右栏打开时整钮不渲染（ZCode :75-82），右栏 ✕ 收起后钮回来", async () => {
+  it("side-pane-toggle：点钮开合右栏；双态常驻（展开时图标切换为收起，不再消失）", async () => {
     seedSessionView();
     render(<ContentArea />);
-    await userEvent.click(screen.getByTestId("side-pane-toggle"));
-    // 右栏打开（store 驱动，键经 pathKey 归一化小写）
+    const toggle = screen.getByTestId("side-pane-toggle");
+    await userEvent.click(toggle);
+    // 右栏打开（store 驱动，键经 pathKey 归一化小写）；钮保持在场
     expect(
       useRightPanelStore.getState().projects["d:/dev/demo-project"]?.open,
     ).toBe(true);
-    expect(screen.queryByTestId("side-pane-toggle")).not.toBeInTheDocument();
-
-    // 右栏自带 ✕ 收起钮（RightPanel :276-282）
-    await userEvent.click(
-      screen.getByRole("button", { name: "收起右侧工具栏" }),
-    );
     expect(screen.getByTestId("side-pane-toggle")).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    // 右栏头部的收起图标钮（PanelRightClose）收起右栏
+    await userEvent.click(screen.getByTestId("side-pane-toggle"));
+    expect(
+      useRightPanelStore.getState().projects["d:/dev/demo-project"]?.open,
+    ).toBe(false);
+    expect(screen.getByTestId("side-pane-toggle")).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
   it("help-menu-button：单项「打开诊断」开设置覆盖层（诊断并入设置页签）", async () => {
@@ -410,7 +450,6 @@ describe("ContextBar 全屏页", () => {
     await userEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(useWorkbenchUiStore.getState().overlay).toBeNull();
   });
-
 });
 
 describe("ContextBar 收起态顶栏新建入口（ZCode DesktopTopOverlay 强制显示位）", () => {

@@ -57,9 +57,9 @@ describe("项目右栏", () => {
       expect(
         screen.queryByRole("button", { name: "关闭右栏遮罩" }),
       ).not.toBeInTheDocument();
-      await userEvent.click(
-        screen.getByRole("button", { name: "收起右侧工具栏" }),
-      );
+      act(() => {
+        useRightPanelStore.getState().collapse("D:/a");
+      });
       expect(screen.getByRole("textbox", { name: "草稿" })).toBe(input);
       expect(input).toHaveValue("保留");
     } finally {
@@ -184,9 +184,9 @@ describe("项目右栏", () => {
       useRightPanelStore.getState().tool("D:/a", "files");
     });
     expect(await screen.findByText(".sdd")).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "收起右侧工具栏" }),
-    );
+    act(() => {
+      useRightPanelStore.getState().collapse("D:/a");
+    });
     expect(screen.getByRole("textbox", { name: "聊天草稿" })).toBe(input);
     expect(input).toHaveValue("未发送的草稿");
   });
