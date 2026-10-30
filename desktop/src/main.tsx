@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { isTauri } from "@tauri-apps/api/core";
 import App from "./App";
 import { installGlobalErrorGuard } from "./core/crashGuard.ts";
 import { useSessionStore } from "./stores/sessionStore.ts";
@@ -10,6 +11,15 @@ import "./ui/perf/memorySampler.ts";
 
 // 全局异常守卫 + 渲染进程死亡取证:必须在渲染前安装(白屏诊断设施)
 installGlobalErrorGuard();
+
+// 屏蔽 WebView 默认右键菜单，保留应用内自定义菜单的事件处理。
+if (isTauri()) {
+  document.addEventListener(
+    "contextmenu",
+    (event) => event.preventDefault(),
+    true,
+  );
+}
 
 // dev 调试入口：浏览器/诊断台灌种子消息、驱动滚动复现用（不进生产构建）。
 if (import.meta.env.DEV) {
