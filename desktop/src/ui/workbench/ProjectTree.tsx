@@ -72,23 +72,10 @@ import {
   type ContextMenuEntry,
   type MenuPlacement,
 } from "../ContextMenu.tsx";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ClockIcon,
-  CornerDownRightIcon,
-  FolderGlyph,
-  ListFilterIcon,
-  LoaderIcon,
-  PlusIcon,
-  StarFilledIcon,
-  StarOutlineIcon,
-  XIcon,
-} from "../icons.tsx";
+import { ChevronDownIcon, ChevronRightIcon, ClockIcon, CornerDownRightIcon, FolderGlyph, ListFilterIcon, LoaderIcon, PlusIcon, StarFilledIcon, StarOutlineIcon, XIcon, EllipsisIcon, MessageCirclePlusIcon, WorkflowIcon } from "../icons.tsx";
 import { basenameOf } from "../workspaces/workspaceText.ts";
 import type { SessionSummary } from "../../stores/sessionStore.ts";
 import AddProjectPanel from "./AddProjectPanel.tsx";
-import { ConnectionBadge } from "./ConnectionBadge.tsx";
 import { flattenRecentSessions, openSessionFromEntry } from "./sessionEntry.ts";
 import { startNewSession } from "./sessionStart.ts";
 
@@ -330,10 +317,6 @@ function ProjectNodeRow({
 
   return (
     <div
-      onDoubleClick={() => {
-        // 双击整行收起 / 展开（单击项目名仍是进总览，互不干扰）
-        toggleExpanded(path, isExpanded);
-      }}
       onContextMenu={(event) => {
         event.preventDefault();
         menu.openAtPointer(
@@ -361,9 +344,9 @@ function ProjectNodeRow({
       <button
         type="button"
         onClick={() => {
-          selectWorkspace(path);
-          openProjectOverview(path);
+          toggleExpanded(path, isExpanded);
         }}
+        aria-expanded={isExpanded}
         className={`flex h-8 min-w-0 flex-1 items-center justify-start gap-2 rounded-lg pl-2.5 pr-1 text-left ${focusVisibleRing}`}
         title={path}
       >
@@ -373,27 +356,51 @@ function ProjectNodeRow({
         </span>
       </button>
       <HealthBadge path={path} />
-      {/* 展开 chevron：不常驻，悬停行时浮现在行尾（键盘聚焦同样浮现）。
-          子区域里常驻一行「＋ 新会话」，所以任何项目都可展开——空项目也得有
-          发起对话的入口，否则新加的项目在树上无处可动。当前态由调用方算出
-          后传回（默认展开规则在组件里，store 不复刻） */}
-      <button
-        type="button"
-        onClick={() => {
-          toggleExpanded(path, isExpanded);
-        }}
-        aria-expanded={isExpanded}
-        aria-label={isExpanded ? `折叠 ${name}` : `展开 ${name}`}
-        className="shrink-0 rounded p-0.5 leading-none text-ink-subtlest opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        {isExpanded ? (
-          <ChevronDownIcon className="h-3.5 w-3.5" />
-        ) : (
-          <ChevronRightIcon className="h-3.5 w-3.5" />
-        )}
-      </button>
-      {/* 行尾连接状态点：已连接 / 连接中 / 失败（未连接不渲染） */}
-      <ConnectionBadge path={path} variant="dot" />
+      {/* 行尾动作栏（ZCode project-actions 布局）：hover/键盘聚焦浮现，
+          菜单开着时常显；新建会话与工作流是「打开该项目」的两个入口 */}
+      <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        <button
+          type="button"
+          aria-label="更多操作"
+          title="更多操作"
+          onClick={(event) => {
+            event.stopPropagation();
+            menu.openAtRect(
+              event.currentTarget.getBoundingClientRect(),
+              "项目菜单",
+              buildEntries(),
+            );
+          }}
+          className="rounded p-1 text-ink-soft transition-colors hover:bg-surface-hover hover:text-ink"
+        >
+          <EllipsisIcon className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label="新建会话"
+          title="新建会话"
+          onClick={(event) => {
+            event.stopPropagation();
+            void startNewSession(path);
+          }}
+          className="rounded p-1 text-ink-soft transition-colors hover:bg-surface-hover hover:text-ink"
+        >
+          <MessageCirclePlusIcon className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label="工作流"
+          title="打开工作流"
+          onClick={(event) => {
+            event.stopPropagation();
+            selectWorkspace(path);
+            openProjectOverview(path);
+          }}
+          className="rounded p-1 text-ink-soft transition-colors hover:bg-surface-hover hover:text-ink"
+        >
+          <WorkflowIcon className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -640,7 +647,6 @@ function ProjectChildren({
   readonly sessions: readonly SessionSummary[];
   readonly menu: SidebarMenuApi;
 }) {
-  const name = basenameOf(path);
   // 分页呈现：默认最近 SESSION_LIST_PAGE_SIZE 条，「加载更多」逐页纳新；
   // 只裁显示不裁数据——store 仍持有全量列表，连接回填不受影响
   const limit = useWorkbenchUiStore(
@@ -680,18 +686,6 @@ function ProjectChildren({
         </li>
       ) : null}
       <li>
-        <button
-          type="button"
-          aria-label={`新会话（${name}）`}
-          title={`在 ${name} 中发起新会话`}
-          onClick={() => {
-            void startNewSession(path);
-          }}
-          className="flex w-full items-center gap-1.5 rounded-lg py-1 pl-2.5 pr-1 text-left text-ui-sm text-ink-faint transition-colors hover:bg-surface-hover hover:text-ink-soft"
-        >
-          <PlusIcon className="h-3.5 w-3.5 shrink-0" />
-          新会话
-        </button>
       </li>
     </ul>
   );

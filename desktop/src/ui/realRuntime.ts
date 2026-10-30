@@ -64,6 +64,8 @@ interface RealRuntime {
   readonly approval: ReturnType<typeof createApprovalStore>;
   readonly status: ReturnType<typeof createRuntimeStatusStore>;
   disposeActivity: () => void;
+  /** 预热标记：只连接 + 回填列表，未载入任何会话；被会话点击就地消费。 */
+  listOnly: boolean;
 }
 
 /** 活跃视图与后台执行分开：每条已打开会话保留自己的 ACP 进程和状态。 */
@@ -218,6 +220,104 @@ async function loadSessionWithHistoryReplay(
   }
 }
 
+/**
+ * 会话列表回填（左栏树可见）：当前会话置顶，其余历史会话随后；标题一律
+ * 不含 UUID（首条用户消息前 24 字 / 时间兜底）。带路径回填，断开后树仍
+ * 能显示该项目的历史会话子节点。恢复的历史会话优先用 session/list 的
+ * 权威标题；新会话从消息流首条用户消息推导。
+ */
+function backfillSessionList(
+  viewStore: ReturnType<typeof createSessionStore>,
+  listed: readonly SessionInfo[],
+  activeSessionId: string | null,
+  runtime: RealRuntime,
+  sameProject: (r: RealRuntime) => boolean,
+): void {
+  const store = viewStore.getState();
+  const entries: SessionSummary[] = [];
+  if (activeSessionId !== null) {
+    const listedSelfTitle = listed.find(
+      (info) => info.sessionId === activeSessionId,
+    )?.title;
+    entries.push({
+      id: activeSessionId,
+      title:
+        typeof listedSelfTitle === "string" && listedSelfTitle.trim().length > 0
+          ? listedSelfTitle
+          : sessionTitleOf(store.items),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  for (const info of listed) {
+    if (info.sessionId === activeSessionId) {
+      continue;
+    }
+    entries.push({
+      id: info.sessionId,
+      title: sessionListTitleOf(info),
+      updatedAt: info.updatedAt ?? null,
+    });
+  }
+  // 索引可能滞后：本次进程的 session/list 不能隐藏仍在后台执行的会话。
+  for (const retained of runtimes) {
+    const id = retained.session.sessionId;
+    if (!sameProject(retained) || !id || entries.some((e) => e.id === id)) {
+      continue;
+    }
+    entries.push(
+      retained.store.getState().sessions.find((entry) => entry.id === id) ?? {
+        id,
+        title: sessionTitleOf(retained.store.getState().items),
+        updatedAt: new Date().toISOString(),
+      },
+    );
+  }
+  store.setSessions(entries, runtime.workspacePath);
+}
+
+/**
+ * 就地加载一条会话到 listOnly 预热 runtime（同进程 session/load，省一次
+ * 进程冷启动）：先灌目标会话的本地快照上屏（归档读取与回放期间内容可见），
+ * 随后清屏回放权威历史并对账协议状态。预热 runtime 没有任何会话状态，
+ * 就地重绑不破坏后台保活。失败向上抛出——调用方负责回落（回收预热后
+ * 冷启动，或重灌原快照）。
+ */
+async function loadSessionIntoRuntime(
+  runtime: RealRuntime,
+  sessionId: string,
+  listed: readonly SessionInfo[],
+  workspacePath: string,
+  sameProject: (r: RealRuntime) => boolean,
+): Promise<void> {
+  const logScope = `${pathKey(workspacePath)}#${sessionId}`;
+  runtime.store.getState().setSessionLogTarget(logScope);
+  runtime.store.getState().restoreSessionLog(logScope);
+  if (runtime.store.getState().items.length === 0) {
+    runtime.store.getState().restoreSessionLog(workspacePath);
+  }
+  await loadSessionWithHistoryReplay(
+    runtime.session,
+    sessionId,
+    workspacePath,
+    runtime.store,
+  );
+  runtime.listOnly = false;
+  runtime.store.getState().flushSessionLog();
+  runtime.store.getState().openSession(sessionId);
+  runtime.store.getState().setSessionModels(
+    runtime.session.models?.availableModels ?? [],
+    runtime.session.models?.currentModelId ?? null,
+  );
+  backfillSessionList(
+    runtime.store,
+    listed,
+    sessionId,
+    runtime,
+    sameProject,
+  );
+  useWorkspaceStore.getState().dismissConnectError(workspacePath);
+}
+
 /** ISO 时间 → 列表标题用 HH:MM（本地时区）。 */
 function hhmmOf(iso: string): string {  const time = Date.parse(iso);
   if (Number.isNaN(time)) {
@@ -238,23 +338,6 @@ function sessionListTitleOf(info: SessionInfo): string {
 }
 
 /** 按 updatedAt 取最近的会话（缺失时间的条目视为最旧）。 */
-function pickLatestSession(
-  sessions: readonly SessionInfo[],
-): SessionInfo | null {
-  let latest: SessionInfo | null = null;
-  let latestTime = Number.NEGATIVE_INFINITY;
-  for (const info of sessions) {
-    const time =
-      typeof info.updatedAt === "string" ? Date.parse(info.updatedAt) : NaN;
-    const rank = Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
-    if (rank >= latestTime) {
-      latest = info;
-      latestTime = rank;
-    }
-  }
-  return latest;
-}
-
 /** 连接失败的统一文案后缀：把修复动作指到设置页（不点名具体 agent）。 */
 const CONNECT_FAILURE_HINT = "请在设置中检查 agent 可执行路径";
 
@@ -289,6 +372,8 @@ async function openWorkspaceNow(
      * 项目上时本参数无意义（就地切换是 switchRealSession 的职责）。
      */
     readonly sessionId?: string;
+    /** 激活模式：只连接 + 回填会话列表，不打开任何会话内容（模型 a）。 */
+    readonly listOnly?: boolean;
   } = {},
 ): Promise<string | null> {
   const forceNew = options.forceNew === true;
@@ -435,6 +520,7 @@ async function openWorkspaceNow(
       status: statusStore,
       detachViews: () => {},
       disposeActivity: () => {},
+      listOnly: options.listOnly === true,
     };
     runtimes.add(candidate);
     activeRuntime = candidate;
@@ -467,18 +553,84 @@ async function openWorkspaceNow(
       });
     }
     let restoredId: string | null = null;
-    // 是否真的经 session/load 恢复了历史会话（区别于全新 newSession）：
-    // 只有真恢复才把内容区自动切到会话视图（P1-8：重启后回到上次会话）
+    // 是否真的经 session/load 恢复了历史会话（区别于全新 newSession）
     let restoredHistoric = false;
     // loadSession 失败回落新建时的用户公告（快照目标就位后写入消息流）
     let pendingRestoreNotice: string | null = null;
-    // 恢复目标：调用方点名的 id 直接 load——session/list 只是左栏树的数据
-    // 源，chrys 的列表可能滞后（异常退出/被强杀后索引未刷新），拿它当
-    // 白名单会把点开的会话偷换成「最近一个」。点名 load 失败回落新建
-    // （带公告），绝不静默换一条；未点名才恢复「最近一个」（重启回上次）。
-    const fallbackLatest = listed.length > 0 ? pickLatestSession(listed) : null;
-    const targetId = preferredSessionId ?? fallbackLatest?.sessionId ?? null;
-    if (!forceNew && targetId !== null) {
+    // 连接与会话绑定（模型 a）：激活（listOnly）只连接 + 回填列表，不打开
+    // 任何会话内容；「打开哪条」永远由调用方点名（点会话行 / 新建会话 /
+    // 工作流图标）。点名目标不再回落「最近一个」。
+    const targetId = preferredSessionId;
+
+    const projectRuntime =
+      [...runtimes].find(
+        (item) =>
+          item !== candidate &&
+          sameProject(item) &&
+          !item.store.getState().agentCrashed,
+      ) ?? null;
+
+    // A) 激活模式：连接 + 会话列表回填即收口，不打开任何会话内容。
+    // 预热 runtime 保留为该项目的「列表持有者」，被下一次会话点击就地消费。
+    if (options.listOnly === true) {
+      candidate.listOnly = true;
+      backfillSessionList(
+        viewStore,
+        listed,
+        null,
+        candidate,
+        sameProject,
+      );
+      viewStore.getState().setConnecting(false);
+      return null;
+    }
+
+    // B) 会话点击：预热 runtime（listOnly）就地载入目标会话，省一次进程
+    // 冷启动——它没有任何会话状态，就地重绑不破坏后台保活。
+    if (
+      !forceNew &&
+      targetId !== null &&
+      projectRuntime?.listOnly === true
+    ) {
+      focusRuntime(projectRuntime);
+      try {
+        await loadSessionIntoRuntime(
+          projectRuntime,
+          targetId,
+          listed,
+          workspacePath,
+          sameProject,
+        );
+        return targetId;
+      } catch (error) {
+        logger.warn("预热 runtime 就地加载失败，回落冷启动", {
+          workspacePath,
+          sessionId: targetId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        await disposeRuntime(projectRuntime);
+        // 焦点回到本次新建的 runtime（其店已被选中），继续 spawn 路径
+        selectSessionStore(viewStore);
+      }
+    }
+
+    // C) 会话点击：目标会话的 runtime 已在后台保活 → 回收预热并原地聚焦，
+    // 消息/排队/运行态原样保留
+    if (
+      !forceNew &&
+      targetId !== null &&
+      projectRuntime !== null &&
+      !projectRuntime.listOnly &&
+      projectRuntime.session.sessionId === targetId
+    ) {
+      await disposeRuntime(candidate);
+      focusRuntime(projectRuntime);
+      return targetId;
+    }
+
+    // D) 冷启动：新建 runtime（快照先行 + 权威回放）。targetId 只来自
+    // 调用方点名，不再自动恢复「最近一个」。
+    if (targetId !== null && !forceNew) {
       const retained = [...runtimes].find(
         (item) =>
           item !== candidate &&
@@ -573,49 +725,13 @@ async function openWorkspaceNow(
     // 恢复的历史会话优先用 session/list 的权威标题：回放事件此刻可能
     // 还没到（消息流为空，标题会被兜底成「会话 · 当前时刻」，看起来像
     // 新开的会话）；新会话才从消息流首条用户消息推导。
-    const items = viewStore.getState().items;
-    const listedSelfTitle = restoredHistoric
-      ? listed.find((info) => info.sessionId === restoredId)?.title
-      : undefined;
-    const activeTitle =
-      typeof listedSelfTitle === "string" && listedSelfTitle.trim().length > 0
-        ? listedSelfTitle
-        : sessionTitleOf(items);
-    const entries: SessionSummary[] = [
-      {
-        id: restoredId,
-        title: activeTitle,
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-    for (const info of listed) {
-      if (info.sessionId === restoredId) {
-        continue;
-      }
-      entries.push({
-        id: info.sessionId,
-        title: sessionListTitleOf(info),
-        updatedAt: info.updatedAt ?? null,
-      });
-    }
-    // 索引可能滞后：本次进程的 session/list 不能隐藏仍在后台执行的会话。
-    for (const retained of runtimes) {
-      const id = retained.session.sessionId;
-      if (
-        !sameProject(retained) ||
-        !id ||
-        entries.some((entry) => entry.id === id)
-      )
-        continue;
-      entries.push(
-        retained.store.getState().sessions.find((entry) => entry.id === id) ?? {
-          id,
-          title: sessionTitleOf(retained.store.getState().items),
-          updatedAt: new Date().toISOString(),
-        },
-      );
-    }
-    store.setSessions(entries, workspacePath);
+    backfillSessionList(
+      viewStore,
+      listed,
+      restoredId,
+      candidate,
+      sameProject,
+    );
 
     // 恢复了历史会话：内容区自动切到该项目的会话视图（重启后直接回到
     // 上次对话）；全新 newSession 不切，保持项目总览——是否进会话由
@@ -687,7 +803,11 @@ export function closeRealRuntime(): Promise<void> {
 
 export function openRealWorkspace(
   workspacePath: string,
-  options: { readonly forceNew?: boolean; readonly sessionId?: string } = {},
+  options: {
+    readonly forceNew?: boolean;
+    readonly sessionId?: string;
+    readonly listOnly?: boolean;
+  } = {},
 ): Promise<string | null> {
   if (closing) return Promise.resolve(null);
   const task = openQueue.then(() =>

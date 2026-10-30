@@ -131,9 +131,10 @@ describe("ProjectTree 会话子节点分页", () => {
     expect(
       screen.queryByRole("button", { name: /^加载更多/ }),
     ).not.toBeInTheDocument();
+    // 模型 a：「＋ 新会话」灰行移除，新建走行尾动作栏图标
     expect(
-      screen.getByRole("button", { name: "新会话（pager）" }),
-    ).toBeVisible();
+      screen.queryByRole("button", { name: "新会话（pager）" }),
+    ).not.toBeInTheDocument();
   });
 
   it("不超过一页时全量呈现，无加载更多按钮", () => {

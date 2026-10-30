@@ -30,6 +30,7 @@ import {
 import {
   useSessionStore,
   type SessionItem,
+  type SessionSummary,
 } from "../../stores/sessionStore.ts";
 import { useApprovalStore } from "../../stores/approvalStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
@@ -44,6 +45,7 @@ import { btnPrimary } from "../controls.tsx";
 import { ScopedErrorBoundary } from "../ErrorBoundary.tsx";
 import {
   ArrowDownIcon,
+  ChevronRightIcon,
   SparkleIcon,
   WidthFullIcon,
   WidthStandardIcon,
@@ -65,6 +67,7 @@ import { SystemNotice } from "./SystemNotice.tsx";
 import { ThoughtBlock } from "./ThoughtBlock.tsx";
 import { ToolCallCard } from "./ToolCallCard.tsx";
 import { conversationTurns } from "./conversationTurns.ts";
+import { openSessionFromEntry } from "../workbench/sessionEntry.ts";
 import { ConversationTurnView } from "./ConversationTurnView.tsx";
 import { ExpansionScopeProvider } from "./expansionState.tsx";
 import {
@@ -125,6 +128,40 @@ const SessionItemView = memo(function SessionItemView({
 const renderSessionItem = (item: SessionItem): React.JSX.Element => (
   <SessionItemView item={item} />
 );
+
+/** 模型 a 的引导空态：项目已连接但未打开任何会话时，列出最近会话供
+ * 一键返回（快照先行秒开）。最多 8 条，更多走左侧树。 */
+function ProjectSessionQuickList({
+  path,
+  sessions,
+}: {
+  readonly path: string;
+  readonly sessions: readonly SessionSummary[];
+}) {
+  return (
+    <div className="mx-auto flex w-full max-w-md flex-col gap-1 py-10">
+      <p className="pb-2 text-center text-sm text-ink-mute">继续该项目的工作</p>
+      {sessions.slice(0, 8).map((session) => (
+        <button
+          key={session.id}
+          type="button"
+          onClick={() => {
+            void openSessionFromEntry(path, session.id);
+          }}
+          className="group flex items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-base text-ink-soft transition-colors hover:bg-surface-hover hover:text-ink"
+        >
+          <span className="min-w-0 flex-1 truncate">{session.title}</span>
+          <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-ink-ghost transition-colors group-hover:text-ink-soft" />
+        </button>
+      ))}
+      {sessions.length > 8 ? (
+        <p className="pt-2 text-center text-xs text-ink-ghost">
+          更多会话见左侧列表
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /** 时段问候（hero 主标题的一部分；测试以系统时间驱动）。 */
 function greetingOfHour(hour: number): string {
@@ -221,6 +258,7 @@ function DraftPromptChips({
 
 export function SessionView() {
   const items = useSessionStore((state) => state.items);
+  const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
   const turnState = useSessionStore((state) => state.turnState);
   const showPlans = useSettingsStore((state) => state.messageStreamShowTodos);
@@ -703,7 +741,11 @@ export function SessionView() {
               type="button"
               onClick={() => {
                 if (activePath !== null) {
-                  void openRealWorkspace(activePath);
+                  const sessionId = useSessionStore.getState().activeSessionId;
+                  void openRealWorkspace(activePath, {
+                    sessionId: sessionId ?? undefined,
+                    listOnly: sessionId === null,
+                  });
                 }
               }}
               className={
@@ -947,7 +989,7 @@ export function SessionView() {
                 {items.length === 0 && isConnecting ? (
                   <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-mute">
                     <Spinner className="h-6 w-6 text-sky-400" />
-                    <span>正在连接 agent 并恢复会话上下文…</span>
+                    <span>正在连接 agent…</span>
                     <span className="text-xs text-ink-ghost">
                       首次启动与恢复通常需要数秒，请稍候
                     </span>
@@ -972,6 +1014,15 @@ export function SessionView() {
                       将重新连接 agent 并恢复该项目的会话。
                     </p>
                   </div>
+                ) : items.length === 0 &&
+                  activePath !== null &&
+                  (sessionsByPath[activePath]?.length ?? 0) > 0 ? (
+                  /* 模型 a：连接只为列表服务，内容不自动打开——空态给出
+                     该项目最近会话的快捷入口，点一下即回（快照先行秒开） */
+                  <ProjectSessionQuickList
+                    path={activePath}
+                    sessions={sessionsByPath[activePath]!}
+                  />
                 ) : items.length === 0 ? (
                   pendingCount > 0 ? (
                     <p className="py-16 text-center text-sm leading-relaxed text-ink-faint">

@@ -260,7 +260,7 @@ function RealSessionRuntime() {
       unfocusRealRuntime();
       return;
     }
-    void openRealWorkspace(activePath);
+    void openRealWorkspace(activePath, { listOnly: true });
   }, [activePath]);
   return null;
 }

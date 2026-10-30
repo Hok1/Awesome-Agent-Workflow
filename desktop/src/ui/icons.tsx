@@ -284,6 +284,39 @@ export function RefreshIcon(props: IconProps) {
   );
 }
 
+/** 更多：横向三点（Lucide ellipsis）。项目行 hover 动作栏的菜单入口。 */
+export function EllipsisIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="5" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+    </Svg>
+  );
+}
+
+/** 新建会话：对话气泡加号（Lucide message-circle-plus）。 */
+export function MessageCirclePlusIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+      <path d="M8 12h8" />
+      <path d="M12 8v8" />
+    </Svg>
+  );
+}
+
+/** 工作流：节点连线图（Lucide workflow）。项目行 hover 动作栏的总览入口。 */
+export function WorkflowIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="8" height="8" rx="2" />
+      <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+      <rect x="13" y="13" width="8" height="8" rx="2" />
+    </Svg>
+  );
+}
+
 /** 加载中：八辐条风车（Lucide loader）。运行中回合的尾部 spinner——
  * 旋转容器而非 SVG 本体（ZCode ChatLoading 同款，动画走合成层）。 */
 export function LoaderIcon(props: IconProps) {
