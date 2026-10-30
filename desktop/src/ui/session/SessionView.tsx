@@ -5,9 +5,10 @@
  *   / 关闭会话，模型与审批模式元信息移至输入区下行）；
  * - 中部：消息流（用户 / 助手 / 思考 / 工具卡 / 系统提示）——**窗口化
  *   渲染**：只挂最近 WINDOW_CHUNK 条，滚动到顶按块向前补载（锚定补载：
- *   前插不把视口顶飞）；**跟随状态机**：贴底时新内容自动滚入，用户上翻
- *   即解除跟随并浮出「回到底部」按钮，回底即恢复
- *   跟随——长会话回看与追新互不打架；
+ *   前插不把视口顶飞）；**跟随状态机**（移植 ZCode timelineScrollAnchor，
+ *   见 timelineScrollAnchor.ts）：following 只由真实用户滚动输入改变，
+ *   贴底时新内容自动滚入，用户上翻即解除跟随并浮出「回到底部」按钮，
+ *   回底即恢复——长会话回看与追新互不打架；
  * - 底部：ChatInput（Enter 发送，运行中变圆形「停止」钮；↑/↓ 历史、
  *   @ 文件提及、预填通道见其文件头）；
  * - 空会话：问候 hero 与输入区作为一组垂直居中（ZCode 式空态），常用
@@ -29,6 +30,7 @@ import {
 import {
   useSessionStore,
   type SessionItem,
+  type SessionSummary,
 } from "../../stores/sessionStore.ts";
 import { useApprovalStore } from "../../stores/approvalStore.ts";
 import { useWorkspaceStore } from "../../stores/workspaceStore.ts";
@@ -43,6 +45,7 @@ import { btnPrimary } from "../controls.tsx";
 import { ScopedErrorBoundary } from "../ErrorBoundary.tsx";
 import {
   ArrowDownIcon,
+  ChevronRightIcon,
   SparkleIcon,
   WidthFullIcon,
   WidthStandardIcon,
@@ -64,15 +67,25 @@ import { SystemNotice } from "./SystemNotice.tsx";
 import { ThoughtBlock } from "./ThoughtBlock.tsx";
 import { ToolCallCard } from "./ToolCallCard.tsx";
 import { conversationTurns } from "./conversationTurns.ts";
+import { openSessionFromEntry } from "../workbench/sessionEntry.ts";
 import { ConversationTurnView } from "./ConversationTurnView.tsx";
 import { ExpansionScopeProvider } from "./expansionState.tsx";
 import {
-  isNearBottom,
   shouldLoadOlder,
   FIRST_MOUNT_TURNS,
   MOUNT_STEP,
   WINDOW_CHUNK,
 } from "./sessionWindow.ts";
+import {
+  anchorActionAfterContentChange,
+  initialFollowing,
+  reconcileFollowingForContentAnchor,
+  resolveFollowingAfterScroll,
+  timelineKeyboardScrollIntent,
+  timelineTouchScrollIntent,
+  timelineWheelScrollIntent,
+  type TimelineUserScrollIntent,
+} from "./timelineScrollAnchor.ts";
 import { UserMessage } from "./UserMessage.tsx";
 import { SessionStatusOverlay } from "./SessionStatusOverlay.tsx";
 import { ConversationNavigator } from "./ConversationNavigator.tsx";
@@ -81,6 +94,11 @@ import {
   createQueryNavigationBuilder,
   type QueryNavigationItem,
 } from "./conversationNavigation.ts";
+
+/** 用户滚动意图的有效期：过期后的 scroll 事件不再当作用户输入（ZCode 同值）。 */
+const USER_SCROLL_INTENT_TTL_MS = 1200;
+/** 布局补偿 guard：窗口内的 scroll 事件视为布局/程序产生，不改跟随态（ZCode 同值）。 */
+const LAYOUT_SCROLL_GUARD_MS = 250;
 
 /** memo：条目对象引用不变即跳过——流式 chunk 只改末尾条目，历史条目
  * 的分发开销也省掉。 */
@@ -110,6 +128,40 @@ const SessionItemView = memo(function SessionItemView({
 const renderSessionItem = (item: SessionItem): React.JSX.Element => (
   <SessionItemView item={item} />
 );
+
+/** 模型 a 的引导空态：项目已连接但未打开任何会话时，列出最近会话供
+ * 一键返回（快照先行秒开）。最多 8 条，更多走左侧树。 */
+function ProjectSessionQuickList({
+  path,
+  sessions,
+}: {
+  readonly path: string;
+  readonly sessions: readonly SessionSummary[];
+}) {
+  return (
+    <div className="mx-auto flex w-full max-w-md flex-col gap-1 py-10">
+      <p className="pb-2 text-center text-sm text-ink-mute">继续该项目的工作</p>
+      {sessions.slice(0, 8).map((session) => (
+        <button
+          key={session.id}
+          type="button"
+          onClick={() => {
+            void openSessionFromEntry(path, session.id);
+          }}
+          className="group flex items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-base text-ink-soft transition-colors hover:bg-surface-hover hover:text-ink"
+        >
+          <span className="min-w-0 flex-1 truncate">{session.title}</span>
+          <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-ink-ghost transition-colors group-hover:text-ink-soft" />
+        </button>
+      ))}
+      {sessions.length > 8 ? (
+        <p className="pt-2 text-center text-xs text-ink-ghost">
+          更多会话见左侧列表
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /** 时段问候（hero 主标题的一部分；测试以系统时间驱动）。 */
 function greetingOfHour(hour: number): string {
@@ -206,6 +258,7 @@ function DraftPromptChips({
 
 export function SessionView() {
   const items = useSessionStore((state) => state.items);
+  const sessionsByPath = useSessionStore((state) => state.sessionsByPath);
   const isAgentRunning = useSessionStore((state) => state.isAgentRunning);
   const turnState = useSessionStore((state) => state.turnState);
   const showPlans = useSettingsStore((state) => state.messageStreamShowTodos);
@@ -271,15 +324,79 @@ export function SessionView() {
   // 渐进上屏：首帧只挂尾部少量回合（视口在底部），其余用 rAF 分批补完。
   // 首次加载的 reconcile 从「150 条一帧做完」变成「头部立刻可见，后台追赶」。
   const [mountedTurnCount, setMountedTurnCount] = useState(FIRST_MOUNT_TURNS);
-  const [isFollowing, setIsFollowing] = useState(true);
+  // following 只由真实用户滚动输入改变（ZCode timelineScrollAnchor 语义）：
+  // ref 是同步权威值——capture handler 与内容 commit 的 layout effect 在
+  // state 落定之前就要读写；state 只驱动「回到底部」按钮的呈现。
+  const [isFollowing, setIsFollowing] = useState(initialFollowing());
+  const followingRef = useRef(initialFollowing());
+  const commitFollowing = useCallback((following: boolean): void => {
+    if (followingRef.current === following) return;
+    followingRef.current = following;
+    setIsFollowing(following);
+  }, []);
   const lastLengthRef = useRef(0);
-  const lastFollowLayoutRef = useRef<{
+  // 用户滚动意图：wheel/touch/键盘在 scroll 事件派发之前登记（含有效期），
+  // 内容 commit 贴底前先对账，避免「过期 following=true 吃掉用户上滚」。
+  const userScrollIntentRef = useRef<{
+    intent: TimelineUserScrollIntent;
+    observedAt: number;
+  }>({ intent: "none", observedAt: 0 });
+  const touchClientYRef = useRef<number | null>(null);
+  const scrollbarPointerIdRef = useRef<number | null>(null);
+  const lastObservedScrollTopRef = useRef(0);
+  const programmaticScrollFrameRef = useRef<number | null>(null);
+  const layoutScrollGuardUntilRef = useRef(0);
+  // 前插锚：补载 / 渐进挂载批之前的「scrollHeight - scrollTop」，渲染后按它
+  // 平移 scrollTop（前插不顶飞视口；跟随中值为 0 → 即贴底）。
+  const prependAnchorRef = useRef<number | null>(null);
+  // 最近一次已账目的可见布局：折叠思考/工具的分片也更新 items 但不改可见
+  // 高度——布局未变时不重复写 scrollTop，不打断贴底阈值内的阅读位置。
+  const lastAnchorLayoutRef = useRef<{
     height: number;
     viewport: number;
-    following: boolean;
   } | null>(null);
-  // 补载锚：loadOlder 前的「距底距离」，补载渲染后恢复（前插不顶飞视口）
-  const prependAnchorRef = useRef<number | null>(null);
+  const markProgrammaticScroll = useCallback((): void => {
+    if (programmaticScrollFrameRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollFrameRef.current);
+    }
+    programmaticScrollFrameRef.current = requestAnimationFrame(() => {
+      programmaticScrollFrameRef.current = null;
+    });
+  }, []);
+  const markLayoutScrollGuard = useCallback((): void => {
+    layoutScrollGuardUntilRef.current = Date.now() + LAYOUT_SCROLL_GUARD_MS;
+  }, []);
+  const clearUserScrollIntent = useCallback((): void => {
+    userScrollIntentRef.current = { intent: "none", observedAt: 0 };
+    touchClientYRef.current = null;
+    scrollbarPointerIdRef.current = null;
+  }, []);
+  const getActiveUserScrollIntent = useCallback((): TimelineUserScrollIntent => {
+    const current = userScrollIntentRef.current;
+    const interactionActive =
+      touchClientYRef.current !== null || scrollbarPointerIdRef.current !== null;
+    if (interactionActive) {
+      return current.intent === "none" ? "unknown" : current.intent;
+    }
+    return Date.now() - current.observedAt <= USER_SCROLL_INTENT_TTL_MS
+      ? current.intent
+      : "none";
+  }, []);
+  const markUserScrollIntent = useCallback(
+    (intent: TimelineUserScrollIntent): void => {
+      if (intent === "none") return;
+      userScrollIntentRef.current = { intent, observedAt: Date.now() };
+      // 上滚必须在 scroll 事件之前先拿走滚动权：否则随后的内容 commit
+      // （流式 delta / 补载 / 渐进挂载）会拿过期的 following=true 把用户拽回。
+      if (intent === "awayFromBottom") {
+        const element = scrollRef.current;
+        if (element && element.scrollHeight > element.clientHeight) {
+          commitFollowing(false);
+        }
+      }
+    },
+    [commitFollowing],
+  );
   const visibleTurns = useMemo(
     () =>
       conversationTurns(
@@ -294,12 +411,17 @@ export function SessionView() {
 
   // 渐进上屏追赶循环：每帧多挂一批回合，直到窗口内全部就绪。流式新回合
   // 到来时 slice(-n) 先短暂让最早的回合退场，下一帧即追回（叶子卡片 memo，
-  // 重挂成本可忽略）。
+  // 重挂成本可忽略）。挂载批会让内容在顶部撑高——rAF 里先记「距底锚」，
+  // 渲染后按它平移 scrollTop：跟随中即贴底，阅读中视口钉在原内容上。
   useEffect(() => {
     if (mountedTurnCount >= visibleTurns.length) {
       return;
     }
     const handle = requestAnimationFrame(() => {
+      const element = scrollRef.current;
+      if (element !== null && prependAnchorRef.current === null) {
+        prependAnchorRef.current = element.scrollHeight - element.scrollTop;
+      }
       setMountedTurnCount((count) =>
         Math.min(count + MOUNT_STEP, visibleTurns.length),
       );
@@ -349,11 +471,16 @@ export function SessionView() {
   }
   useLayoutEffect(() => {
     navigationPausedRef.current = false;
+    followingRef.current = initialFollowing();
+    clearUserScrollIntent();
     prependAnchorRef.current = null;
+    lastAnchorLayoutRef.current = null;
     lastLengthRef.current = 0;
-    lastFollowLayoutRef.current = null;
+    lastObservedScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
+    layoutScrollGuardUntilRef.current = 0;
+    programmaticScrollFrameRef.current = null;
     jumpTargetRef.current = null;
-  }, [scope]);
+  }, [scope, clearUserScrollIntent]);
   useLayoutEffect(() => {
     syncActiveQuery();
     const observer =
@@ -366,7 +493,8 @@ export function SessionView() {
   const jumpToQuery = (query: QueryNavigationItem): void => {
     navigationPausedRef.current = true;
     prependAnchorRef.current = null;
-    setIsFollowing(false);
+    clearUserScrollIntent();
+    commitFollowing(false);
     setVisibleCount((count) => Math.max(count, items.length - query.itemIndex));
     // 导航是用户点名要看的位置：立即全量挂载，不做渐进追赶
     setMountedTurnCount(Number.MAX_SAFE_INTEGER);
@@ -385,13 +513,15 @@ export function SessionView() {
       const reduced = window.matchMedia?.(
         "(prefers-reduced-motion: reduce)",
       ).matches;
+      markProgrammaticScroll();
       if (typeof scroll.scrollTo === "function")
         scroll.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
       else scroll.scrollTop = top;
+      lastObservedScrollTopRef.current = scroll.scrollTop;
       setActiveQueryId(jumpTarget);
     }
     jumpTargetRef.current = null;
-  }, [jumpRevision, visibleCount]);
+  }, [jumpRevision, visibleCount, markProgrammaticScroll]);
 
   // ---- Esc 全局停止：agent 运行中按 Esc 直接取消当前轮 ----
   // 让位规则（不误停）：IME 组词中；mention 面板 / 审批弹窗 / 提问面板 /
@@ -427,54 +557,101 @@ export function SessionView() {
     };
   }, [isAgentRunning, requestCancel]);
 
+  // 内容变化统一锚定（ZCode ConversationTimeline 同款）：条目追加、补载
+  // 前插、渐进挂载批都汇到这里——
+  // 1) 会话清空 / 切换：窗口与跟随态复位；
+  // 2) 阅读旧消息时固定窗口起点，新增条目不能把正在看的历史从窗口头部挤掉；
+  // 3) 贴底前先对账用户滚动意图：同帧的上滚（scroll 事件尚未派发）不得被
+  //    过期的 following=true 吃掉；
+  // 4) 有前插锚（补载 / 渐进挂载批在顶部撑高）→ 按锚平移 scrollTop：跟随中
+  //    锚为 0 → 即贴底，阅读中视口钉在原内容上；无锚且跟随中（底部追加、
+  //    流式 delta）→ 贴底；未跟随 → 保持阅读位置，绝不拉回。
   useLayoutEffect(() => {
     const previous = lastLengthRef.current;
     lastLengthRef.current = items.length;
     if (items.length < previous) {
-      // 会话清空 / 切换：窗口与跟随态复位
       setVisibleCount(WINDOW_CHUNK);
       setMountedTurnCount(FIRST_MOUNT_TURNS);
+      followingRef.current = initialFollowing();
       setIsFollowing(true);
+      lastAnchorLayoutRef.current = null;
       return;
     }
-    if (items.length > previous && !isFollowing) {
-      // 阅读旧消息时固定窗口起点，新增条目不能把正在看的历史从窗口头部挤掉。
+    if (items.length > previous && !followingRef.current) {
       setVisibleCount((count) =>
         Math.min(items.length, count + items.length - previous),
       );
     }
     const element = scrollRef.current;
-    if (element !== null) {
-      const layout = {
-        height: element.scrollHeight,
-        viewport: element.clientHeight,
-        following: isFollowing,
-      };
-      const previousLayout = lastFollowLayoutRef.current;
-      lastFollowLayoutRef.current = layout;
-      // 折叠思考/工具的分片也会更新 items，但没有改变可见布局。
-      // 不要反复写 scrollTop，打断用户在贴底阈值内的阅读位置。
-      if (
-        isFollowing &&
-        (!previousLayout?.following ||
-          previousLayout.height !== layout.height ||
-          previousLayout.viewport !== layout.viewport)
-      ) {
-        element.scrollTop = element.scrollHeight;
-      }
-    }
-  }, [items, isFollowing]);
-
-  // 锚定补载：前插渲染完成后按「距底距离不变」恢复滚动位置
-  useLayoutEffect(() => {
-    const anchor = prependAnchorRef.current;
-    const element = scrollRef.current;
-    if (anchor === null || element === null) {
+    if (element === null) {
       return;
     }
-    prependAnchorRef.current = null;
-    element.scrollTop = element.scrollHeight - anchor;
-  }, [visibleCount]);
+    markLayoutScrollGuard();
+    const previousFollowing = followingRef.current;
+    commitFollowing(
+      reconcileFollowingForContentAnchor({
+        following: followingRef.current,
+        metrics: {
+          scrollTop: element.scrollTop,
+          viewportHeight: element.clientHeight,
+          contentHeight: element.scrollHeight,
+        },
+        lastObservedScrollTop: lastObservedScrollTopRef.current,
+        userScrollIntent: getActiveUserScrollIntent(),
+      }),
+    );
+    const layoutChanged =
+      lastAnchorLayoutRef.current?.height !== element.scrollHeight ||
+      lastAnchorLayoutRef.current?.viewport !== element.clientHeight;
+    lastAnchorLayoutRef.current = {
+      height: element.scrollHeight,
+      viewport: element.clientHeight,
+    };
+    const anchor = prependAnchorRef.current;
+    if (anchor !== null) {
+      prependAnchorRef.current = null;
+      markProgrammaticScroll();
+      element.scrollTop = element.scrollHeight - anchor;
+      lastObservedScrollTopRef.current = element.scrollTop;
+    } else if (
+      anchorActionAfterContentChange(followingRef.current) ===
+        "stickToBottom" &&
+      (layoutChanged || !previousFollowing)
+    ) {
+      markProgrammaticScroll();
+      element.scrollTop = element.scrollHeight;
+      lastObservedScrollTopRef.current = element.scrollTop;
+    }
+  }, [
+    items,
+    visibleCount,
+    mountedTurnCount,
+    markLayoutScrollGuard,
+    markProgrammaticScroll,
+    commitFollowing,
+    getActiveUserScrollIntent,
+  ]);
+
+  // 视口高度变化（停靠坞出现、输入区长高、窗口缩放）：跟随中重新贴底，
+  // 未跟随不动。内容撑高不经这里——它由上面的内容锚定 effect 处理。
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (element === null || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    let lastViewport = element.clientHeight;
+    const observer = new ResizeObserver(() => {
+      if (element.clientHeight === lastViewport) return;
+      lastViewport = element.clientHeight;
+      markLayoutScrollGuard();
+      if (!followingRef.current) return;
+      markProgrammaticScroll();
+      element.scrollTop = element.scrollHeight;
+      lastObservedScrollTopRef.current = element.scrollTop;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [markLayoutScrollGuard, markProgrammaticScroll]);
 
   const handleScroll = (): void => {
     const element = scrollRef.current;
@@ -482,20 +659,38 @@ export function SessionView() {
       return;
     }
     syncActiveQuery();
-    // 导航动画和后续流式输出不解除阅读锁；只有用户主动滚动或回到底部才恢复。
-    if (navigationPausedRef.current) return;
-    const nearBottom = isNearBottom(
-      element.scrollTop,
-      element.scrollHeight,
-      element.clientHeight,
-    );
-    if (nearBottom) {
-      if (!isFollowing) {
-        setIsFollowing(true);
-      }
-    } else if (isFollowing) {
-      setIsFollowing(false);
+    // 导航动画期间（刻度跳转的平滑滚动）不裁决跟随；只有用户主动滚动或
+    // 回到底部才恢复。
+    if (navigationPausedRef.current) {
+      lastObservedScrollTopRef.current = element.scrollTop;
+      return;
     }
+    const programmaticScroll =
+      programmaticScrollFrameRef.current !== null &&
+      Math.abs(element.scrollTop - lastObservedScrollTopRef.current) < 1;
+    const userScrollIntent = getActiveUserScrollIntent();
+    // 用户输入优先；其余 scroll 若落在内容/布局 guard 内视为布局补偿，
+    // guard 外的未分类事件继续按真实用户滚动处理（兼容原生滚动条）。
+    const scrollSource =
+      userScrollIntent !== "none"
+        ? "user"
+        : programmaticScroll
+          ? "programmatic"
+          : Date.now() <= layoutScrollGuardUntilRef.current
+            ? "layout"
+            : "user";
+    lastObservedScrollTopRef.current = element.scrollTop;
+    commitFollowing(
+      resolveFollowingAfterScroll({
+        following: followingRef.current,
+        source: scrollSource,
+        metrics: {
+          scrollTop: element.scrollTop,
+          viewportHeight: element.clientHeight,
+          contentHeight: element.scrollHeight,
+        },
+      }),
+    );
     if (
       prependAnchorRef.current === null &&
       shouldLoadOlder(element.scrollTop, items.length - visibleCount)
@@ -510,13 +705,16 @@ export function SessionView() {
   const backToBottom = (): void => {
     navigationPausedRef.current = false;
     jumpTargetRef.current = null;
+    clearUserScrollIntent();
     const element = scrollRef.current;
     if (element !== null) {
       // 立即贴底，避免平滑滚动中间帧再次退出跟随。
+      markProgrammaticScroll();
       element.scrollTop = element.scrollHeight;
+      lastObservedScrollTopRef.current = element.scrollTop;
       syncActiveQuery();
     }
-    setIsFollowing(true);
+    commitFollowing(true);
   };
 
   return (
@@ -543,7 +741,11 @@ export function SessionView() {
               type="button"
               onClick={() => {
                 if (activePath !== null) {
-                  void openRealWorkspace(activePath);
+                  const sessionId = useSessionStore.getState().activeSessionId;
+                  void openRealWorkspace(activePath, {
+                    sessionId: sessionId ?? undefined,
+                    listOnly: sessionId === null,
+                  });
                 }
               }}
               className={
@@ -667,6 +869,35 @@ export function SessionView() {
               </div>
             </div>
           }
+          topLeft={
+            /* 宽度切换：钉在会话区左上角（外层定位容器），三档循环（标准 / 宽 / 全宽），档位持久化 */
+            <button
+              type="button"
+              aria-label={`内容宽度：${
+                chatWidthOptions.find((option) => option.value === chatWidth)
+                  ?.label ?? "标准"
+              }`}
+              title={`内容宽度：${
+                chatWidthOptions.find((option) => option.value === chatWidth)
+                  ?.label ?? "标准"
+              }（点击切换为${
+                chatWidthOptions.find((option) => option.value === nextWidth)
+                  ?.label ?? "标准"
+              }）`}
+              onClick={() => {
+                setChatWidth(nextWidth);
+              }}
+              className="absolute left-3 top-2 z-10 rounded-md border border-line bg-surface/80 p-1 text-ink-faint backdrop-blur transition-colors hover:border-ink-faint hover:text-ink-soft"
+            >
+              {chatWidth === "wide" ? (
+                <WidthWideIcon className="h-3.5 w-3.5" />
+              ) : chatWidth === "full" ? (
+                <WidthFullIcon className="h-3.5 w-3.5" />
+              ) : (
+                <WidthStandardIcon className="h-3.5 w-3.5" />
+              )}
+            </button>
+          }
         >
           <ConversationNavigator
             key={`${contextPath}:${activeSessionId}`}
@@ -674,43 +905,31 @@ export function SessionView() {
             activeId={activeQueryId}
             onJump={jumpToQuery}
           />
-          {/* 宽度切换：左上角图标按钮三档循环（标准 / 宽 / 全宽），档位持久化 */}
-          <button
-            type="button"
-            aria-label={`内容宽度：${
-              chatWidthOptions.find((option) => option.value === chatWidth)
-                ?.label ?? "标准"
-            }`}
-            title={`内容宽度：${
-              chatWidthOptions.find((option) => option.value === chatWidth)
-                ?.label ?? "标准"
-            }（点击切换为${
-              chatWidthOptions.find((option) => option.value === nextWidth)
-                ?.label ?? "标准"
-            }）`}
-            onClick={() => {
-              setChatWidth(nextWidth);
-            }}
-            className="absolute left-3 top-2 z-10 rounded-md border border-line bg-surface/80 p-1 text-ink-faint backdrop-blur transition-colors hover:border-ink-faint hover:text-ink-soft"
-          >
-            {chatWidth === "wide" ? (
-              <WidthWideIcon className="h-3.5 w-3.5" />
-            ) : chatWidth === "full" ? (
-              <WidthFullIcon className="h-3.5 w-3.5" />
-            ) : (
-              <WidthStandardIcon className="h-3.5 w-3.5" />
-            )}
-          </button>
           <div
             ref={scrollRef}
             onScroll={handleScroll}
-            onWheelCapture={() => {
+            onWheelCapture={(event) => {
               navigationPausedRef.current = false;
+              markUserScrollIntent(timelineWheelScrollIntent(event.deltaY));
             }}
-            onTouchMoveCapture={() => {
+            onTouchStartCapture={(event) => {
+              touchClientYRef.current = event.touches[0]?.clientY ?? null;
+            }}
+            onTouchMoveCapture={(event) => {
               navigationPausedRef.current = false;
+              const nextClientY = event.touches[0]?.clientY;
+              const previousClientY = touchClientYRef.current;
+              if (nextClientY === undefined || previousClientY === null) return;
+              markUserScrollIntent(
+                timelineTouchScrollIntent(previousClientY, nextClientY),
+              );
+              touchClientYRef.current = nextClientY;
+            }}
+            onTouchEndCapture={() => {
+              touchClientYRef.current = null;
             }}
             onKeyDownCapture={(event) => {
+              const key = event.key;
               if (
                 [
                   "ArrowUp",
@@ -720,9 +939,22 @@ export function SessionView() {
                   "Home",
                   "End",
                   " ",
-                ].includes(event.key)
+                ].includes(key)
               )
                 navigationPausedRef.current = false;
+              const target = event.target as HTMLElement | null;
+              const editableTarget =
+                target !== null &&
+                (target.isContentEditable ||
+                  target.tagName === "INPUT" ||
+                  target.tagName === "TEXTAREA");
+              markUserScrollIntent(
+                timelineKeyboardScrollIntent({
+                  key,
+                  shiftKey: event.shiftKey,
+                  editableTarget,
+                }),
+              );
             }}
             onPointerDownCapture={(event) => {
               const scroll = event.currentTarget;
@@ -730,8 +962,17 @@ export function SessionView() {
                 event.clientX >=
                 scroll.getBoundingClientRect().right -
                   (scroll.offsetWidth - scroll.clientWidth)
-              )
+              ) {
+                // 滚动条拖动：登记未知方向意图，随后由真实 scroll 落点裁决
                 navigationPausedRef.current = false;
+                scrollbarPointerIdRef.current = event.pointerId;
+                markUserScrollIntent("unknown");
+              }
+            }}
+            onPointerUpCapture={(event) => {
+              if (scrollbarPointerIdRef.current === event.pointerId) {
+                scrollbarPointerIdRef.current = null;
+              }
             }}
             tabIndex={0}
             role="log"
@@ -750,7 +991,7 @@ export function SessionView() {
                 {items.length === 0 && isConnecting ? (
                   <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-mute">
                     <Spinner className="h-6 w-6 text-sky-400" />
-                    <span>正在连接 agent 并恢复会话上下文…</span>
+                    <span>正在连接 agent…</span>
                     <span className="text-xs text-ink-ghost">
                       首次启动与恢复通常需要数秒，请稍候
                     </span>
@@ -775,6 +1016,15 @@ export function SessionView() {
                       将重新连接 agent 并恢复该项目的会话。
                     </p>
                   </div>
+                ) : items.length === 0 &&
+                  activePath !== null &&
+                  (sessionsByPath[activePath]?.length ?? 0) > 0 ? (
+                  /* 模型 a：连接只为列表服务，内容不自动打开——空态给出
+                     该项目最近会话的快捷入口，点一下即回（快照先行秒开） */
+                  <ProjectSessionQuickList
+                    path={activePath}
+                    sessions={sessionsByPath[activePath]!}
+                  />
                 ) : items.length === 0 ? (
                   pendingCount > 0 ? (
                     <p className="py-16 text-center text-sm leading-relaxed text-ink-faint">

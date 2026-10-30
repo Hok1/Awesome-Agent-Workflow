@@ -66,8 +66,9 @@ const kindIcons: Readonly<Record<string, ComponentType<IconProps>>> = {
 /** 摘要行（不可展开）的 kind：对齐 ZCode canToggle=false 的 renderers。 */
 const summaryOnlyKinds: ReadonlySet<string> = new Set(["read", "search", "fetch"]);
 
-/** 完整载荷的呈现文本：字符串按原文，其余安全 JSON 美化。 */
-function formatPayload(value: unknown): string {
+/** 完整载荷的呈现文本：字符串按原文，其余安全 JSON 美化。
+ *  导出供底部终端面板复用（纯函数，无状态）。 */
+export function formatPayload(value: unknown): string {
   if (value === undefined || value === null) {
     return "（无）";
   }

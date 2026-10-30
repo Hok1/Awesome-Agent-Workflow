@@ -144,7 +144,7 @@ it("压缩归档先于 ACP 历史，切换后不会累积旧刻度", async () =>
       text: "当前提问",
     },
   ];
-  await openRealWorkspace(WORKSPACE);
+  await openRealWorkspace(WORKSPACE, { sessionId: "archive-session" });
   expect(
     useSessionStore.getState().items.map((i) => ("text" in i ? i.text : "")),
   ).toEqual(["压缩前提问", "压缩前回复", "当前提问"]);
@@ -172,7 +172,7 @@ it("归档读取失败保留 ACP 历史并提示不完整", async () => {
   fakeSessionControl.replayOnLoad = [
     { type: "user_message_chunk", sessionId: "saved", text: "仍能恢复" },
   ];
-  await openRealWorkspace(WORKSPACE);
+  await openRealWorkspace(WORKSPACE, { sessionId: "saved" });
   expect(
     useSessionStore
       .getState()
@@ -188,7 +188,7 @@ it("归档读取失败保留 ACP 历史并提示不完整", async () => {
 });
 
 describe("openRealWorkspace：会话恢复装配", () => {
-  it("有历史会话时 loadSession 恢复最近一个，列表标题不含 UUID", async () => {
+  it("指定恢复的会话载入内容，列表标题不含 UUID", async () => {
     // updatedAt 用无时区后缀的本地时间串：列表标题的 HH:MM 按本地时区格式化
     fakeSessionControl.listed = [
       {
@@ -203,9 +203,8 @@ describe("openRealWorkspace：会话恢复装配", () => {
       },
     ];
 
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-latest" });
 
-    // 恢复的是 updatedAt 最新的那个
     expect(fakeSessionControl.loadCalls).toEqual(["sess-latest"]);
     const state = useSessionStore.getState();
     expect(state.activeSessionId).toBe("sess-latest");
@@ -288,7 +287,7 @@ describe("openRealWorkspace：会话恢复装配", () => {
     ];
     fakeSessionControl.loadShouldFail = true;
 
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-expired" });
 
     expect(fakeSessionControl.loadCalls).toEqual(["sess-expired"]);
     const state = useSessionStore.getState();
@@ -300,14 +299,14 @@ describe("openRealWorkspace：会话恢复装配", () => {
     ]);
   });
 
-  it("session/list 失败同样回落新建会话", async () => {
+  it("session/list 失败：激活模式不回落新建（连接只为列表服务），树为空", async () => {
     fakeSessionControl.listShouldFail = true;
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { listOnly: true });
     expect(fakeSessionControl.loadCalls).toEqual([]);
-    expect(useSessionStore.getState().activeSessionId).toBe("new-session-id");
+    expect(useSessionStore.getState().activeSessionId).toBeNull();
   });
 
-  it("无历史会话直接新建，并把本地消息快照灌回（含流式封口）", async () => {
+  it("无历史会话直接新建：空对话起步，不回灌旧快照（内容错位防护）", async () => {
     seedLocalLog([
       {
         kind: "user",
@@ -318,16 +317,12 @@ describe("openRealWorkspace：会话恢复装配", () => {
       { kind: "assistant", id: "a1", text: "上次的回答", isStreaming: true },
     ]);
 
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { forceNew: true });
 
     expect(fakeSessionControl.loadCalls).toEqual([]);
-    const items = useSessionStore.getState().items;
-    expect(items.map((item) => item.kind)).toEqual(["user", "assistant"]);
-    expect(items[1]).toMatchObject({ text: "上次的回答", isStreaming: false });
-    // 列表标题取快照里的首条用户消息
-    expect(useSessionStore.getState().sessions[0]?.title).toBe(
-      "会话 · 上次的问题",
-    );
+    // forceNew 例外：旧快照灌进全新会话就是内容错位，绝不回灌
+    expect(useSessionStore.getState().items).toEqual([]);
+    expect(useSessionStore.getState().activeSessionId).toBe("new-session-id");
   });
 
   it("loadSession 已回放历史时，本地快照不覆盖回放结果", async () => {
@@ -343,7 +338,7 @@ describe("openRealWorkspace：会话恢复装配", () => {
       { kind: "user", id: "u1", text: "本地快照消息", createdAt: "" },
     ]);
 
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-latest" });
 
     const items = useSessionStore.getState().items;
     expect(
@@ -387,7 +382,7 @@ describe("openRealWorkspace：会话恢复装配", () => {
         text: "第二条回复",
       },
     ];
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-latest" });
     expect(useSessionStore.getState().items.map((item) => item.kind)).toEqual([
       "user",
       "assistant",
@@ -503,7 +498,7 @@ describe("switchRealSession：左栏点击历史会话的切换", () => {
   });
   it("运行中切换只改变聚焦，切回保留消息、排队和运行态", async () => {
     fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-latest" });
     useSessionStore.getState().beginTurn("仍在运行");
     useSessionStore.getState().enqueuePrompt("稍后执行");
     expect(await switchRealSession("sess-other")).toBe(true);
@@ -520,7 +515,7 @@ describe("switchRealSession：左栏点击历史会话的切换", () => {
 
   it("切换成功载入目标会话；失败回滚当前视图且不切换聚焦", async () => {
     fakeSessionControl.listed = [{ sessionId: "sess-latest", cwd: WORKSPACE }];
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-latest" });
 
     // 当前视图有一份内容
     useSessionStore.getState().beginTurn("当前会话内容");
@@ -600,7 +595,7 @@ describe("openRealWorkspace：恢复后切会话视图（P1-8）", () => {
         updatedAt: "2026-10-20T11:30:00",
       },
     ];
-    await openRealWorkspace(WORKSPACE);
+    await openRealWorkspace(WORKSPACE, { sessionId: "sess-latest" });
     const ui = useWorkbenchUiStore.getState();
     expect(ui.treeView).toBe("session");
     expect(ui.contextPath).toBe(WORKSPACE);

@@ -1,15 +1,15 @@
 /**
- * 上下文条（ContextBar）测试（经 ContentArea 集成渲染，覆盖条与视图
- * 主体的组合）。上下文条是全应用唯一顶栏（无全局挂件区——agent 标识
- * 与待办下拉已退役）：
- * - 会话态：会话标题 + 所属项目名 + 连接徽标（badge 形态，点 + 文字）+
- *   关闭会话图标按钮（真实调 closeWorkspace）；无 AAW 数据时无 SR 快捷；
- * - AAW 开关：会话态常驻，有 AAW 状态数据时标签变成「SR-xxx · 步骤 n」；
- *   点开只开合会话内 AAW 面板，不离开对话；
+ * 顶栏（ContextBar）测试（经 ContentArea 集成渲染，覆盖条与视图
+ * 主体的组合）。顶栏是全应用唯一顶栏（48px，ZCode WorkspaceHeader 形态，
+ * 无全局挂件区——agent 标识与待办下拉已退役）：
+ * - 会话态：Folder 钮（路径信息）+ 会话标题（workspace-title，双击改名）
+ *   + 更多菜单（重命名 / 复制路径）；无 AAW 数据时无 SR 快捷；
+ * - 顶栏动作排：帮助（单项「打开诊断」）/ 终端（开合底部终端面板）/
+ *   分栏（开合右栏，打开即整钮不渲染）/ 窗控（非 Tauri 不渲染）；
  * - 总览态：返回按钮（有活跃会话回会话视图；无会话回落空态）+ 项目名 +
  *   路径 + 关闭项目（连接中禁闭，未连接不出现）；
  * - 设置 / 诊断全屏页：返回按钮 + 页名；
- * - 空态（未选中项目的总览）上下文部分留空，空态引导占满下方内容区。
+ * - 空态（未选中项目的总览）左段留空，空态引导占满下方内容区。
  *
  * 异步探测的 defaultProcessRunner 以「永不完成」的 fake 替身注入
  * （点击 SR 快捷会切到总览），保持现场稳定。
@@ -40,11 +40,24 @@ vi.mock("../../../src/aaw/tauriProcessRunner.ts", () => {
   };
 });
 
+// 真实连接通路以替身注入（真通路由 realRuntime.test 覆盖）：收起态新建
+// 钮的测试只关心编排动作与乐观视图切换，不关心 agent 生命周期
+vi.mock("../../../src/ui/realRuntime.ts", () => ({
+  openRealWorkspace: vi.fn(async () => "sess-new"),
+  switchRealSession: vi.fn(async () => true),
+  closeRealRuntime: vi.fn(async () => undefined),
+  unfocusRealRuntime: vi.fn(),
+  hasRunningSessions: vi.fn(() => false),
+}));
+
+import { openRealWorkspace } from "../../../src/ui/realRuntime.ts";
+
 const PATH = "D:/dev/demo-project";
 const NAME = "demo-project";
 
 function resetAll(): void {
   window.localStorage.clear();
+  vi.mocked(openRealWorkspace).mockClear();
   useRightPanelStore.setState({ projects: {} });
   useWorkbenchUiStore.setState({
     treeView: "project-overview",
@@ -69,7 +82,8 @@ function resetAll(): void {
   useWorkspaceStore.getState().clearSelection();
   useWorkspaceStore.setState({
     recentWorkspaces: [],
-    favoritePaths: [],
+    pinnedPaths: [],
+    pinnedSessions: [],
     lastConnectError: null,
   });
   useAawStatusStore.getState().reset();
@@ -102,23 +116,35 @@ beforeEach(() => {
 });
 
 describe("ContextBar 会话态", () => {
-  it("显示会话标题 + 所属项目名 + 连接徽标；无 AAW 数据时无 SR 快捷按钮", () => {
+  it("会话标题在 workspace-title；路径信息由 Folder 钮承接（aria-label=目录名、title=路径）", () => {
     seedSessionView();
     render(<ContentArea />);
 
-    expect(screen.getByText("总结 SR-001 的进度")).toBeInTheDocument();
-    expect(screen.getByText(NAME)).toBeInTheDocument();
-    expect(screen.getByText("已连接")).toBeInTheDocument();
+    expect(screen.getAllByText("总结 SR-001 的进度")[0]!).toBeInTheDocument();
+    // ZCode 标题区形态：项目名小字元素删除，路径信息并入 Folder 钮
+    const folderButton = screen.getByTestId("workspace-path");
+    expect(folderButton).toHaveAttribute("aria-label", NAME);
+    expect(folderButton).toHaveAttribute("title", PATH);
+    expect(screen.queryByText(NAME)).not.toBeInTheDocument();
+    // SR 快捷按钮属 AAW 面板；空态快捷列表的会话按钮不计入
     expect(
-      screen.queryByRole("button", { name: /SR-001/ }),
+      screen.queryByRole("button", { name: "SR-001 快捷入口" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("Folder 钮点击进项目总览（路径信息的承接入口）", async () => {
+    seedSessionView();
+    render(<ContentArea />);
+    await userEvent.click(screen.getByTestId("workspace-path"));
+    expect(useWorkbenchUiStore.getState().treeView).toBe("project-overview");
+    expect(useWorkbenchUiStore.getState().contextPath).toBe(PATH);
   });
 
   it("连接中徽标为蓝点「连接中」", () => {
     seedSessionView();
     useSessionStore.setState({ isConnecting: true, isBound: false });
     render(<ContentArea />);
-    expect(screen.getByText("连接中")).toBeInTheDocument();
+    expect(screen.queryByText("连接中")).not.toBeInTheDocument();
     expect(screen.queryByText("已连接")).not.toBeInTheDocument();
   });
 
@@ -127,6 +153,97 @@ describe("ContextBar 会话态", () => {
     render(<ContentArea />);
     expect(
       screen.queryByRole("button", { name: "返回总览" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("ContextBar 顶栏动作排（ZCode WorkspaceHeaderActionSection 形态）", () => {
+  it("更多菜单：重命名进入行内编辑（复用双击改名状态流）；复制路径写剪贴板", async () => {
+    seedSessionView();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(<ContentArea />);
+
+    await userEvent.click(screen.getByTestId("workspace-more-button"));
+    const menu = screen.getByRole("menu", { name: "更多" });
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "重命名" }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "会话名称" }),
+    ).toBeInTheDocument();
+
+    // Esc 退出编辑后再验复制路径
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "会话名称" }),
+      "{Escape}",
+    );
+    await userEvent.click(screen.getByTestId("workspace-more-button"));
+    const menuAgain = screen.getByRole("menu", { name: "更多" });
+    await userEvent.click(
+      within(menuAgain).getByRole("menuitem", { name: "复制路径" }),
+    );
+    expect(writeText).toHaveBeenCalledWith(PATH);
+  });
+
+  it("terminal-toggle：aria-pressed 翻转并开合底部终端面板（面板关闭钮同路）", async () => {
+    seedSessionView();
+    render(<ContentArea />);
+    const toggle = screen.getByTestId("terminal-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByTestId("terminal-panel")).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("terminal-panel")).toBeInTheDocument();
+    expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(true);
+
+    await userEvent.click(screen.getByTestId("terminal-close-button"));
+    expect(screen.queryByTestId("terminal-panel")).not.toBeInTheDocument();
+    expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(false);
+  });
+
+  it("side-pane-toggle：点钮打开右栏；右栏打开时整钮不渲染（ZCode :75-82），右栏 ✕ 收起后钮回来", async () => {
+    seedSessionView();
+    render(<ContentArea />);
+    await userEvent.click(screen.getByTestId("side-pane-toggle"));
+    // 右栏打开（store 驱动，键经 pathKey 归一化小写）
+    expect(
+      useRightPanelStore.getState().projects["d:/dev/demo-project"]?.open,
+    ).toBe(true);
+    expect(
+      screen.queryByTestId("side-pane-toggle"),
+    ).not.toBeInTheDocument();
+
+    // 右栏自带 ✕ 收起钮（RightPanel :276-282）
+    await userEvent.click(
+      screen.getByRole("button", { name: "收起右侧工具栏" }),
+    );
+    expect(screen.getByTestId("side-pane-toggle")).toBeInTheDocument();
+  });
+
+  it("help-menu-button：单项「打开诊断」切诊断覆盖层（再点同页取消语义不变）", async () => {
+    seedSessionView();
+    render(<ContentArea />);
+    await userEvent.click(screen.getByTestId("help-menu-button"));
+    const menu = screen.getByRole("menu", { name: "帮助菜单" });
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "打开诊断" }),
+    );
+    expect(useWorkbenchUiStore.getState().overlay).toBe("diagnostics");
+  });
+
+  it("窗控三钮的 testid 挂点：非 Tauri 测试环境不渲染（窗控行为见 WindowControls.test）", () => {
+    seedSessionView();
+    render(<ContentArea />);
+    expect(
+      screen.queryByTestId("window-control-minimize"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("window-control-maximize"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("window-control-close"),
     ).not.toBeInTheDocument();
   });
 });
@@ -219,7 +336,7 @@ describe("ContextBar 连接失败横幅与徽标（P0-1）", () => {
     expect(banner).toHaveTextContent(/连接失败：连接 agent 失败/);
     expect(banner).toHaveTextContent(/请在设置中检查 agent 可执行路径/);
     // 连接徽标进入失败态（badge 文字）
-    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.queryByText("失败")).not.toBeInTheDocument();
     expect(screen.queryByText("已连接")).not.toBeInTheDocument();
 
     await userEvent.click(
@@ -282,18 +399,54 @@ describe("ContextBar 全屏页", () => {
   });
 });
 
+describe("ContextBar 收起态顶栏新建入口（ZCode DesktopTopOverlay 强制显示位）", () => {
+  it("侧栏收起 + 会话视图：顶栏左端出现「新建会话」钮，点击直接在当前项目开新会话", async () => {
+    seedSessionView();
+    useWorkbenchUiStore.setState({ sidebarCollapsed: true });
+    render(<ContentArea />);
+
+    await userEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    // 直开语义（ZCode 顶栏新建任务）：在当前项目 forceNew 起新会话，
+    // 乐观切到会话视图（连接替身成功，无回滚）
+    expect(openRealWorkspace).toHaveBeenCalledWith(PATH, { forceNew: true });
+    expect(useWorkbenchUiStore.getState().treeView).toBe("session");
+    expect(useWorkbenchUiStore.getState().contextPath).toBe(PATH);
+    // 入口本身不改变收起态（ZCode 收起态保留入口的本意就是不展开侧栏）
+    expect(useWorkbenchUiStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it("侧栏收起 + 空态：点击先展开侧栏再打开【+】面板（面板锚在树体顶部）", async () => {
+    useWorkbenchUiStore.setState({ sidebarCollapsed: true });
+    render(<ContentArea />);
+
+    await userEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    const ui = useWorkbenchUiStore.getState();
+    expect(ui.sidebarCollapsed).toBe(false);
+    expect(ui.treeViewMode).toBe("projects");
+    expect(ui.isAddPanelOpen).toBe(true);
+  });
+
+  it("侧栏展开时不渲染（ZCode isNewTaskButtonVisible = !isSidebarVisible 同款）", () => {
+    seedSessionView();
+    render(<ContentArea />);
+    expect(
+      screen.queryByRole("button", { name: "新建会话" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("ContextBar 会话改名（双击行内编辑）", () => {
   it("双击进入编辑，回车提交：顶栏与树缓存即时更新", async () => {
     seedSessionView();
     render(<ContentArea />);
 
-    await userEvent.dblClick(screen.getByText("总结 SR-001 的进度"));
+    await userEvent.dblClick(screen.getAllByText("总结 SR-001 的进度")[0]!);
     const input = screen.getByRole("textbox", { name: "会话名称" });
     await userEvent.clear(input);
     await userEvent.type(input, "我的会话名{Enter}");
 
     // 展示立即更新（顶栏 + 树缓存同源）
-    expect(screen.getByText("我的会话名")).toBeInTheDocument();
+    expect(screen.getAllByText("我的会话名")[0]!).toBeInTheDocument();
     const entry = useSessionStore
       .getState()
       .sessionsByPath[PATH]?.find((session) => session.id === "sess-1");
@@ -305,14 +458,14 @@ describe("ContextBar 会话改名（双击行内编辑）", () => {
     render(<ContentArea />);
 
     // Esc 取消
-    await userEvent.dblClick(screen.getByText("总结 SR-001 的进度"));
+    await userEvent.dblClick(screen.getAllByText("总结 SR-001 的进度")[0]!);
     const input = screen.getByRole("textbox", { name: "会话名称" });
     await userEvent.clear(input);
     await userEvent.type(input, "半截输入{Escape}");
-    expect(screen.getByText("总结 SR-001 的进度")).toBeInTheDocument();
+    expect(screen.getAllByText("总结 SR-001 的进度")[0]!).toBeInTheDocument();
 
     // 手动改名后悬停提示原生名；清空提交恢复
-    await userEvent.dblClick(screen.getByText("总结 SR-001 的进度"));
+    await userEvent.dblClick(screen.getAllByText("总结 SR-001 的进度")[0]!);
     await userEvent.clear(screen.getByRole("textbox", { name: "会话名称" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "会话名称" }),
@@ -322,12 +475,12 @@ describe("ContextBar 会话改名（双击行内编辑）", () => {
       screen.getByTitle(/总结 SR-001 的进度（双击重命名/),
     ).toBeInTheDocument();
 
-    await userEvent.dblClick(screen.getByText("手动名"));
+    await userEvent.dblClick(screen.getAllByText("手动名")[0]!);
     await userEvent.clear(screen.getByRole("textbox", { name: "会话名称" }));
     await userEvent.type(
       screen.getByRole("textbox", { name: "会话名称" }),
       "{Enter}",
     );
-    expect(screen.getByText("总结 SR-001 的进度")).toBeInTheDocument();
+    expect(screen.getAllByText("总结 SR-001 的进度")[0]!).toBeInTheDocument();
   });
 });

@@ -9,7 +9,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PanelWorkspace,
-  PanelButtons,
 } from "../../src/ui/right-panel/RightPanel.tsx";
 import { panelService, type FilePreview } from "../../src/core/panelService.ts";
 import {
@@ -170,19 +169,20 @@ describe("项目右栏", () => {
   });
   it("默认收起、展开和关闭不重挂输入框，项目总览也能浏览文件", async () => {
     render(
-      <>
-        <PanelButtons project="D:/a" />
-        <PanelWorkspace project="D:/a" enabled>
-          <textarea aria-label="聊天草稿" />
-        </PanelWorkspace>
-      </>,
+      <PanelWorkspace project="D:/a" enabled>
+        <textarea aria-label="聊天草稿" />
+      </PanelWorkspace>,
     );
     const input = screen.getByRole("textbox", { name: "聊天草稿" });
     await userEvent.type(input, "未发送的草稿");
     expect(
       screen.queryByRole("complementary", { name: "项目右侧工具栏" }),
     ).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "打开文件面板" }));
+    // PanelButtons 已退役：右栏入口收敛为顶栏分栏开关（ContextBar 的
+    // side-pane-toggle，同一 store 动作 tool）——这里直驱 store 验证主题
+    act(() => {
+      useRightPanelStore.getState().tool("D:/a", "files");
+    });
     expect(await screen.findByText(".sdd")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "收起右侧工具栏" }),

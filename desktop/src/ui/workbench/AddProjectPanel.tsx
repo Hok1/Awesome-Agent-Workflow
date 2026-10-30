@@ -23,7 +23,6 @@ import {
 import { basenameOf, formatLastOpened } from "../workspaces/workspaceText.ts";
 import { addProjectViaDialog } from "./addProjectFlow.ts";
 import { startNewSession } from "./sessionStart.ts";
-import { ConnectionBadge } from "./ConnectionBadge.tsx";
 
 type AddPanelTab = "new-session" | "add-project";
 
@@ -68,7 +67,6 @@ function KnownProjectRow({
             </span>
           )}
         </span>
-        <ConnectionBadge path={path} />
       </button>
     </li>
   );
@@ -78,7 +76,7 @@ export function AddProjectPanel({ onClose, triggerRef }: AddProjectPanelProps) {
   const [tab, setTab] = useState<AddPanelTab>("new-session");
   const [isDialogUnavailable, setIsDialogUnavailable] = useState(false);
   const recentWorkspaces = useWorkspaceStore((state) => state.recentWorkspaces);
-  const favoritePaths = useWorkspaceStore((state) => state.favoritePaths);
+  const pinnedPaths = useWorkspaceStore((state) => state.pinnedPaths);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // 点外部 / Esc 关闭（与顶栏待办下拉同一收口模式）；触发按钮不视为外部
@@ -115,12 +113,12 @@ export function AddProjectPanel({ onClose, triggerRef }: AddProjectPanelProps) {
     recentWorkspaces.map((entry) => [entry.path, entry.lastOpenedAt] as const),
   );
   const knownProjects = [
-    ...favoritePaths.map((path) => ({
+    ...pinnedPaths.map((path) => ({
       path,
       lastOpenedAt: lastOpenedByPath.get(path) ?? null,
     })),
     ...recentWorkspaces
-      .filter((entry) => !favoritePaths.includes(entry.path))
+      .filter((entry) => !pinnedPaths.includes(entry.path))
       .map((entry) => ({
         path: entry.path,
         lastOpenedAt: entry.lastOpenedAt,

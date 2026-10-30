@@ -61,16 +61,11 @@ export const tabInactiveClass = "text-ink-mute hover:text-ink";
 
 /**
  * 列表行的选中态：中性 selected 植面（Zai 同款：暗白 10% / 浅黑 5%，随
- * 主题切换）+ 左缘 2px accent 竖条（inset shadow 实现，不占布局、不产生
- * 位移）。
- *
- * 与悬停态分属两套颜色语言：选中是「你在这」（selected 植面），悬停是
- * 「可点」（更弱的 bg-raised）。左缘竖条额外解决相邻行的高亮框彼此贴合、
- * 看着像互相覆盖的问题——选中行有了明确的起始边，不再靠整块底色相认。
- * 竖条颜色写死 sky-500 而不引主题变量：两套主题下都要读出「这是 accent」。
+ * 主题切换）——与 ZCode 行选中单一配方一致（TaskListItem.tsx:577
+ * isActive ? "bg-selected"），不加左缘竖条等自创修饰：选中是「你在这」
+ * 的整块底色，竖条会与 hover 植面形成两套高亮语言。
  */
-export const rowSelectedClass =
-  "bg-(--color-selected) text-ink shadow-[inset_2px_0_0_0_rgb(14_165_233)]";
+export const rowSelectedClass = "bg-(--color-selected)";
 
 /**
  * 进度条（自绘，不用浏览器默认样式）：

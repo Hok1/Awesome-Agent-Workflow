@@ -1,5 +1,5 @@
 /**
- * workspaceStore 测试：选择/收藏/最近打开/打开工作区（activePath 绑定）、
+ * workspaceStore 测试：选择/置顶/最近打开/打开工作区（activePath 绑定）、
  * 持久化往返、回填入口与过期回填丢弃。
  */
 import { beforeEach, describe, expect, it } from "vitest";
@@ -28,7 +28,8 @@ function resetStore(): void {
   window.localStorage.clear();
   useWorkspaceStore.setState({
     recentWorkspaces: [],
-    favoritePaths: [],
+    pinnedPaths: [],
+    pinnedSessions: [],
     selectedPath: null,
     activePath: null,
     health: null,
@@ -98,18 +99,91 @@ describe("useWorkspaceStore", () => {
     );
   });
 
-  it("收藏切换与移除", () => {
+  it("置顶切换与移除（语义自收藏迁移，数据同源）", () => {
     const store = useWorkspaceStore.getState();
     store.selectWorkspace(DEMO_PATH);
-    store.toggleFavorite(DEMO_PATH);
-    expect(useWorkspaceStore.getState().favoritePaths).toEqual([DEMO_PATH]);
-    useWorkspaceStore.getState().toggleFavorite(DEMO_PATH);
-    expect(useWorkspaceStore.getState().favoritePaths).toEqual([]);
-    // removeFromRecent 同时清最近与收藏
-    useWorkspaceStore.getState().toggleFavorite(DEMO_PATH);
+    store.togglePinned(DEMO_PATH);
+    expect(useWorkspaceStore.getState().pinnedPaths).toEqual([DEMO_PATH]);
+    useWorkspaceStore.getState().togglePinned(DEMO_PATH);
+    expect(useWorkspaceStore.getState().pinnedPaths).toEqual([]);
+    // removeFromRecent 同时清最近与置顶
+    useWorkspaceStore.getState().togglePinned(DEMO_PATH);
     useWorkspaceStore.getState().removeFromRecent(DEMO_PATH);
-    expect(useWorkspaceStore.getState().favoritePaths).toEqual([]);
+    expect(useWorkspaceStore.getState().pinnedPaths).toEqual([]);
     expect(useWorkspaceStore.getState().recentWorkspaces).toHaveLength(0);
+  });
+
+  describe("会话级置顶（ZCode task.pinned 语义）", () => {
+    const OTHER_PATH = "D:/dev/other";
+
+    it("toggleSessionPinned 切换键集合；同一路径大小写变体归一到同一键", () => {
+      const store = useWorkspaceStore.getState();
+      store.toggleSessionPinned(DEMO_PATH, "s-1");
+      const keys = useWorkspaceStore.getState().pinnedSessions;
+      expect(keys).toEqual([`${DEMO_PATH.toLowerCase()}\u0000s-1`]);
+      // 大小写不同的路径变体命中同一键 → 再切一次即取消
+      useWorkspaceStore.getState().toggleSessionPinned("d:/DEV/demo", "s-1");
+      expect(useWorkspaceStore.getState().pinnedSessions).toEqual([]);
+    });
+
+    it("新置顶前插（置顶任务带最新在前），跨项目互不影响", () => {
+      useWorkspaceStore.getState().toggleSessionPinned(DEMO_PATH, "s-1");
+      useWorkspaceStore.getState().toggleSessionPinned(OTHER_PATH, "s-2");
+      expect(useWorkspaceStore.getState().pinnedSessions).toEqual([
+        `${OTHER_PATH.toLowerCase()}\u0000s-2`,
+        `${DEMO_PATH.toLowerCase()}\u0000s-1`,
+      ]);
+    });
+
+    it("removeFromRecent 连带清掉该项目的会话级置顶（不留幽灵键）", () => {
+      useWorkspaceStore.getState().selectWorkspace(DEMO_PATH);
+      useWorkspaceStore.getState().toggleSessionPinned(DEMO_PATH, "s-1");
+      useWorkspaceStore.getState().toggleSessionPinned(OTHER_PATH, "s-2");
+      useWorkspaceStore.getState().removeFromRecent(DEMO_PATH);
+      expect(useWorkspaceStore.getState().pinnedSessions).toEqual([
+        `${OTHER_PATH.toLowerCase()}\u0000s-2`,
+      ]);
+    });
+
+    it("持久化往返：pinnedSessions 写入 v1 载荷并可恢复（可选新增字段不升版本）", () => {
+      useWorkspaceStore.getState().toggleSessionPinned(DEMO_PATH, "s-1");
+      const persisted = JSON.parse(
+        window.localStorage.getItem("aaw-desktop/workspace/v1") ?? "{}",
+      ) as { version?: unknown; pinnedSessions?: unknown };
+      expect(persisted.version).toBe(1);
+      expect(persisted.pinnedSessions).toEqual([
+        `${DEMO_PATH.toLowerCase()}\u0000s-1`,
+      ]);
+
+      useWorkspaceStore.setState({ pinnedSessions: [] });
+      useWorkspaceStore.getState().hydrateFromStorage();
+      expect(useWorkspaceStore.getState().pinnedSessions).toEqual([
+        `${DEMO_PATH.toLowerCase()}\u0000s-1`,
+      ]);
+
+      // 老载荷没有该字段：等同冷启动恢复——空集（hydrate 对缺失字段回落
+      // 当前值，与 favorites 同语义；干净现场下即空集），不抛错
+      window.localStorage.setItem(
+        "aaw-desktop/workspace/v1",
+        JSON.stringify({ version: 1, recent: [], favorites: [] }),
+      );
+      useWorkspaceStore.setState({ pinnedSessions: [] });
+      useWorkspaceStore.getState().hydrateFromStorage();
+      expect(useWorkspaceStore.getState().pinnedSessions).toEqual([]);
+
+      // 键形状损坏（缺 \u0000 分隔符）的条目读取时丢弃
+      window.localStorage.setItem(
+        "aaw-desktop/workspace/v1",
+        JSON.stringify({
+          version: 1,
+          recent: [],
+          favorites: [],
+          pinnedSessions: ["broken-key"],
+        }),
+      );
+      useWorkspaceStore.getState().hydrateFromStorage();
+      expect(useWorkspaceStore.getState().pinnedSessions).toEqual([]);
+    });
   });
 
   it("打开工作区：activePath 成为 ACP session cwd 绑定点", () => {
@@ -202,19 +276,24 @@ describe("useWorkspaceStore", () => {
     expect(useWorkspaceStore.getState().isCheckingHealth).toBe(false);
   });
 
-  it("持久化往返：recent / favorites / toolPaths 写入并可恢复", () => {
+  it("持久化往返：recent / favorites（置顶集合，JSON 键不变）/ toolPaths 写入并可恢复", () => {
     const store = useWorkspaceStore.getState();
     store.selectWorkspace(DEMO_PATH);
-    store.toggleFavorite(DEMO_PATH);
+    store.togglePinned(DEMO_PATH);
     store.setToolPaths({
       chrysCommand: "chrys",
       uvCommand: "C:/tools/uv.exe",
       aawScriptPath: "D:/repo/aaw.py",
     });
+    // 落盘 JSON 仍是兼容键 favorites（老用户收藏集原样恢复为置顶集）
+    const persisted = JSON.parse(
+      window.localStorage.getItem("aaw-desktop/workspace/v1") ?? "{}",
+    ) as { favorites?: unknown };
+    expect(persisted.favorites).toEqual([DEMO_PATH]);
     // 模拟新会话：清运行态后仅重新 hydrate
     useWorkspaceStore.setState({
       recentWorkspaces: [],
-      favoritePaths: [],
+      pinnedPaths: [],
       toolPaths: defaultToolPaths,
     });
     useWorkspaceStore.getState().hydrateFromStorage();
@@ -222,7 +301,7 @@ describe("useWorkspaceStore", () => {
     expect(state.recentWorkspaces.map((entry) => entry.path)).toEqual([
       DEMO_PATH,
     ]);
-    expect(state.favoritePaths).toEqual([DEMO_PATH]);
+    expect(state.pinnedPaths).toEqual([DEMO_PATH]);
     expect(state.toolPaths.uvCommand).toBe("C:/tools/uv.exe");
     // 裸 "chrys" 是旧缺省值：读取时归一为新缺省，不当作用户配置
     expect(state.toolPaths.chrysCommand).toBe(defaultToolPaths.chrysCommand);

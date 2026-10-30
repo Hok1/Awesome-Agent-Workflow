@@ -47,7 +47,8 @@ function resetAll(): void {
   workspace.clearSelection();
   useWorkspaceStore.setState({
     recentWorkspaces: [],
-    favoritePaths: [],
+    pinnedPaths: [],
+    pinnedSessions: [],
     lastConnectError: null,
   });
   useWorkbenchUiStore.setState({

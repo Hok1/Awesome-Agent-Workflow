@@ -221,7 +221,6 @@ html.theme-warm {
      内容区 #161616；侧栏比内容亮一档，靠 1px 白 10% 描边分隔） */
   --color-base: #161616; /* 内容区底：Zai dark background */
   --color-sidebar: #2b2b2b; /* 左列：Zai dark background-win-alt（实测 ZCode 暗色侧栏 = 输入框色） */
-  --color-rail: #1e1e1e; /* 图标窄栏：比侧栏深一档（Codex 式色调分层，不靠硬线） */
   --color-surface: #2b2b2b; /* 卡片 / 面板 / 输入卡：Zai dark card */
   --color-raised: #363636; /* 浮起元素 / 行悬停：Zai dark menu-hover / secondary */
 
@@ -258,11 +257,23 @@ html.theme-warm {
   /* 行悬停 5% 洗色（zai-dark --color-hover styles.css:697） */
   --color-hover: rgb(255 255 255 / 0.05);
 
+  /* 右键/下拉菜单容器（ZCode bg-menu，zai-dark styles.css:759；zai-light :595） */
+  --color-menu: #2b2b2b;
+  /* 菜单项悬停（zai-dark :760） */
+  --color-menu-hover: #363636;
+  /* 未读/状态蓝点（ZCode bg-icon-blue = terminal-bright-blue，zai-dark :734；
+     不是 #4099ff——那是 zai-dark --color-terminal-blue :726，不经 bg-icon-blue 使用） */
+  --color-icon-blue: #80beff;
+  /* foreground-subtle 同位级：前景 60% 洗色（zai-dark :774 neutral-300@60%） */
+  --color-ink-subtle: rgb(212 212 212 / 0.6);
+
+  /* 行悬停（ZCode bg-surface-hover，zai-dark styles.css:703；行 hover 语义——
+     ZCode 行悬停即 bg-surface-hover，TaskListItem.tsx:577/ProjectNodeContent.tsx:212） */
+  --color-surface-hover: rgba(255, 255, 255, 0.1);
+
   /* foreground-subtlest（zai-dark = neutral-300@30%，styles.css:776；
      neutral-300=#d4d4d4） */
   --color-ink-subtlest: rgb(212 212 212 / 0.3);
-  --color-surface-hover: color-mix(in oklab, var(--color-neutral-950) 5%, transparent);
-  --color-surface-hover: rgba(255, 255, 255, 0.1);
 
   /* 发送钮主色 brand（ZCode bg-brand zai-dark #ffffff 白底黑箭头）与
      text-foreground-inverse（zai-dark #000000，styles.css:778；亮底配黑字，
@@ -327,6 +338,29 @@ html.theme-warm {
   --color-warn: #ff8a30;
   --color-danger: #ff5c5c;
   --color-info: #4099ff;
+
+  /* 常规描边（ZCode --color-border zai-dark styles.css:695
+     rgba(255,255,255,0.1)）：菜单描边/分隔线用 border——暗色下 line
+     #2e2e2e 叠 #2b2b2b 卡片近不可见，border 按白 10% 合成可辨 */
+  --color-border: rgb(255 255 255 / 0.1);
+  /* 危险实底（ZCode --color-destructive = var(--color-red-600)，
+     styles.css:282——仓库未重定义 red-600，落到 Tailwind v4 默认红
+     oklch(57.7% 0.245 27.325)，比 --color-danger 的 #ff5c5c 深一档）。
+     这里写字面值而非 var 引用：默认调色板的 --color-red-600 只有被
+     工具类直接用到才会产出，var 链会悬空。两主题同值（ZCode 未随主题
+     重定义）。注意 --color-danger（#ff5c5c）仍是 Zai 红族的状态灯色，
+     不与 destructive 实底混用 */
+  --color-destructive: oklch(57.7% 0.245 27.325);
+  /* 危险实底上的文字（ZCode --color-destructive-foreground zai-dark
+     styles.css:785 / zai-light :620，两主题皆白） */
+  --color-danger-contrast: #ffffff;
+  /* 进行中蓝点（ZCode --color-progress-surface-foreground zai-dark
+     blue-300 styles.css:772 / zai-light blue-700 :271） */
+  --color-progress-ink: #93c5fd;
+  /* 等待确认胶囊底（ZCode --color-interaction-confirmation-surface
+     zai-dark rgba(70,191,114,0.16) styles.css:767；配文 text-ok-ink，
+     其值即 ZCode interaction-confirmation-foreground :768 原值） */
+  --color-interaction-confirmation-surface: rgb(70 191 114 / 0.16);
 }
 
 /**
@@ -337,7 +371,6 @@ html.theme-warm {
 html.theme-warm {
   --color-base: #f8f8f8; /* 内容区底：Zai light background */
   --color-sidebar: #ececee; /* 左列：Zai light background-win-alt（实测 ZCode 浅色侧栏） */
-  --color-rail: #e4e4e4; /* 图标窄栏：比侧栏深一档（Codex 式色调分层，不靠硬线） */
   --color-surface: #ffffff; /* 卡片 / 面板：Zai light card */
   --color-raised: #dcdcdc; /* 浮起元素 / 行悬停（随窄栏档位下移，保持悬停可辨） */
 
@@ -371,6 +404,20 @@ html.theme-warm {
 
   /* 行悬停 5% 洗色（zai-light --color-hover styles.css:533） */
   --color-hover: rgb(13 13 13 / 0.05);
+
+  /* 行悬停（ZCode bg-surface-hover，zai-light styles.css:539——此前缺失，
+     浅色主题会错用暗色 10% 白，必修） */
+  --color-surface-hover: rgba(13, 13, 13, 0.05);
+
+  /* 右键/下拉菜单容器（zai-light :595） */
+  --color-menu: #ffffff;
+  /* 菜单项悬停（zai-light :596） */
+  --color-menu-hover: #f0f0f0;
+  /* 未读/状态蓝点（zai-light :570；恰与既有 --color-accent-ink warm 同值，
+     独立成 token 以对齐 ZCode 语义名） */
+  --color-icon-blue: #0066dd;
+  /* foreground-subtle 同位级：前景 60% 洗色（zai-light :610 neutral-800@60%） */
+  --color-ink-subtle: rgb(38 38 38 / 0.6);
 
   /* foreground-subtlest（zai-light = neutral-800@40%，styles.css:612；
      neutral-800=#262626） */
@@ -432,6 +479,12 @@ html.theme-warm {
   --color-warn: #e07b00;
   --color-danger: #e03131;
   --color-info: #0b7fff;
+
+  /* 与暗色块同名 token 的浅色值（出处见暗色块注释） */
+  --color-border: rgb(13 13 13 / 0.1); /* ZCode zai-light styles.css:531 */
+  --color-danger-contrast: #ffffff; /* ZCode zai-light :620 */
+  --color-progress-ink: #1d4ed8; /* ZCode zai-light blue-700 :271 */
+  --color-interaction-confirmation-surface: #eaf7ee; /* ZCode zai-light :603 */
 
   /* 海拔阴影换中性边光（暖金边光配纯中性灰会显脏） */
   --shadow-elev-2:
@@ -708,6 +761,51 @@ html.theme-warm body::before {
   animation: composer-pop-up-in 100ms ease-out;
 }
 
+/* 右键/下拉菜单入场（ZCode context-menu.tsx:28：duration-100 + fade-in-0 +
+   zoom-in-95 + slide-in-from-*-2=8px；实参与既有 composer-pop-in 一致）：
+   side=bottom 自触发点下方弹出（自上而下 8px 滑入），翻转后 side=top 反向。 */
+@keyframes context-menu-in-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes context-menu-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.context-menu-in-bottom {
+  animation: context-menu-in-bottom 100ms ease-out;
+}
+.context-menu-in-top {
+  animation: context-menu-in-top 100ms ease-out;
+}
+/* 退场（ZCode data-closed:fade-out-0 zoom-out-95；方向位移省略，
+   fade+zoom 保留） */
+@keyframes context-menu-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+.context-menu-out {
+  animation: context-menu-out 100ms ease-in forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .press,
   .lift {
@@ -723,7 +821,10 @@ html.theme-warm body::before {
   .toast-in,
   .modal-in,
   .composer-pop,
-  .composer-pop-up {
+  .composer-pop-up,
+  .context-menu-in-bottom,
+  .context-menu-in-top,
+  .context-menu-out {
     animation: none;
   }
 }

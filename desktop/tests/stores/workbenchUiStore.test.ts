@@ -2,7 +2,8 @@
  * workbenchUiStore（工作台界面状态）测试：树选中驱动的基底视图、
  * 功能页覆盖层（全屏语义）的开合、会话内 AAW 增强面板的开合、
  * 树展开态覆盖值与项目移除后的空态回落；侧边栏收起态 / 视角偏好的
- * 切换持久化与模块加载恢复；【+】弹出面板的开合。
+ * 切换持久化与模块加载恢复；【+】弹出面板的开合；底部终端面板开合
+ * （不持久化，默认关闭）。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -159,6 +160,16 @@ describe("workbenchUiStore", () => {
     ui.toggleAddPanel();
     ui.openProjectOverview("D:/dev/demo");
     expect(useWorkbenchUiStore.getState().isAddPanelOpen).toBe(false);
+  });
+
+  it("toggleTerminal：底部终端面板开合（不持久化，默认关闭）", () => {
+    expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(false);
+    useWorkbenchUiStore.getState().toggleTerminal();
+    expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(true);
+    useWorkbenchUiStore.getState().toggleTerminal();
+    expect(useWorkbenchUiStore.getState().isTerminalOpen).toBe(false);
+    // 不持久化：localStorage 无终端键
+    expect(window.localStorage.getItem("aaw-desktop/layout/terminal")).toBeNull();
   });
 
   it("模块加载时从 localStorage 恢复收起态与视角（非法值按默认处理）", async () => {

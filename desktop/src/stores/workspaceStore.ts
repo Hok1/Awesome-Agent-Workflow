@@ -1,5 +1,5 @@
 /**
- * 工作区 store：工作区选择、最近打开与收藏（本地持久化）、健康检查，
+ * 工作区 store：工作区选择、最近打开与置顶（本地持久化）、健康检查，
  * 以及「打开项目」（activePath 即 ACP session 的 cwd 绑定点，参考 chrys
  * 服务端 session/new 的 cwd 参数）。
  *
@@ -10,11 +10,25 @@
  *   防过期覆盖；
  * - AAW 工作流状态不在这里：唯一状态源是 aawStatusStore（loader 注入式
  *   只读视图，见 src/aaw/statusLoader.ts）；
- * - recent / favorites / toolPaths 持久化到 localStorage，模块加载即恢复。
+ * - recent / pinned / toolPaths 持久化到 localStorage，模块加载即恢复。
+ *
+ * 置顶语义对齐 ZCode：置顶首先是**会话级**——task.pinned 使会话进入
+ * 侧栏最顶的「置顶任务带」（project-sidebar/index.tsx:252-257
+ * TID_PROJECT_PINNED_TASKS，会话菜单带 pin/unpin，TaskActionMenuContent
+ * .tsx:89），项目级置顶带在其下（index.tsx:258-262）。desktop 的两组
+ * 置顶各自持久化：
+ * - pinnedPaths：项目钉选。JSON 持久化键仍是 `favorites`（不升版本、
+ *   不写迁移脚本）——老用户的收藏集合原样恢复为置顶集合，「收藏 =
+ *   置顶标记」数据等价，仅展示语义升级；
+ * - pinnedSessions：会话钉选（键见 sessionPinKey）。v1 形状的**可选
+ *   新增字段**，不升版本：老数据缺省为空集，老版本读取时忽略未知字段
+ *   ——读写双向兼容，升版本反而会把 v1 的 recent / favorites / toolPaths
+ *   全部作废。
  */
 import { create } from "zustand";
 
 import { createLogger } from "../core/logger.ts";
+import { pathKey } from "../core/panelPaths.ts";
 import {
   defaultToolPaths,
   runWorkspaceHealthChecks,
@@ -31,6 +45,13 @@ const RECENT_LIMIT = 8;
 
 /** localStorage 持久化键（带版本号，形状变更时升版本）。 */
 const STORAGE_KEY = "aaw-desktop/workspace/v1";
+
+/** 会话置顶的持久化键：pathKey 归一 + \u0000 分隔（路径不产生该控制符，
+ *  会话 id 是 agent 的 UUID 形态同样不含）。UI 经 resolvePinnedSession
+ *  反查展示路径与标题（见 ProjectTree）。 */
+export function sessionPinKey(path: string, sessionId: string): string {
+  return `${pathKey(path)}\u0000${sessionId}`;
+}
 
 /** 一个最近打开的工作区。 */
 export interface WorkspaceEntry {
@@ -54,7 +75,9 @@ export interface ConnectError {
 
 interface WorkspaceStoreState {
   recentWorkspaces: readonly WorkspaceEntry[];
-  favoritePaths: readonly string[];
+  pinnedPaths: readonly string[];
+  /** 会话级置顶集合（sessionPinKey 键；持久化，序 = 置顶先后，最新在前）。 */
+  pinnedSessions: readonly string[];
   /** 当前选中（未打开）的工作区目录。 */
   selectedPath: string | null;
   /** 已打开的工作区：ACP session 的 cwd 绑定点。 */
@@ -70,7 +93,9 @@ interface WorkspaceStoreState {
   clearSelection: () => void;
   openWorkspace: (path?: string) => void;
   closeWorkspace: () => void;
-  toggleFavorite: (path: string) => void;
+  togglePinned: (path: string) => void;
+  /** 会话级置顶开关（ZCode task.pinned 语义；会话菜单 pin/unpin 用）。 */
+  toggleSessionPinned: (path: string, sessionId: string) => void;
   removeFromRecent: (path: string) => void;
   setToolPaths: (paths: WorkspaceToolPaths) => void;
   /** 连接失败回填入口（realRuntime 调用；UI 据此渲染错误横幅与徽标）。 */
@@ -98,6 +123,8 @@ interface PersistedShape {
   readonly version: 1;
   readonly recent: readonly WorkspaceEntry[];
   readonly favorites: readonly string[];
+  /** 可选新增（不升版本，见文件头）：会话级置顶键集合。 */
+  readonly pinnedSessions?: readonly string[];
   readonly toolPaths: WorkspaceToolPaths;
 }
 
@@ -129,6 +156,7 @@ function sanitizePersisted(
   const out: {
     recent?: WorkspaceEntry[];
     favorites?: string[];
+    pinnedSessions?: string[];
     toolPaths?: WorkspaceToolPaths;
   } = {};
   if (Array.isArray(record["recent"])) {
@@ -151,6 +179,12 @@ function sanitizePersisted(
   if (Array.isArray(record["favorites"])) {
     out.favorites = record["favorites"].filter(
       (item): item is string => typeof item === "string",
+    );
+  }
+  if (Array.isArray(record["pinnedSessions"])) {
+    out.pinnedSessions = record["pinnedSessions"].filter(
+      (item): item is string =>
+        typeof item === "string" && item.includes("\u0000"),
     );
   }
   if (typeof record["toolPaths"] === "object" && record["toolPaths"] !== null) {
@@ -182,7 +216,8 @@ function writePersisted(state: WorkspaceStoreState): void {
     const payload: PersistedShape = {
       version: 1,
       recent: state.recentWorkspaces,
-      favorites: state.favoritePaths,
+      favorites: state.pinnedPaths,
+      pinnedSessions: state.pinnedSessions,
       toolPaths: state.toolPaths,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -212,7 +247,8 @@ function withRecentEntry(
 
 export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
   recentWorkspaces: [],
-  favoritePaths: [],
+  pinnedPaths: [],
+  pinnedSessions: [],
   selectedPath: null,
   activePath: null,
   health: null,
@@ -282,21 +318,39 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
     set({ lastConnectError: null });
   },
 
-  toggleFavorite: (path) => {
+  togglePinned: (path) => {
     set((state) => ({
-      favoritePaths: state.favoritePaths.includes(path)
-        ? state.favoritePaths.filter((item) => item !== path)
-        : [...state.favoritePaths, path],
+      pinnedPaths: state.pinnedPaths.includes(path)
+        ? state.pinnedPaths.filter((item) => item !== path)
+        : [...state.pinnedPaths, path],
+    }));
+    writePersisted(get());
+  },
+
+  // 会话级置顶（ZCode task.pinned）：新置顶插到最前（置顶任务带 = 最新
+  // 置顶在前，与项目带按 lastOpenedAt 倒序的「新在前」同拍）
+  toggleSessionPinned: (path, sessionId) => {
+    const key = sessionPinKey(path, sessionId);
+    set((state) => ({
+      pinnedSessions: state.pinnedSessions.includes(key)
+        ? state.pinnedSessions.filter((item) => item !== key)
+        : [key, ...state.pinnedSessions],
     }));
     writePersisted(get());
   },
 
   removeFromRecent: (path) => {
+    const pathPrefix = `${pathKey(path)}\u0000`;
     set((state) => ({
       recentWorkspaces: state.recentWorkspaces.filter(
         (entry) => entry.path !== path,
       ),
-      favoritePaths: state.favoritePaths.filter((item) => item !== path),
+      pinnedPaths: state.pinnedPaths.filter((item) => item !== path),
+      // 项目移出列表时其会话级置顶一并清掉：置顶任务带不渲染幽灵行
+      //（项目不在列表里，行点了也只能落失败回滚）
+      pinnedSessions: state.pinnedSessions.filter(
+        (item) => !item.startsWith(pathPrefix),
+      ),
       // 移除的正是当前选中目录时同步清空选择，避免详情区悬挂
       //（连带复位 in-flight 标志：在途回填将因选择清空被丢弃）
       ...(state.selectedPath === path
@@ -361,11 +415,12 @@ export const useWorkspaceStore = create<WorkspaceStoreState>((set, get) => ({
     }
     set((state) => ({
       recentWorkspaces: persisted.recent ?? state.recentWorkspaces,
-      favoritePaths: persisted.favorites ?? state.favoritePaths,
+      pinnedPaths: persisted.favorites ?? state.pinnedPaths,
+      pinnedSessions: persisted.pinnedSessions ?? state.pinnedSessions,
       toolPaths: persisted.toolPaths ?? state.toolPaths,
     }));
   },
 }));
 
-// 模块加载即恢复最近打开 / 收藏 / 工具路径
+// 模块加载即恢复最近打开 / 置顶 / 会话置顶 / 工具路径
 useWorkspaceStore.getState().hydrateFromStorage();

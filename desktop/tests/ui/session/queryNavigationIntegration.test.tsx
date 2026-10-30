@@ -185,7 +185,8 @@ describe("提问导航与正文窗口", () => {
     expect(
       screen.getByRole("button", { name: "回到底部" }),
     ).toBeInTheDocument();
-    fireEvent.wheel(log);
+    // 真实滚轮事件必带 deltaY（用户意图登记的依据），向下滚 = 靠近底部
+    fireEvent.wheel(log, { deltaY: 120 });
     fireEvent.scroll(log);
     expect(
       screen.queryByRole("button", { name: "回到底部" }),
