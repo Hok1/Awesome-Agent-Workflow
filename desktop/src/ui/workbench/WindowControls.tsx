@@ -1,72 +1,81 @@
 /**
  * 自绘窗口控制（无边框标题栏的右端三钮）：最小化 / 最大化切换 / 关闭。
+ * 对齐 ZCode DesktopWindowControls.tsx（ghost icon-md 植面、size-4 图标、
+ * close 钮 destructive 悬停、最大化态跟踪）。
  *
  * 窗口装饰已在 tauri.conf.json 关闭（decorations: false）——顶栏即标题
  * 栏（ContextBar），这三颗钮承担原生标题栏的窗口操作（ZCode 同款形态）。
  * 「关闭」走 window.close() → Rust 的 CloseRequested → 关闭守卫（agent
  * 运行中确认、先收口进程树再销毁），与点系统 ✕ 完全同路。非 Tauri 环境
  * （测试 / 浏览器）不渲染。
+ *
+ * 最大化态跟踪（ZCode :13-32 同构）：订阅 onResized 回读 isMaximized，
+ * 挂载时读初态（较晚返回的初态不覆盖用户刚触发的事件）；最大化钮按态
+ * 切换 WindowMaximize / WindowRestore 图标并带 data-maximized。
  */
+import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { createLogger } from "../../core/logger.ts";
 import { isTauriEnv } from "../../core/host.ts";
+import {
+  MinimizeIcon,
+  WindowMaximizeIcon,
+  WindowRestoreIcon,
+  XIcon,
+} from "../icons.tsx";
 
 const logger = createLogger("ui");
 
-/** 最小化：底横线。 */
-function MinimizeIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      aria-hidden={true}
-      className="h-3 w-3"
-    >
-      <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-/** 最大化切换：方框（还原态为双框，这里统一用方框表达「窗口大小」）。 */
-function MaximizeIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinejoin="round"
-      aria-hidden={true}
-      className="h-3 w-3"
-    >
-      <rect x="5" y="5" width="14" height="14" rx="1.5" />
-    </svg>
-  );
-}
-
-/** 关闭：✕。 */
-function CloseIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      aria-hidden={true}
-      className="h-3 w-3"
-    >
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
 export function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+
+  // 最大化态跟踪：订阅 resize 事件回读 + 挂载读初态（订阅/回读仅 Tauri
+  // 环境可用；测试与浏览器提前返回）
+  useEffect(() => {
+    if (!isTauriEnv()) {
+      return;
+    }
+    let disposed = false;
+    let receivedEvent = false;
+    const current = getCurrentWindow();
+    const unlisten = current.onResized(() => {
+      receivedEvent = true;
+      if (disposed) {
+        return;
+      }
+      void current
+        .isMaximized()
+        .then((value) => {
+          if (!disposed) {
+            setMaximized(value);
+          }
+        })
+        .catch((error: unknown) => {
+          logger.warn("读取窗口最大化态失败", {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        });
+    });
+    // 订阅后读取初态；较晚返回的初态不能覆盖用户刚触发的最大化事件
+    void current
+      .isMaximized()
+      .then((value) => {
+        if (!disposed && !receivedEvent) {
+          setMaximized(value);
+        }
+      })
+      .catch((error: unknown) => {
+        logger.warn("读取窗口最大化态失败", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+    return () => {
+      disposed = true;
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
   if (!isTauriEnv()) {
     return null;
   }
@@ -81,45 +90,59 @@ export function WindowControls() {
       });
     });
   };
+  // ZCode DesktopWindowControls :66：ghost icon-md 植面（28×28 圆角 lg），
+  // close 钮 destructive 悬停（hover:bg-destructive + text-danger-contrast；
+  // --color-destructive = ZCode var(--color-red-600) 原值，即 Tailwind v4
+  // 默认红 oklch(57.7% 0.245 27.325)，前景白与 ZCode destructive-foreground
+  // 一致——见 index.css 的 token 注释）
   const buttonBase =
-    "press flex h-7 w-9 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-raised hover:text-ink";
+    "press flex size-7 shrink-0 items-center justify-center rounded-lg text-ink transition-colors hover:bg-hover hover:text-ink";
   return (
     <div
-      className="flex shrink-0 items-center gap-0.5 pl-2"
+      className="flex shrink-0 items-center gap-0.5"
       data-window-controls=""
+      data-testid="desktop-window-controls"
     >
       <button
         type="button"
+        data-testid="window-control-minimize"
         aria-label="最小化窗口"
-        title="最小化"
+        title="最小化窗口"
         onClick={() => {
           run("minimize", current.minimize());
         }}
         className={buttonBase}
       >
-        <MinimizeIcon />
+        <MinimizeIcon className="h-4 w-4" strokeWidth={2} />
       </button>
       <button
         type="button"
+        data-testid="window-control-maximize"
         aria-label="切换窗口大小"
-        title="最大化 / 还原"
+        title="切换窗口大小"
+        data-maximized={maximized}
         onClick={() => {
           run("toggleMaximize", current.toggleMaximize());
         }}
         className={buttonBase}
       >
-        <MaximizeIcon />
+        {maximized ? (
+          <WindowRestoreIcon className="h-4 w-4" />
+        ) : (
+          <WindowMaximizeIcon className="h-4 w-4" />
+        )}
       </button>
       <button
         type="button"
+        data-testid="window-control-close"
         aria-label="关闭窗口"
-        title="关闭（agent 运行中会先确认）"
+        title="关闭窗口（agent 运行中会先确认）"
         onClick={() => {
           run("close", current.close());
         }}
-        className="press flex h-7 w-9 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-danger-bg hover:text-danger-ink"
+        className="press flex size-7 shrink-0 items-center justify-center rounded-lg text-ink transition-colors hover:bg-destructive hover:text-danger-contrast"
       >
-        <CloseIcon />
+        <XIcon className="h-4 w-4" strokeWidth={2} />
       </button>
     </div>
   );

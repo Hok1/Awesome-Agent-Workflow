@@ -9,16 +9,17 @@
  * - 会话是骨架，AAW 是挂在会话上的增强：入口向导不是独立的一层视图，
  *   而是会话内可开合的 AAW 面板（isAawOpen）里的一个分段——新建会话
  *   默认就是一条空对话，用户想从 SR / AR / dev 入口启动时才打开它；
- * - 「设置 / 诊断」是功能页覆盖层 overlay，自图标窄栏（IconRail）底部
+ * - 「设置 / 诊断」是功能页覆盖层 overlay，自侧栏底部 SidebarFooter 的
  *   入口激活后呈**全屏**语义：侧边栏树列与顶栏按钮组隐藏，内容区只
  *   渲染该页 + 上下文条「← 返回」；再点同页入口（或返回按钮）取消
  *   覆盖，点树节点同样清除；
  * - 树的展开态只记「用户显式切换」的覆盖值：未出现的项目按默认规则
  *   （有会话子节点的展开）渲染，规则本身由组件计算，store 不复刻数据源；
- * - 侧边栏收起态 sidebarCollapsed 表示「隐藏 / 显示树列」（常驻的是
- *   48px 图标窄栏，收起后没有第二条窄条）与树的视角 treeViewMode 是
- *   布局偏好，变更即持久化到 localStorage（键见下方常量），模块加载时
- *   恢复；【+】弹出面板与 AAW 面板是纯会话内状态，不持久化。
+ * - 侧边栏收起态 sidebarCollapsed 表示「隐藏 / 显示树列」（收起后开关
+ *   移入顶栏左端 / 树列顶部拖拽带，无第二条窄条）与树的视角
+ *   treeViewMode 是布局偏好，变更即持久化到 localStorage（键见下方常量），
+ *   模块加载时恢复；【+】弹出面板、AAW 面板与底部终端面板是纯会话内
+ *   状态，不持久化（终端默认关闭，对齐 ZCode useAppPanels 的缺省）。
  */
 import { create } from "zustand";
 
@@ -116,6 +117,12 @@ interface WorkbenchUiState {
   } | null;
   /** 会话顶部 AAW 流程时间线的收起态（布局偏好，持久化）。 */
   readonly isTimelineCollapsed: boolean;
+  /**
+   * 底部终端面板（execute 工具输出的只读回放）是否展开。默认关闭且
+   * **不持久化**，对齐 ZCode useAppPanels 的缺省（终端面板开合是会话内
+   * 临时状态，重启回到关闭）。
+   */
+  readonly isTerminalOpen: boolean;
   /** 关闭守卫确认弹窗（Rust CloseRequested 转交，agent 运行中时弹出）。 */
   readonly isCloseGuardOpen: boolean;
 
@@ -139,6 +146,8 @@ interface WorkbenchUiState {
   readonly openAawWizard: (entry: "sr" | "ar" | "dev") => void;
   readonly finishAawWizardRequest: (id: number) => void;
   readonly toggleTimeline: () => void;
+  /** 开 / 关底部终端面板（顶栏终端钮与面板关闭钮共用，不持久化）。 */
+  readonly toggleTerminal: () => void;
   /** 功能页开关：再点同一页取消覆盖（回到树选中视图）。 */
   readonly toggleOverlay: (view: OverlayView) => void;
   /** 关闭功能页覆盖层（全屏页的「← 返回」入口）。 */
@@ -183,6 +192,7 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
   sidebarCollapsed: restoreSidebarCollapsed(),
   treeViewMode: restoreTreeViewMode(),
   isTimelineCollapsed: restoreTimelineCollapsed(),
+  isTerminalOpen: false,
   isAddPanelOpen: false,
   isAawOpen: false,
   aawWizardEntry: null,
@@ -266,6 +276,12 @@ export const useWorkbenchUiStore = create<WorkbenchUiState>((set, get) => ({
     const next = !get().isTimelineCollapsed;
     set({ isTimelineCollapsed: next });
     writePref(TIMELINE_COLLAPSED_KEY, next ? "1" : "0");
+  },
+
+  toggleTerminal: () => {
+    const next = !get().isTerminalOpen;
+    set({ isTerminalOpen: next });
+    logger.debug("底部终端面板切换", { open: next });
   },
 
   toggleOverlay: (view) => {

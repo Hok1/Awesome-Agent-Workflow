@@ -15,8 +15,8 @@ export const LEFT_DEFAULT_PX = 264;
 export const LEFT_MIN_PX = 264;
 export const LEFT_MAX_PX = 480;
 
-// 注：图标窄栏（常驻 48px）宽度常量在 IconRail.tsx（ICON_RAIL_WIDTH_PX）；
-// 侧边栏收起不再是「44px 窄条」形态，旧窄条组件与其宽度常量已一并退役。
+// 注：图标窄栏（原常驻 48px）已随 IconRail 组件退役——侧栏开关在树列
+// 顶部拖拽带（收起后移入顶栏左端），App 的 grid 为三列（树列 / 拖宽热区 / 内容区）。
 
 /** 把宽度钳制进 [min, max]。 */
 export function clampWidth(

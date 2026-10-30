@@ -29,9 +29,15 @@ function countLines(text: string): number {
 export function TerminalOutput({
   text,
   failed = false,
+  fill = false,
 }: {
   readonly text: string;
   readonly failed?: boolean;
+  /**
+   * 填满宿主高度（底部终端面板用：面板体已是定高滚动容器，视图按 100%
+   * 撑满）。默认 false——消息流工具卡内渲染零变化。
+   */
+  readonly fill?: boolean;
 }) {
   const preRef = useRef<HTMLPreElement | null>(null);
   const [follows, setFollows] = useState(true);
@@ -60,7 +66,11 @@ export function TerminalOutput({
       ref={preRef}
       onScroll={handleScroll}
       aria-label="终端输出"
-      style={{ height: `${Math.min(lineCount, WINDOW_LINES) * LINE_HEIGHT_EM}em` }}
+      style={{
+        height: fill
+          ? "100%"
+          : `${Math.min(lineCount, WINDOW_LINES) * LINE_HEIGHT_EM}em`,
+      }}
       className={`overflow-auto rounded bg-base/70 p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words ${
         failed ? "text-danger-ink" : "text-ink-soft"
       }`}

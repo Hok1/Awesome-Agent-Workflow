@@ -41,6 +41,7 @@ export function SessionStatusOverlay({
   project,
   enabled,
   centered = false,
+  topLeft,
   children,
   footer,
 }: {
@@ -49,6 +50,9 @@ export function SessionStatusOverlay({
   /** 空态居中（ZCode 式）：滚动区改为内容高并以 mt-auto 下推，与 footer
    * （mb-auto）作为一组垂直居中；溢出时自动边距归零，内容从顶部可滚。 */
   centered?: boolean;
+  /** 钉在会话区左上角的浮动控件（内容宽度切换）：必须挂在外层定位容器上——
+   * 内层包裹在空态居中时被 mt-auto 下推，挂在里面会落到页面中部。 */
+  topLeft?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
 }) {
@@ -149,11 +153,14 @@ export function SessionStatusOverlay({
       className="relative @container/conversation min-h-0 flex-1"
       data-status-mode={hasContent ? mode : "none"}
     >
+      {topLeft}
       <div
         className={`relative flex h-full min-h-0 flex-col [--session-card-inset:0px] ${hasContent && mode !== "mini" ? "@min-[1280px]/conversation:[--session-card-inset:352px]" : ""}`}
       >
+        {/* ZCode 式：消息流内容直达会话区顶部，状态卡直接悬浮在内容上
+            （不设 pt-12 顶条——那是自创的整条留白，内容永远够不到顶）。 */}
         <div
-          className={`relative ${centered ? "mt-auto" : `min-h-0 flex-1${hasContent ? " pt-12" : ""}`}`}
+          className={`relative ${centered ? "mt-auto" : "min-h-0 flex-1"}`}
         >
           {children}
         </div>

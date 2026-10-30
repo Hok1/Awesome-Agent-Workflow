@@ -53,7 +53,8 @@ describe("hydrateSessionHistory", () => {
     demoHost.reset();
     useWorkspaceStore.setState({
       recentWorkspaces: [],
-      favoritePaths: [],
+      pinnedPaths: [],
+      pinnedSessions: [],
       activePath: null,
       selectedPath: null,
     });

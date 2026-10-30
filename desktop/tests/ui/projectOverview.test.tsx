@@ -94,7 +94,8 @@ function resetWorkspaceState(): void {
   });
   useWorkspaceStore.setState({
     recentWorkspaces: [],
-    favoritePaths: [],
+    pinnedPaths: [],
+    pinnedSessions: [],
     selectedPath: null,
     activePath: null,
     health: null,
