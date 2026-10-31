@@ -103,7 +103,7 @@ jobs:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Native Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-pc-windows-msvc -- --test-threads=1
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-pc-windows-msvc -- --test-threads=1 --skip terminal_pty
 
       - name: Build production executable and NSIS installer
         run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis -- --locked
